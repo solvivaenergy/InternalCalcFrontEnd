@@ -1,0 +1,25 @@
+{
+  "name": "solviva-calculator",
+  "version": "3.66.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.7.4",
+    "@supabase/supabase-js": "^2.52.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.13.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "playwright-core": "^1.59.1",
+    "vite": "^5.4.0"
+  }
+}

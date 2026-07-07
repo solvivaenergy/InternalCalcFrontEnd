@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solviva Solar Calculator</title>
+  <link rel="icon" type="image/png" href="%BASE_URL%favicon-v2.png" />
+  <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon-v2.png" />
+  <meta name="description" content="Solviva Energy solar quote calculator. Estimate your savings, monthly payment, and payback period." />
+  <meta name="x-solviva-build" content="v3-13 — Logo asset cache-bust: renamed to *-v2.png so browsers holding the old (JPEG-as-PNG) logos in cache fetch the new transparent ones (May 2026)" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #F7F4ED;
+    }
+
+    /* ─────────────────────────────────────────────────────────────────
+       Step 3 + Step 4 side-by-side layout (v3-51)
+       At desktop widths (≥1024px) Step 3 and Step 4 render in a 2-column
+       grid so customers see Step 4's metrics react as they adjust Step 3
+       controls. Below 1024px the grid collapses to a single column and
+       Step 4's sticky-pin is disabled (sticky inside a full-width block
+       would feel jarring during a normal vertical scroll).
+       ───────────────────────────────────────────────────────────────── */
+    @media (min-width: 1024px) {
+      .step34-grid {
+        grid-template-columns: 1.05fr 0.95fr !important;
+        gap: 20px !important;
+      }
+    }
+    @media (max-width: 1023px) {
+      .step34-col-right {
+        position: static !important;
+      }
+    }
+
+    /* ─────────────────────────────────────────────────────────────────
+       MOBILE-SPECIFIC RULES — apply at viewport < 768px
+       Admin functionality is desktop-only, so we hide it on phones.
+       Layouts stack vertically and use full width to avoid horizontal
+       scrolling.
+       ───────────────────────────────────────────────────────────────── */
+    @media (max-width: 767px) {
+      /* Hide admin entry-point on mobile (per product direction:
+         admin view and editing for desktop only) */
+      .desktop-only-admin { display: none !important; }
+
+      /* App container: tighter horizontal padding */
+      .app-main {
+        padding: 12px !important;
+      }
+
+      /* Header stacks vertically on mobile */
+      .header-inner {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 12px !important;
+        padding: 14px 16px !important;
+      }
+      .header-meta { font-size: 12px !important; line-height: 1.6 !important; }
+      .header-meta strong { display: inline; }
+      .header-actions {
+        width: 100%;
+        justify-content: flex-start !important;
+      }
+      .header-logo {
+        max-width: 140px;
+      }
+
+      /* Tabs: smaller padding, scroll horizontally if needed */
+      .tabs-inner {
+        padding: 0 12px !important;
+        overflow-x: auto;
+      }
+      .tab-btn {
+        padding: 12px 14px !important;
+        font-size: 13px !important;
+        flex-shrink: 0;
+      }
+
+      /* Section cards: edge-to-edge, less padding */
+      .section-card {
+        border-radius: 0 !important;
+        margin-left: -12px;
+        margin-right: -12px;
+        padding: 18px 16px !important;
+      }
+
+      /* Two-column grids collapse to single column */
+      .grid-2col {
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+      }
+      /* Grid children default to `min-width: auto` (content-based), which
+         lets them grow past their track. Force `min-width: 0` so descendant
+         overflow-x:auto wrappers can actually clip and scroll horizontally
+         instead of bursting their parents. Applies on both mobile and
+         desktop so overflow handling is consistent. */
+      .grid-2col > * {
+        min-width: 0;
+      }
+
+      /* Step 3 / Step 4 metric tile grids: 2 columns on mobile, was 4 */
+      .metric-tile-grid, .summary-tile-grid {
+        grid-template-columns: 1fr 1fr !important;
+        gap: 8px !important;
+      }
+      .metric-tile-grid > *, .summary-tile-grid > * {
+        padding: 12px 14px !important;
+      }
+      .metric-tile-grid .stat-tile-value,
+      .summary-tile-grid .stat-tile-value {
+        font-size: 16px !important;     /* was 18 — ₱2,233,104 fits at 16 */
+        line-height: 1.2 !important;
+        word-break: break-word;          /* allow long values to wrap */
+        overflow-wrap: anywhere;
+      }
+
+      /* Step 1 device rows: tighter spacing, smaller font */
+      .device-rows-table {
+        font-size: 12px !important;
+        /* Force minimum table width so columns don't squish below readable
+           sizes on phones. The wrapping <div> uses overflow-x:auto so the
+           table scrolls horizontally when it doesn't fit. Without this
+           min-width, the table tries to fit 5 cols + remove btn into ~360px
+           and the device-name dropdown gets crushed to "— S". */
+        min-width: 560px;
+      }
+      .device-rows-table input,
+      .device-rows-table select {
+        font-size: 13px !important;
+        padding: 6px 8px !important;
+      }
+      .device-rows-table th,
+      .device-rows-table td {
+        padding: 4px 4px !important;
+      }
+
+      /* Step 2G misc materials table: same treatment — scroll horizontally
+         on narrow viewports rather than clipping the right edge. */
+      .step2g-misc-table {
+        min-width: 460px;
+      }
+
+      /* Inputs need larger tap targets on mobile */
+      input, select, button:not(.info-icon-btn) {
+        min-height: 38px;
+      }
+
+      /* Inline fields stack on mobile */
+      .field-inline {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 4px !important;
+      }
+      .field-inline label, .field-inline > label {
+        margin-bottom: 2px;
+      }
+
+      /* Schedule of Payments table: smaller font, horizontal scroll fallback */
+      .schedule-table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .schedule-table {
+        font-size: 11px !important;
+        min-width: 480px;
+      }
+
+      /* Subsection title and hint: stack on mobile */
+      .subsection-hint {
+        display: block !important;
+        margin-top: 2px;
+      }
+
+      /* Recharts charts: ensure they don't overflow */
+      .recharts-wrapper { max-width: 100% !important; }
+
+      /* Coverage headline sentence: enforce single line on desktop via
+         white-space:nowrap inline style. On mobile we release that so the
+         sentence wraps and remains readable when the percentage is large. */
+      .headline-sentence-wrap {
+        white-space: normal !important;
+        padding: 14px 16px !important;
+      }
+
+      /* Footer: shrink the company line */
+      .footer-inner {
+        font-size: 11px !important;
+        padding: 10px 12px !important;
+      }
+
+      /* Contact gate edit form: stack the two columns */
+      .contact-edit-grid {
+        grid-template-columns: 1fr !important;
+        gap: 16px !important;
+      }
+    }
+
+    /* Print styles — hide nav and footer for clean PDFs */
+    @media print {
+      header, nav, footer, button { -webkit-print-color-adjust: exact; }
+      [data-no-print] { display: none !important; }
+      body { background: white !important; }
+      main { padding: 12px !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

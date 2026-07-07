@@ -1,0 +1,8 @@
+// Entry point — mounts the React app into #root
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './components/App.jsx';
+
+const container = document.getElementById('root');
+const root = createRoot(container);
+root.render(<App />);
