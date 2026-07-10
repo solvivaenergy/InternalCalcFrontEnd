@@ -12,7 +12,7 @@
 //        [Excel V18–V22, W19–W21, Y19–Y21, AA19–AA21]
 //   2D — Roof Material: surcharge based on roof type.
 //   2E — Location: delivery / travel charges.
-//   2F — Misc materials: 2 free-form rows.
+//   2F — Misc materials: dynamic 1–6 free-form rows (add/remove).
 //        [Excel V33–AA36]
 //
 // 2A's Selected row uses inline controls inside tiles (NumberInput spinner
@@ -59,9 +59,11 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
   // respect whatever the customer chose. Default for fresh sessions is
   // still `false` via makeInitialState; this safety net only protects the
   // truly-hidden inputs.
-  // v3-63: batteryPackageId is likewise NOT reset — the Battery Package
-  // selector is now visible (and choosable) in customer mode, living inside
-  // the Recommended Battery tile.
+  // v3-71: batteryPackageId IS reset again (reversing v3-63) — the package
+  // dropdown moved to the rep-only Selected row and the Recommended tile
+  // shows the auto-optimized winner read-only, so customers can no longer
+  // choose a package. A non-null id in customer mode is stale rep state
+  // that would silently reprice the customer's quote.
   useEffect(() => {
     if (!isCustomer) return;
     const patch = {};
@@ -72,6 +74,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
     if (state.acCableMeters !== INCLUDED_AC_CABLE_METERS) patch.acCableMeters = INCLUDED_AC_CABLE_METERS;
     if (state.panelCount  !== null)                   patch.panelCount = null;
     if (state.batteryKwh  !== null)                   patch.batteryKwh = null;
+    if (state.batteryPackageId !== null)              patch.batteryPackageId = null;
     // Reset any inverter overrides; null per slot means "use recommended"
     if (Array.isArray(state.selectedInverters)
         && state.selectedInverters.some(s => s !== null)) {
@@ -81,7 +84,6 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
     if (Array.isArray(state.miscMaterials)
         && state.miscMaterials.some(m => m && (m.description || m.unitPrice))) {
       patch.miscMaterials = [
-        { description: '', count: 1, unitPrice: 0 },
         { description: '', count: 1, unitPrice: 0 },
       ];
     }
@@ -96,8 +98,24 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
       state.location, state.locationKm, state.roofMaterial,
       state.dcCableMeters, state.acCableMeters,
       state.panelCount, state.batteryKwh]);
+
+  // v3-68: enforce the Product-set minimum system size (Quote Limits) on the
+  // rep's manual panel override. Runs whenever the override or the floor
+  // changes (admin params load async after boot, so a restored session can
+  // sit below a floor that arrives moments later). panelCount === 0 is
+  // deliberately exempt — that's the standalone RSD/inverter retrofit path.
+  // Snapping to the recommendation (null) when the floor equals it keeps the
+  // "override" amber state honest.
+  useEffect(() => {
+    const floor = model.recommended?.minPanelsFloor || 0;
+    if (state.panelCount != null && state.panelCount > 0 && state.panelCount < floor) {
+      updateState({ panelCount: floor === model.recPanelCount ? null : floor });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.panelCount, model.recommended?.minPanelsFloor, model.recPanelCount]);
   const { recommended, recPanelCount, panelCount, recInverters, effectiveInverters,
-          sizing, recBatteryKwh, batteryKwh, activeBatteryPackage } = model;
+          sizing, recBatteryKwh, batteryKwh, activeBatteryPackage,
+          autoBatteryPackage, activeRecBatteryKwh } = model;
 
   const phase = state.phase === 3 ? 'three' : 'single';
   const phaseInverters = availableInverters(phase);
@@ -154,7 +172,16 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           // link. Any non-null value that differs from the recommendation is
           // an override.
           const panelOverridden   = state.panelCount   != null && state.panelCount   !== recPanelCount;
-          const batteryOverridden = state.batteryKwh   != null && state.batteryKwh   !== recBatteryKwh;
+          // v3-71: kWh override compares against the recommendation ON THE
+          // ACTIVE PACKAGE'S LADDER (activeRecBatteryKwh) — the auto-pack
+          // recBatteryKwh may not exist on an overridden pack's ladder.
+          const batteryOverridden = state.batteryKwh   != null && state.batteryKwh   !== activeRecBatteryKwh;
+          // Package override: an explicit pick that differs from the auto
+          // winner. Explicitly picking the pack that IS the winner pins it
+          // but stays visually non-amber (numerically identical), matching
+          // how a typed panel count equal to the rec isn't an override.
+          const packageOverridden = state.batteryPackageId != null
+            && activeBatteryPackage?.id !== autoBatteryPackage?.id;
           // System Size is a pure derivative of panel count, so it inherits
           // the panel override state for amber tinting purposes.
           const systemSizeOverridden = panelOverridden;
@@ -162,12 +189,18 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           return (
             <>
               {/* v3-63: the Battery Package selector moved from a section-
-                  level cream band (v3-54) into the Recommended BATTERY tile
-                  below (saves a full row of vertical space), and is now
-                  rendered in BOTH modes — public users can pick the package
-                  too. See the `aside` on the Battery StatTile. */}
+                  level cream band (v3-54) into the Recommended BATTERY tile.
+                  v3-71: the SELECTOR moved again — to the rep-only Selected
+                  Battery tile — and the Recommended tile's aside became a
+                  read-only display of the auto-optimized winner. Public
+                  quotes are fully auto-optimized (no package control). */}
 
-              <div style={styles.tileRowLabel}>Recommended</div>
+              {/* v3-71: optimization caption rides the row label (user-
+                  approved mockup) — one continuous small-caps line, shown in
+                  BOTH modes. */}
+              <div style={styles.tileRowLabel}>
+                Recommended — optimized to reach your target savings at the lowest cost
+              </div>
               <div style={styles.recTilesRow}>
                 <StatTile
                   label="System Size"
@@ -189,34 +222,39 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                   sub={recBatteryKwh > 0 ? 'kWh storage' : 'Not needed at this savings level'}
                   color={COLORS.brandGreen}
                   xl
-                  /* v3-64: sizing-economics tooltip beside the BATTERY label.
-                     Nudges users comparing packages toward the larger-unit
-                     option at similar total capacity. */
-                  tooltip={'A single larger battery is generally more affordable than combining several smaller batteries to reach roughly the same total capacity — fewer units and racks to purchase and install.'}
-                  /* v3-63: Battery Package selector lives INSIDE this tile
-                     (right column), replacing the v3-54 section-level band.
-                     Rendered in BOTH modes — the package is an input that
-                     reshapes the recommendation itself (kWh rounds to the
-                     selected pack's unit size and pricing follows), so
-                     public users may choose it too. Switching still nukes
-                     any rep batteryKwh override: the new pack's kWh ladder
-                     may not contain the current value (e.g. 25 kWh on the
-                     5-pack → invalid on the 16-pack stepping in 16's). */
+                  /* v3-71: tooltip reworded — the sizing-economics comparison
+                     the v3-64 copy asked the user to make is now done FOR
+                     them by the optimizer. */
+                  tooltip={'Solviva automatically compares every available battery package and selects the one that stores all your excess solar at the lowest total cost — including units, racks, ATS, and installation.'}
+                  /* v3-71: the aside is now READ-ONLY — it displays the
+                     optimizer's winning package (name + unit composition).
+                     The selectable dropdown moved to the rep-only Selected
+                     tile below; public/customer quotes are fully auto-
+                     optimized (deliberate walk-back of v3-63's public
+                     choice, user-confirmed). When the recommendation is 0
+                     ("Not needed at this savings level") the winner is
+                     meaningless, so the aside shows an em dash. */
                   aside={adminParams?.batteryPackages?.length > 0 ? (
                     <div style={styles.battPkgAside}>
                       <label style={styles.battPkgAsideLabel}>Battery Package</label>
-                      <Select
-                        value={state.batteryPackageId ?? adminParams.batteryPackages[0].id}
-                        onChange={v => {
-                          updateState({ batteryPackageId: v, batteryKwh: null });
-                        }}
-                        width={180}
-                        options={adminParams.batteryPackages.map(p => ({
-                          value: p.id, label: p.label,
-                        }))}
-                      />
+                      {recBatteryKwh > 0 ? (
+                        <>
+                          <span style={styles.battPkgAutoName}>
+                            {autoBatteryPackage?.label}
+                          </span>
+                          <span style={styles.battPkgAutoComp}>
+                            {(() => {
+                              const unit = autoBatteryPackage?.batteryUnitKwh || 5;
+                              const n = Math.ceil(recBatteryKwh / unit);
+                              return `${n} × ${unit} kWh unit${n > 1 ? 's' : ''}`;
+                            })()}
+                          </span>
+                        </>
+                      ) : (
+                        <span style={styles.battPkgAutoName}>—</span>
+                      )}
                       <span style={styles.battPkgAsideHint}>
-                        Recommendation rounds to this package's unit size
+                        Auto-selected: the lowest-cost package that stores all your excess solar
                       </span>
                     </div>
                   ) : null}
@@ -258,7 +296,14 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                       <div style={selectedTileStyles.controlRow}>
                         <NumberInput
                           value={state.panelCount ?? recPanelCount}
-                          onChange={v => updateState({ panelCount: v === recPanelCount ? null : v })}
+                          onChange={v => {
+                            // v3-68: manual entries below the Quote Limits
+                            // panel floor clamp up to it (0 stays allowed —
+                            // standalone retrofit path).
+                            const floor = recommended?.minPanelsFloor || 0;
+                            const c = (v > 0 && v < floor) ? floor : v;
+                            updateState({ panelCount: c === recPanelCount ? null : c });
+                          }}
                           min={0}
                           step={1}
                           width={100}
@@ -274,16 +319,53 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                         snap-back when different from recommendation. */}
                     <SelectedTile
                       label="Battery"
-                      amber={batteryOverridden}
-                      snapBack={batteryOverridden
-                        ? { label: `Use recommended (${recBatteryKwh} kWh)`,
+                      amber={batteryOverridden || packageOverridden}
+                      snapBack={packageOverridden
+                        // Package overridden (possibly with a kWh override
+                        // too): one link resets BOTH back to the optimizer.
+                        ? { label: `Use recommended package (${autoBatteryPackage?.label})`,
+                            onClick: () => updateState({ batteryPackageId: null, batteryKwh: null }) }
+                        : batteryOverridden
+                        ? { label: `Use recommended (${activeRecBatteryKwh} kWh)`,
                             onClick: () => updateState({ batteryKwh: null }) }
                         : null}
                     >
+                      {/* v3-71: the Battery Package dropdown lives HERE now
+                          (rep-only Selected row), replacing the v3-63
+                          placement in the Recommended tile — and it renders
+                          ABOVE the kWh selector (user correction: the kWh
+                          value is a multiple of the package's unit size, so
+                          the package is the upstream choice and reads
+                          first). First option is "Auto — <winner>" (state
+                          null); picking a named package pins it and nukes
+                          any kWh override (the new pack's ladder may not
+                          contain the current value). */}
+                      {adminParams?.batteryPackages?.length > 0 && (
+                        <div style={selectedTileStyles.battPkgSelBlock}>
+                          <label style={selectedTileStyles.battPkgSelLabel}>Battery Package</label>
+                          <Select
+                            value={state.batteryPackageId ?? ''}
+                            onChange={v => {
+                              updateState({ batteryPackageId: v || null, batteryKwh: null });
+                            }}
+                            width={190}
+                            amber={packageOverridden}
+                            options={[
+                              { value: '', label: `Auto — ${autoBatteryPackage?.label}` },
+                              ...adminParams.batteryPackages.map(p => ({
+                                value: p.id, label: p.label,
+                              })),
+                            ]}
+                          />
+                          <span style={selectedTileStyles.battPkgSelHint}>
+                            kWh options step in this package's unit size
+                          </span>
+                        </div>
+                      )}
                       <div style={selectedTileStyles.controlRow}>
                         <Select
                           value={batteryKwh}
-                          onChange={v => updateState({ batteryKwh: Number(v) === recBatteryKwh ? null : Number(v) })}
+                          onChange={v => updateState({ batteryKwh: Number(v) === activeRecBatteryKwh ? null : Number(v) })}
                           width={140}
                           large
                           amber={batteryOverridden}
@@ -340,7 +422,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                       Trigger covers both "rec is positive but selected is
                       bigger" and "rec is 0 but rep added a battery
                       anyway" via the same > comparison. */}
-                  {batteryOverridden && batteryKwh > recBatteryKwh && (
+                  {batteryOverridden && batteryKwh > activeRecBatteryKwh && (
                     <div style={styles.oversizedBatteryHint}>
                       <strong>Why a larger battery?</strong> Beneficial only
                       if there are days your electricity consumption is
@@ -361,7 +443,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                       amber-palette style as the oversized hint and
                       dismiss on snap-back to rec. Mutually exclusive
                       with each other and with the oversized hint above. */}
-                  {batteryOverridden && batteryKwh === 0 && recBatteryKwh > 0 && (
+                  {batteryOverridden && batteryKwh === 0 && activeRecBatteryKwh > 0 && (
                     <div style={styles.oversizedBatteryHint}>
                       <strong>Why no battery?</strong> Without battery storage,
                       your daytime solar production that exceeds your immediate
@@ -370,7 +452,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                       you'd pay to buy that energy back at night.
                     </div>
                   )}
-                  {batteryOverridden && batteryKwh > 0 && batteryKwh < recBatteryKwh && (
+                  {batteryOverridden && batteryKwh > 0 && batteryKwh < activeRecBatteryKwh && (
                     <div style={styles.oversizedBatteryHint}>
                       <strong>Why a smaller battery?</strong> A battery
                       smaller than recommended stores less of your daytime
@@ -656,7 +738,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           the customer (e.g. roof reinforcement). Hidden from customer view. */}
       {!isCustomer && (
         <Subsection title="2F · Add MISCELLANEOUS MATERIALS, LABOR &amp; OTHER SERVICES"
-                    hint="optional — up to 2 free-form line items">
+                    hint="optional — up to six free-form line items">
           <div style={miscStyles.tableWrap}>
             <table className="step2g-misc-table" style={miscStyles.table}>
               <thead>
@@ -664,12 +746,14 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                   <th style={{ ...miscStyles.th, width: '45%' }}>Description</th>
                   <th style={{ ...miscStyles.th, width: '15%' }}>Count</th>
                   <th style={{ ...miscStyles.th, width: '20%' }}>Unit price (₱)</th>
-                  <th style={{ ...miscStyles.th, width: '20%', textAlign: 'right' }}>Total</th>
+                  <th style={{ ...miscStyles.th, width: '18%', textAlign: 'right' }}>Total</th>
+                  <th style={{ ...miscStyles.th, width: 28 }} aria-label="Remove" />
                 </tr>
               </thead>
               <tbody>
                 {state.miscMaterials.map((row, i) => {
                   const total = (row.count || 0) * (row.unitPrice || 0);
+                  const canRemove = state.miscMaterials.length > MISC_MIN_ROWS && i >= MISC_MIN_ROWS;
                   return (
                     <tr key={i}>
                       <td style={miscStyles.td}>
@@ -708,12 +792,49 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                       <td style={{ ...miscStyles.td, textAlign: 'right', fontWeight: 600 }}>
                         {total > 0 ? fmt.peso(total) : '—'}
                       </td>
+                      <td style={miscStyles.removeCell}>
+                        {canRemove && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              updateState({
+                                miscMaterials: state.miscMaterials.filter((_, idx) => idx !== i),
+                              });
+                            }}
+                            style={miscStyles.removeBtn}
+                            aria-label={`Remove line item ${i + 1}`}
+                            title="Remove this row"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
+          {state.miscMaterials.length < MISC_MAX_ROWS ? (
+            <button
+              type="button"
+              onClick={() => {
+                updateState({
+                  miscMaterials: [
+                    ...state.miscMaterials,
+                    { description: '', count: 1, unitPrice: 0 },
+                  ],
+                });
+              }}
+              style={miscStyles.addBtn}
+            >
+              + Add line item
+            </button>
+          ) : (
+            <div style={miscStyles.maxHint}>
+              Up to six line items — increase a row's Count for repeated items.
+            </div>
+          )}
         </Subsection>
       )}
     </SectionCard>
@@ -802,6 +923,28 @@ const selectedTileStyles = {
     border: '1px solid #FCD34D',
     borderRadius: 8,
     padding: '14px 16px',
+  },
+  // v3-71: stacked Battery Package block at the TOP of the Selected Battery
+  // tile (above the kWh dropdown — the package determines the kWh ladder's
+  // step, so it reads first). Left-aligned, unlike the right-aligned aside
+  // in the Recommended tile.
+  battPkgSelBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 4,
+    marginBottom: 10,
+  },
+  battPkgSelLabel: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: COLORS.textBody,
+    letterSpacing: 0.2,
+  },
+  battPkgSelHint: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontStyle: 'italic',
   },
   label: {
     fontSize: 11,
@@ -924,6 +1067,19 @@ const styles = {
     fontStyle: 'italic',
     textAlign: 'right',
   },
+  // v3-71: read-only auto-winner display in the Recommended Battery tile
+  // (the selectable dropdown moved to the Selected tile).
+  battPkgAutoName: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: COLORS.brandGreen,
+    textAlign: 'right',
+  },
+  battPkgAutoComp: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    textAlign: 'right',
+  },
   // Sub-row label that sits above each of the two tile rows in 2A
   // ("Recommended", "Selected"). Same uppercase muted treatment as the
   // tile labels themselves, but slightly more prominent letter spacing
@@ -1040,6 +1196,12 @@ const inverterStyles = {
   },
 };
 
+// 2F misc line items — dynamic add/remove, mirroring the Step 1 DeviceTable
+// pattern. Floor of 1 (row 0 never gets a ✕); cap of 6 protects the
+// fixed-size PDF quote-summary snapshot from overflow.
+const MISC_MIN_ROWS = 1;
+const MISC_MAX_ROWS = 6;
+
 const miscStyles = {
   tableWrap: { overflowX: 'auto', maxWidth: '100%', minWidth: 0 },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
@@ -1054,4 +1216,42 @@ const miscStyles = {
     borderBottom: `1px solid ${COLORS.divider}`,
   },
   td: { padding: '6px 8px', verticalAlign: 'middle' },
+  // Remove-row column — narrow, centered, reserved even when empty so the
+  // table columns don't jump as rows cross the removable threshold.
+  removeCell: { padding: '6px 4px', textAlign: 'center', width: 28 },
+  removeBtn: {
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    color: COLORS.textMuted,
+    fontSize: 18,
+    lineHeight: 1,
+    width: 24,
+    height: 24,
+    padding: 0,
+    borderRadius: 4,
+    fontFamily: 'inherit',
+  },
+  // Add-row button — inline dashed ghost, flush-left under the table.
+  addBtn: {
+    marginTop: 8,
+    background: 'transparent',
+    border: `1px dashed ${COLORS.divider}`,
+    color: COLORS.brandGreen,
+    fontSize: 13,
+    fontWeight: 500,
+    padding: '6px 14px',
+    borderRadius: 6,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  // Replaces the add button at the cap — muted, non-shouting.
+  maxHint: {
+    marginTop: 8,
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: COLORS.textMuted,
+    lineHeight: 1.5,
+    paddingLeft: 4,
+  },
 };

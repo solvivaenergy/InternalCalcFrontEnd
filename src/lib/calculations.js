@@ -218,7 +218,16 @@ export function computeRecommendedPanels(inputs, adminParams) {
   const panelWatts = phase === 'three' ? PANEL_SETTINGS.threePhase.panelWatts
                                        : PANEL_SETTINGS.singlePhase.panelWatts;
   const Q34 = desiredSavingsPct * Q32 * 1000 / panelWatts / adminParams.kWhPerKwpPerDay;
-  const W7 = Math.ceil(Q34);                      // recommended panel count
+  // v3-68: Product-settable minimum system size. DELIBERATE DEVIATION from the
+  // Excel mirror (the workbook has no equivalent knob): the recommendation is
+  // floored at the panel-count equivalent of adminParams.minSystemKwp. Inert
+  // at the shipped default of 0 (floor = 0 panels → Math.max is a no-op), so
+  // the Excel-mirrored value W7 = ROUNDUP(Q34) is unchanged until Product
+  // raises the limit. minPanelsFloor is exported for the Step 2A override
+  // input, which clamps manual entries to the same floor (0 stays allowed for
+  // standalone RSD/inverter retrofit orders).
+  const minPanelsFloor = Math.ceil(((adminParams.minSystemKwp || 0) * 1000) / panelWatts);
+  const W7 = Math.max(Math.ceil(Q34), minPanelsFloor); // recommended panel count
 
   // Validity warning: if Q27 < 0, user's device list claims more kWh than the
   // bill suggests — Excel shows "Something doesn't add up."
@@ -236,6 +245,7 @@ export function computeRecommendedPanels(inputs, adminParams) {
     dailyCapacityNeeded: Q32,
     rawRecommendation: Q34,
     recommendedPanelCount: W7,
+    minPanelsFloor,
     panelWatts,
     inconsistent,
   };
@@ -245,7 +255,7 @@ export function computeRecommendedPanels(inputs, adminParams) {
 // Excel: Y25 = ROUNDUP(ROUND(Schedule!G37, 0) / 5, 0) * 5
 // This requires running the 24-hour schedule (which depends on panel count).
 // We call this from the schedule module instead, after the day-curve is built.
-// See: lib/schedule.js → recommendedBatteryKwh()
+// See: lib/schedule.js → batteryDailyExcess() + roundBatteryKwhToPackage()
 
 // ─── Filter available inverters and sort descending ──────────────────────────
 // Excel Inventory!G8:J40 = SORT(C8:F40, 4, 1) — sort by Available descending.
@@ -665,7 +675,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     rto60Price: toRto(locationDirect),
   });
 
-  // 12. Misc materials (V35:Y36 — up to 2 free-form lines)
+  // 12. Misc materials (V35:Y36 — up to 6 free-form lines, dynamic)
   (miscMaterials || []).forEach((row, i) => {
     if (!row.description || !row.count || !row.unitPrice) {
       items.push({ key: `misc${i}`, description: '', directPrice: 0, rto60Price: 0 });
@@ -701,6 +711,33 @@ export function buildPackageLineItems(state, adminParams, schedule) {
 // Returns: monthly payment, DP amount, total balance, all the fields shown in
 // Step 3 of the Calculator.
 // =============================================================================
+
+// ─── v3-75: tiered minimum-DP resolution ─────────────────────────────────────
+// Resolves the effective minimum down-payment fraction for a quote from the
+// Product-configured adminParams.minDpTiers table, keyed on the quote's
+// "Net Price (before DP Discount)" (AI9 = terms.totalPaymentsOverTenor).
+// The applicable tier is the LAST row whose fromNetPrice ≤ netPrice.
+// Pure function — no pricing impact; it only gates which Step 3A options the
+// UI offers. Defensive: sorts a copy (server enforces ascending order, but a
+// hand-edited blob shouldn't break the floor), tolerates a missing/empty
+// array (→ 0, no floor), and clamps each tier's fraction to [0, 0.5] to match
+// the server-side validation bounds.
+export function resolveMinDpPct(minDpTiers, netPrice) {
+  if (!Array.isArray(minDpTiers) || minDpTiers.length === 0) return 0;
+  const sorted = [...minDpTiers].sort(
+    (a, b) => (a.fromNetPrice || 0) - (b.fromNetPrice || 0)
+  );
+  let pct = 0;
+  for (const t of sorted) {
+    const from = Number(t.fromNetPrice) || 0;
+    if ((Number(netPrice) || 0) >= from) {
+      pct = Math.max(0, Math.min(0.5, Number(t.minDpPct) || 0));
+    } else {
+      break;
+    }
+  }
+  return pct;
+}
 
 export function computePaymentTerms(state, adminParams, packageData) {
   const { tenor, downPaymentPct, promoCode } = state;

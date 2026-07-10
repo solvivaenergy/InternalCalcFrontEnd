@@ -28,7 +28,6 @@
 
 import React, { useState } from 'react';
 import { AUTH } from '../config.js';
-import { assetPath } from '../lib/assetPath.js';
 import { PasswordInput } from './ui.jsx';
 
 // Session flag — set to '1' on successful password entry; checked by App.jsx
@@ -80,7 +79,7 @@ export default function MaintenanceGate({ onUnlock, agent, brand }) {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <img src={assetPath('logo-full-v2.png')} alt="Solviva Energy" style={styles.logo} />
+        <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} />
 
         <h1 style={styles.heroHeadline}>We'll be right back.</h1>
         <p style={styles.subtitle}>

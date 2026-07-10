@@ -187,9 +187,12 @@ export const ADMIN_PARAMS = {
   // duplicate labels — important when Solviva stocks two same-capacity
   // batteries from different brands like BYD vs. another vendor).
   //
-  // Math parity: the first pack here ("5 kWh") preserves v3-53's exact
-  // values — a default-state customer quote will produce identical numbers
-  // to v3-53 (bit-exact). The "16 kWh" pack is genuinely new pricing.
+  // v3-71: seed values re-synced to the LIVE admin blob (per user direction,
+  // screenshots supplied). The old "legacy D117..." v3-53-parity values are
+  // gone — fresh-blob environments now boot with the same Pylontech pricing
+  // production runs on. NOTE this deliberately breaks the historical
+  // "bit-exact to v3-53" property of default-state quotes; the smoke harness
+  // goldens were re-baselined in the same release (see HANDOFF v3-71).
   //
   // Defaults must always contain at least 1 pack. Admin UI in Inventory
   // enforces the floor (× Delete button disabled when only 1 pack remains).
@@ -208,32 +211,32 @@ export const ADMIN_PARAMS = {
   batteryPackages: [
     {
       id: 'pkg5kwh01',
-      label: '5 kWh',
+      label: '5 kWh Pylontech',
       batteryUnitKwh: 5,
-      batteryUnitPrice: 91898,           // legacy D117
+      batteryUnitPrice: 90099,
       batteryRackCapacity: 3,
-      batteryRackPrice: 7582,            // legacy D118
-      atsPrice: 9099,                    // legacy D119
-      criticalLoadsMaterials: 3336,      // legacy D120
-      laborWithSolarInstall: 15923,      // legacy D121
-      standaloneLabor: 71200,            // legacy D122
+      batteryRackPrice: 17807,
+      atsPrice: 10684,
+      criticalLoadsMaterials: 37393,
+      laborWithSolarInstall: 32942,
+      standaloneLabor: 44516,
     },
     {
       id: 'pkg16kw01',
-      label: '16 kWh',
+      label: '16 kWh Pylontech',
       batteryUnitKwh: 16,
-      batteryUnitPrice: 295000,
-      batteryRackCapacity: 4,
-      batteryRackPrice: 23000,
-      atsPrice: 9099,
-      criticalLoadsMaterials: 3336,
-      laborWithSolarInstall: 15923,
-      standaloneLabor: 71200,
+      batteryUnitPrice: 214741,
+      batteryRackCapacity: 1,
+      batteryRackPrice: 0,
+      atsPrice: 10684,
+      criticalLoadsMaterials: 37393,
+      laborWithSolarInstall: 32942,
+      standaloneLabor: 44516,
     },
   ],
 
   // ─── Schedule constants (Admin C125:C134) ──────────────────────────────────
-  kWhPerKwpPerDay: 3.6,                  // C125 — daily yield assumption (PH, ~18° tilt)
+  kWhPerKwpPerDay: 3.8,                  // C125 — daily yield assumption (PH, ~18° tilt)
   batteryEfficiency: 0.92,               // C126 — round-trip
   batteryDepthOfDischarge: 0.95,         // C127 — usable fraction
   panelAnnualDegradation: 0.005,         // C128 — 0.5%/yr loss (also used in NPER for payback)
@@ -258,6 +261,58 @@ export const ADMIN_PARAMS = {
   // users on their next page load. Bundled fallback in DEFAULTS.quoteValidityDays
   // is used until paramsService finishes loading on boot.
   quoteValidityDays: 30,
+
+  // ─── Quote limits (NEW v3-68) ──────────────────────────────────────────────
+  // Product-settable floors/caps on what reps and customers can select.
+  // Defaults are deliberately non-restrictive (no limit at all) so behavior is
+  // byte-identical to pre-v3-68 until Product edits them in Admin → Product
+  // tab → "Quote Limits". Persisted via the parameters API like all keys.
+  //   minSystemKwp      — floors the Step 2A recommendation AND the Selected-
+  //                       panels override at ceil(minSystemKwp × 1000 /
+  //                       panelWatts) panels. 0 = no minimum. panelCount === 0
+  //                       (standalone RSD / inverter-only retrofit orders) is
+  //                       deliberately exempt from the floor.
+  //   minDpTiers        — (v3-75, replaces the v3-68 scalar minDownPaymentPct)
+  //                       TIERED minimum down payment keyed on the quote's
+  //                       "Net Price (before DP Discount)" — i.e. AI9 =
+  //                       terms.totalPaymentsOverTenor, which depends on the
+  //                       package/promo/tenor but NOT on the DP% itself, so
+  //                       there is no circularity. Array of
+  //                       { fromNetPrice, minDpPct } rows sorted strictly
+  //                       ascending by fromNetPrice; row 0 is ALWAYS the base
+  //                       tier at fromNetPrice 0. The applicable tier is the
+  //                       last row whose fromNetPrice ≤ the quote's net price;
+  //                       its minDpPct (fraction, 0.10 = 10%) hides lower
+  //                       Step 3A options, and live/restored quotes below the
+  //                       floor snap up to the lowest allowed option. Because
+  //                       the net price moves with tenor, lengthening a tenor
+  //                       can cross a tier boundary and snap the DP up.
+  //                       Legacy blobs carrying the old scalar are migrated
+  //                       to a single-row tier in paramsService.applyOverrides
+  //                       (client) and parameters.js PUT (server) — the v3-54
+  //                       battery-keys pattern.
+  //   maxTenorMonths    — hides Step 3B tenor options above this cap;
+  //                       live/restored quotes above it snap down to the
+  //                       highest allowed option. Tenor 1 (Direct Purchase)
+  //                       is always available.
+  minSystemKwp: 0,
+  minDpTiers: [{ fromNetPrice: 0, minDpPct: 0 }],
+  maxTenorMonths: 60,
+
+  // ─── Step 1 defaults (NEW v3-70) ───────────────────────────────────────────
+  // Product-settable starting values for Step 1B (utility rate, ₱/kWh) and
+  // Step 1C (monthly bill, ₱). Consumed by makeInitialState (App.jsx), which
+  // reads this object LIVE — paramsService mutates it in place on boot — so
+  // fresh sessions and the Step 1 Reset button pick up the server values
+  // automatically once loaded. A snap in App's load().then() covers the boot
+  // race for brand-new sessions (first render happens before the fetch
+  // resolves): a field is snapped ONLY while it still equals the bundled
+  // default captured at module-import time; anything a user typed is never
+  // overwritten. v3-70 also changed the shipped rate default itself:
+  // 14.5 → 15 ₱/kWh per user direction. Excel T10/T12 are plain inputs in the
+  // workbook — no equivalent knob there (deferred Excel-sync list).
+  defaultUtilityRate: 15,
+  defaultMonthlyBill: 15000,
 
   // ─── Contact-gate password / Maintenance Mode ─────────────────────────────
   // When TRUE, the contact gate shows an "Under Maintenance" notice and a
@@ -326,6 +381,63 @@ export function resolveBatteryPackage(adminParams, batteryPackageId) {
     if (match) return match;
   }
   return list[0];
+}
+
+// ─── Battery package auto-optimizer (v3-71) ─────────────────────────────────
+// Given the raw daily excess solar (kWh, already integer-rounded by the
+// probe in schedule.js), pick the battery package that stores ALL of it at
+// the lowest TOTAL cost. Priority order per user direction:
+//   1. Minimize solar wastage — every candidate's capacity is the excess
+//      rounded UP to its unit size, so all of them capture the full excess.
+//      This priority therefore filters nothing; it's satisfied by
+//      construction.
+//   2. Minimize cost — compare the FULL battery subsystem direct price:
+//      units + racks + ATS + critical-loads materials + labor. ATS/crit/
+//      labor are currently identical across packages and mathematically
+//      cancel, but they're included deliberately (user direction) so the
+//      comparison stays correct if those line items diverge later.
+//      The labor term follows the same branch the quote itself will take:
+//      laborWithSolarInstall when solar is in the quote, standaloneLabor
+//      otherwise.
+// Tie-breakers: smaller total capacity (less stranded kWh the excess can
+// never fill), then fewer units, then earlier position in the admin list.
+//
+// dailyExcessKwh <= 0 (no battery recommended) degenerates every candidate
+// to zero cost; the tie-breakers then return the first package, which is
+// harmless — a 0-kWh recommendation stays 0 on any package, and the UI
+// shows an em dash instead of a package name.
+//
+// The comparison is on DIRECT prices. The RTO uplift is a uniform
+// multiplier on the package subtotal, so the direct-price winner is also
+// the RTO winner.
+export function optimizeBatteryPackage(adminParams, dailyExcessKwh, hasSolar) {
+  const list = adminParams?.batteryPackages || [];
+  if (list.length === 0) return resolveBatteryPackage(adminParams, null);
+  const excess = Math.max(0, dailyExcessKwh || 0);
+  let best = null;
+  for (const p of list) {
+    const unit = p.batteryUnitKwh || 1;
+    const units = excess > 0 ? Math.ceil(excess / unit) : 0;
+    const racks = units > 0 ? Math.ceil(units / (p.batteryRackCapacity || 1)) : 0;
+    const labor = hasSolar ? (p.laborWithSolarInstall || 0) : (p.standaloneLabor || 0);
+    const cost = units > 0
+      ? units * (p.batteryUnitPrice || 0)
+        + racks * (p.batteryRackPrice || 0)
+        + (p.atsPrice || 0)
+        + (p.criticalLoadsMaterials || 0)
+        + labor
+      : 0;
+    const capacity = units * unit;
+    const cand = { pkg: p, cost, capacity, units };
+    if (!best
+        || cand.cost < best.cost
+        || (cand.cost === best.cost && cand.capacity < best.capacity)
+        || (cand.cost === best.cost && cand.capacity === best.capacity
+            && cand.units < best.units)) {
+      best = cand;
+    }
+  }
+  return best.pkg;
 }
 
 // ─── Disclaimers (CALCULATOR O60, O64) ───────────────────────────────────────

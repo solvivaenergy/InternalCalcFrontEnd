@@ -217,7 +217,6 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
           Any of the 6 configured passwords unlocks. Cancel just dismisses. */}
       {authOpen && (
         <AuthDialog
-          mode="legacy"
           modal
           customTitle="View detailed quote breakdown"
           customSubtitle="Enter your access password to expand the line items."

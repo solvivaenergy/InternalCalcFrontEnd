@@ -40,6 +40,8 @@
 
 export const ADMIN_SECTIONS = {
   quoteValidity:     'Quote Validity',
+  quoteLimits:       'Quote Limits',
+  step1Defaults:     'Step 1 Defaults',
   interestRates:     'Interest Rates',
   solarPanel:        'Solar Panel & Mounting',
   variableCharges:   'Variable Charges',
@@ -71,6 +73,8 @@ const ROLE_ADMIN_SECTIONS = {
   ]),
   product: new Set([
     'quoteValidity',
+    'quoteLimits',      // v3-68 — min system size / min DP / max tenor
+    'step1Defaults',    // v3-70 — default utility rate / monthly bill
     'interestRates',
     'promoCodes',
     'maintenance',
@@ -178,6 +182,13 @@ export const PARAM_KEY_TO_SECTION = {
   promoCodes:                    'promoCodes',
   // Quote Validity
   quoteValidityDays:             'quoteValidity',
+  // Quote Limits (v3-68)
+  minSystemKwp:                  'quoteLimits',
+  minDpTiers:                    'quoteLimits',   // v3-75 — replaces scalar minDownPaymentPct
+  maxTenorMonths:                'quoteLimits',
+  // Step 1 Defaults (v3-70)
+  defaultUtilityRate:            'step1Defaults',
+  defaultMonthlyBill:            'step1Defaults',
   // Maintenance Mode
   gateAuthEnabled:               'maintenance',
 };

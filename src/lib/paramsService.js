@@ -127,6 +127,30 @@ function deepClone(v) {
   return JSON.parse(JSON.stringify(v));
 }
 
+// v3-75: migrate a blob's legacy scalar minDownPaymentPct (v3-68) to the
+// tiered minDpTiers array IN PLACE on the supplied adminParams override
+// object, then strip the legacy key. Pure with respect to module state
+// (mutates only its argument) and EXPORTED so the release smoke harness can
+// exercise the migration directly. Rules:
+//   • legacy scalar present + finite + > 0 + no tier array → synthesize
+//     [{ fromNetPrice: 0, minDpPct: <legacy> }] (preserves the floor exactly)
+//   • legacy scalar 0 / absent / invalid → nothing to preserve; the bundled
+//     default (or the blob's own minDpTiers) stands
+//   • an existing minDpTiers array ALWAYS wins over the scalar
+//   • the legacy key is deleted in every case
+export function migrateLegacyMinDp(ap) {
+  if (!ap || typeof ap !== 'object') return ap;
+  const legacy = ap.minDownPaymentPct;
+  if (
+    typeof legacy === 'number' && Number.isFinite(legacy) && legacy > 0 &&
+    !Array.isArray(ap.minDpTiers)
+  ) {
+    ap.minDpTiers = [{ fromNetPrice: 0, minDpPct: legacy }];
+  }
+  delete ap.minDownPaymentPct;
+  return ap;
+}
+
 // Apply server-supplied overrides by MUTATING the imported objects.
 // This is what makes calculations.js see the live values without refactor.
 function applyOverrides(overrides) {
@@ -177,6 +201,17 @@ function applyOverrides(overrides) {
     delete ap.batteryCriticalLoadsMaterials;
     delete ap.batteryLaborWithSolarInstall;
     delete ap.batteryStandaloneLabor;
+
+    // v3-75 legacy-blob migration: the scalar minDownPaymentPct (v3-68) was
+    // replaced by the tiered minDpTiers array. A stored blob carrying a
+    // nonzero legacy floor and no tier table rebuilds a single-row tier
+    // preserving the floor exactly — zero behavior drift across the
+    // v3-74 → v3-75 deploy boundary. The legacy key is stripped either way
+    // so it doesn't leak through Object.assign onto ADMIN_PARAMS (the
+    // v3-54 battery-keys pattern). Server-side mirror in
+    // netlify/functions/parameters.js migrates + strips on PUT so the first
+    // Save post-deploy removes the scalar from Blob storage permanently.
+    migrateLegacyMinDp(ap);
   }
 
   if (overrides.adminParams) {
@@ -205,6 +240,9 @@ function applyOverrides(overrides) {
     const battPkgsFromOverride = Array.isArray(overrides.adminParams.batteryPackages)
       ? overrides.adminParams.batteryPackages.map(p => ({ ...p }))
       : null;
+    const minDpTiersFromOverride = Array.isArray(overrides.adminParams.minDpTiers)
+      ? overrides.adminParams.minDpTiers.map(t => ({ ...t }))
+      : null;
 
     Object.assign(ADMIN_PARAMS, overrides.adminParams);
 
@@ -228,6 +266,12 @@ function applyOverrides(overrides) {
     if (battPkgsFromOverride) {
       ADMIN_PARAMS.batteryPackages = battPkgsFromOverride;
     }
+    if (minDpTiersFromOverride && minDpTiersFromOverride.length > 0) {
+      ADMIN_PARAMS.minDpTiers = minDpTiersFromOverride;
+    }
+    // (No/empty override → bundled default [{fromNetPrice:0, minDpPct:0}]
+    // stands, or the legacy migration's synthesized single-row tier if the
+    // blob carried the old scalar.)
   }
   if (overrides.panelSettings) {
     if (overrides.panelSettings.singlePhase) {

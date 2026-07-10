@@ -33,21 +33,63 @@
 //     tenor only; the post-install balance is always paid via PDCs.
 // =============================================================================
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   SectionCard, Subsection, Field, Select, TextInput,
   CalloutBox, COLORS, fmt,
 } from './ui.jsx';
+import { resolveMinDpPct } from '../lib/calculations.js';
 
 // ─── Hardcoded Step 3 dropdown value sets ────────────────────────────────────
-// These are the customer-facing options for tenor and DP%. Locked to these
-// 13 and 11 values respectively across both rep and customer modes. NOT
-// admin-editable.
+// These are the customer-facing options for tenor and DP%. The base lists are
+// locked to these 13 and 11 values respectively across both rep and customer
+// modes. v3-68: Product can now NARROW them via Quote Limits —
+// the tier resolved from adminParams.minDpTiers (v3-75) hides lower DP options and
+// adminParams.maxTenorMonths hides longer tenors (see the filters inside the
+// component). The base lists themselves are still not admin-editable.
 const TENOR_OPTIONS = [1, 3, 6, 9, 12, 18, 24, 30, 36, 42, 48, 54, 60];
 const DP_PCT_OPTIONS = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50];
 
+// Float-safe comparison epsilon for DP fractions (0.15 vs 0.15000000000002).
+const DP_EPS = 1e-9;
+
 export default function Step3PaymentTerms({ state, updateState, model, adminParams, onReset }) {
   const { terms } = model;
+
+  // ─── v3-68 / v3-75: Quote Limits (Product-settable floors/caps) ────────────
+  // Narrow the dropdown option sets per adminParams. Defaults leave both
+  // lists untouched. Server-side validation guarantees sane ranges (every
+  // tier's DP floor ≤ 0.5, tenor cap 1–60), so the filtered lists are never
+  // empty.
+  //
+  // v3-75: the DP floor is TIERED on the quote's "Net Price (before DP
+  // Discount)" — AI9 = terms.totalPaymentsOverTenor, which depends on the
+  // package, promo, and TENOR but not on the DP% itself (no circularity).
+  // Because the net price moves with the tenor, lengthening a tenor can
+  // cross a tier boundary and raise the floor mid-quote; the snap effect
+  // below then lifts the selected DP to the new lowest allowed option.
+  // Crossing DOWN a boundary loosens the floor but never auto-lowers the
+  // user's selection (the snap only ever moves DP up). The active minimum is
+  // always displayed in the 3A subsection title — both public and rep views.
+  const minDpPct  = resolveMinDpPct(adminParams.minDpTiers, terms.totalPaymentsOverTenor);
+  const maxTenor  = adminParams.maxTenorMonths || 60;
+  const dpOptions    = DP_PCT_OPTIONS.filter(p => p >= minDpPct - DP_EPS);
+  const tenorOptions = TENOR_OPTIONS.filter(t => t <= maxTenor);
+
+  // Snap live/restored quotes into the allowed ranges. Runs at render-time
+  // state, not restore-time, because admin params load asynchronously after
+  // boot — a saved session can sit outside limits that arrive moments later.
+  useEffect(() => {
+    const patch = {};
+    if (state.downPaymentPct < minDpPct - DP_EPS) {
+      patch.downPaymentPct = dpOptions[0];               // lowest allowed
+    }
+    if (state.tenor > maxTenor) {
+      patch.tenor = tenorOptions[tenorOptions.length - 1]; // highest allowed
+    }
+    if (Object.keys(patch).length > 0) updateState(patch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.downPaymentPct, state.tenor, minDpPct, maxTenor]);
 
   // Promo code feedback
   const promoCode = (state.promoCode || '').trim().toUpperCase();
@@ -67,7 +109,20 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
           Was 3B in v3-51. Moved to 3A so the section ordering matches
           temporal payment order: DP first (pre-install), then balance
           over tenor (post-install). */}
-      <Subsection title="3A · Pre-installation Down Payment">
+      {/* v3-75: the resolved tier minimum ALWAYS renders in the title —
+          both modes, every floor value including 0% — via Subsection's
+          `hint` prop (which also stacks below the title on mobile). Amber
+          = the app's standard notice color: an active constraint, not an
+          error. When a tenor change crosses a tier boundary and the DP
+          snaps up, this number is the rep's/customer's explanation. */}
+      <Subsection
+        title="3A · Pre-installation Down Payment"
+        hint={
+          <span style={{ color: COLORS.warning, fontStyle: 'normal', fontWeight: 600 }}>
+            {Number((minDpPct * 100).toFixed(1))}% minimum
+          </span>
+        }
+      >
         {/* v3-66: DP% selector and the DP-amount tile sit side-by-side in a
             single flex row (equal height via alignItems:'stretch' — the tile's
             content governs the height and the xlarge Select stretches up to
@@ -81,7 +136,7 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
             onChange={v => updateState({ downPaymentPct: Number(v) })}
             width={150}
             xlarge
-            options={DP_PCT_OPTIONS.map(p => ({
+            options={dpOptions.map(p => ({
               value: p, label: `${(p * 100).toFixed(0)}%`,
             }))}
           />
@@ -109,7 +164,7 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
             onChange={v => updateState({ tenor: Number(v) })}
             width={160}
             xlarge
-            options={TENOR_OPTIONS.map(t => ({
+            options={tenorOptions.map(t => ({
               value: t,
               label: t === 1 ? '1 month' : `${t} months`,
             }))}
@@ -140,14 +195,15 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
         ) : (
           <>
             <div className="summary-tile-grid" style={styles.dpSummaryGrid}>
+              {/* v3-67: the "Post-installation balance" tile was removed —
+                  since v3-60, finalPostInstallBalance === netBalanceOverTenor
+                  (the CC surcharge that once made them differ is gone), so the
+                  two tiles always showed the same number. Per user mockup, the
+                  "Net balance over N months" tile is the one kept; the Total
+                  Amount Due bar below still uses finalPostInstallBalance. */}
               <SummaryTile
                 label={`Net balance over ${state.tenor} month${state.tenor !== 1 ? 's' : ''}`}
                 value={fmt.peso(terms.netBalanceOverTenor)}
-              />
-              <SummaryTile
-                label="Post-installation balance"
-                value={fmt.peso(terms.finalPostInstallBalance)}
-                emphasis
               />
               <SummaryTile
                 label={`Monthly Payment for ${state.tenor} month${state.tenor !== 1 ? 's' : ''}`}

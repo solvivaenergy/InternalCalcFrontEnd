@@ -1,0 +1,42 @@
+# Netlify build configuration for Solviva Calculator
+#
+# Netlify auto-detects this file and uses these settings.
+
+[build]
+  # Vite outputs to dist/ by default
+  publish   = "dist"
+  command   = "npm run build"
+  # Where Netlify Functions live
+  functions = "netlify/functions"
+
+[build.environment]
+  # Node version for the build
+  NODE_VERSION = "20"
+
+# Friendly alias for the parameters function: /api/parameters → function
+# (must come BEFORE the SPA fallback so it's matched first).
+[[redirects]]
+  from   = "/api/parameters"
+  to     = "/.netlify/functions/parameters"
+  status = 200
+  force  = true
+
+# SPA fallback — any unknown route falls through to index.html so client-side
+# state like the agent-mode flag still works.
+# Note: paths starting with /.netlify/functions/* are handled by Netlify
+# directly and bypass this redirect.
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+
+# Cache headers for static assets
+[[headers]]
+  for = "/*.png"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

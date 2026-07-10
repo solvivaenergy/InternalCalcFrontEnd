@@ -137,12 +137,38 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     return { ok: true };
   })();
   const battPkgsValid = Array.isArray(params.batteryPackages) && params.batteryPackages.length > 0;
+  // v3-75: tiered minimum-DP table. Mirrors the server-side rules in
+  // netlify/functions/parameters.js — 1–10 rows, base row anchored at ₱0,
+  // strictly ascending thresholds, fractions within 0–50%.
+  const minDpTiersValid = (() => {
+    const t = params.minDpTiers;
+    if (!Array.isArray(t) || t.length < 1) {
+      return { ok: false, msg: 'Minimum-DP tier table cannot be empty — the ₱0 base tier must remain.' };
+    }
+    if (t.length > 10) {
+      return { ok: false, msg: 'Minimum-DP tier table is limited to 10 tiers.' };
+    }
+    if ((Number(t[0].fromNetPrice) || 0) !== 0) {
+      return { ok: false, msg: 'The first minimum-DP tier must start at ₱0 (base tier).' };
+    }
+    for (let i = 0; i < t.length; i++) {
+      const p = Number(t[i].minDpPct);
+      if (!Number.isFinite(p) || p < 0 || p > 0.5) {
+        return { ok: false, msg: `Minimum-DP tier ${i + 1}: minimum must be between 0% and 50%.` };
+      }
+      if (i > 0 && !((Number(t[i].fromNetPrice) || 0) > (Number(t[i - 1].fromNetPrice) || 0))) {
+        return { ok: false, msg: `Minimum-DP tier thresholds must be strictly ascending — tier ${i + 1} must exceed tier ${i}.` };
+      }
+    }
+    return { ok: true };
+  })();
   const validationError =
     !tiersValid       ? 'Single-phase cabling tier table cannot be empty — add at least one row before saving.' :
     !tiers3pValid     ? 'Three-phase cabling tier table cannot be empty — add at least one row before saving.' :
     !battPkgsValid    ? 'At least one battery package must remain — add a package before saving.' :
     !validityDaysValid ? 'Quote validity must be a whole number of days, 1 or more.' :
     !promosValid.ok   ? promosValid.msg :
+    !minDpTiersValid.ok ? minDpTiersValid.msg :
     null;
 
   // ─── Save / Discard ───────────────────────────────────────────────────────

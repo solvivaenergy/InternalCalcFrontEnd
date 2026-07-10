@@ -28,7 +28,6 @@ import {
   CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { fmt, COLORS, RADIANCE_CURVE_INFO } from '../ui.jsx';
-import { assetPath } from '../../lib/assetPath.js';
 
 // Color palette (v3-37: unified palette so the same hue serves as text in the
 // new Radiance Curve tooltip, as the chart stroke, and as the legend swatch
@@ -44,6 +43,53 @@ const COLOR_DEVICES_STROKE    = '#B8730D';   // canonical major-devices "voice"
 const COLOR_EXCESS_SOLAR      = '#C9E089';   // light green fill — excess solar
 const COLOR_EXCESS_STROKE     = '#6FA830';   // canonical excess-solar "voice"
 const COLOR_COVERAGE_LN       = '#1F8A4C';   // dark green line — solar coverage
+
+// ─── Custom hover tooltip ────────────────────────────────────────────────────
+// Replaces the default Recharts per-series formatter (retired v3-72). The
+// four plotted series are two physical quantities, so we group them and show
+// a subtotal for each:
+//   Consumption      = Baseload + Major Devices        (= totalLoad that hour)
+//   Solar Production = Solar Coverage + Excess Solar   (= solar that hour;
+//                      the identity min(L,S)+max(0,S−L)=S holds every hour)
+// UNITS: values are hourly-average POWER (kW), not energy — the plotted curve
+// is a rate; its area over time is the kWh shown in the totals strip. Solar
+// Production is the figure a customer's inverter would read for that hour.
+function RadianceTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0].payload || {};
+  const baseload = Number(row['Baseload'] || 0);
+  const devices  = Number(row['Major Devices'] || 0);
+  const excess   = Number(row['Excess Solar'] || 0);
+  const coverage = Number(row['Solar Coverage'] || 0);
+  const consumption = baseload + devices;
+  const production  = coverage + excess;
+  const kw = (v) => `${fmt.num(v, 2)} kW`;
+
+  const line = (name, value, color) => (
+    <div style={ttStyles.row}>
+      <span style={{ color }}>{name}</span>
+      <span style={{ color }}>{kw(value)}</span>
+    </div>
+  );
+  const subtotal = (name, value, color) => (
+    <div style={{ ...ttStyles.row, ...ttStyles.subtotal, color }}>
+      <span style={{ fontWeight: 600 }}>{name}</span>
+      <span style={{ fontWeight: 600 }}>{kw(value)}</span>
+    </div>
+  );
+
+  return (
+    <div style={tooltipStyle}>
+      <div style={ttStyles.hour}>{label}</div>
+      {line('Baseload', baseload, COLOR_BASELOAD_STROKE)}
+      {line('Major Devices', devices, COLOR_DEVICES_STROKE)}
+      {subtotal('Consumption', consumption, COLORS.textBody)}
+      {line('Solar Coverage', coverage, COLOR_COVERAGE_LN)}
+      {line('Excess Solar', excess, COLOR_EXCESS_STROKE)}
+      {subtotal('Solar Production', production, COLORS.brandGreen)}
+    </div>
+  );
+}
 
 export default function RadianceCurve({ rows, totals }) {
   // ─── Viewport tracking for legend layout ─────────────────────────────────
@@ -241,13 +287,12 @@ export default function RadianceCurve({ rows, totals }) {
                   domain={[0, yMax]}
                   tick={{ fontSize: 11, fill: COLORS.textMuted }}
                   stroke="#CCCCCC"
-                  label={{ value: 'kWh', angle: -90, position: 'insideLeft',
+                  label={{ value: 'kW', angle: -90, position: 'insideLeft',
                            style: { textAnchor: 'middle', fontSize: 11, fill: COLORS.textMuted } }}
                 />
                 <Tooltip
-                  contentStyle={tooltipStyle}
-                  formatter={(value, name) => [`${fmt.num(Number(value), 2)} kWh`, name]}
-                  labelStyle={{ color: COLORS.textBody, fontWeight: 600 }}
+                  content={<RadianceTooltip />}
+                  cursor={{ stroke: '#CCCCCC', strokeWidth: 1 }}
                 />
                 {/* v3-43: <Legend> removed — see explainer panel to the right
                     (desktop) or the collapsible "How to read this chart"
@@ -411,7 +456,7 @@ function CelestialTimeline({ trackLeft, trackRight, compact = false }) {
               transform: 'translate(-50%, 50%)',
               width: SIZE, height: SIZE,
             }}>
-              {s.kind === 'sun'     && <img src={assetPath('twinsun-v3.png')} alt=""
+              {s.kind === 'sun'     && <img src="/twinsun-v3.png" alt=""
                                             width={SIZE} height={SIZE}
                                             style={{ display: 'block' }} />}
               {s.kind === 'moon'    && <MoonGlyph    size={SIZE} />}
@@ -551,6 +596,18 @@ const tooltipStyle = {
   borderRadius: 6,
   padding: '8px 12px',
   fontSize: 12,
+};
+
+const ttStyles = {
+  hour: { fontWeight: 600, color: COLORS.textBody, marginBottom: 6 },
+  row: {
+    display: 'flex', justifyContent: 'space-between',
+    gap: 16, padding: '2px 0', whiteSpace: 'nowrap',
+  },
+  subtotal: {
+    marginTop: 3, paddingTop: 4,
+    borderTop: `1px solid ${COLORS.divider}`,
+  },
 };
 
 const annotationStyles = {

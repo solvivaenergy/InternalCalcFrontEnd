@@ -1,100 +1,92 @@
 // =============================================================================
-// AUTH DIALOG — Supabase login form with optional legacy password-gate mode
+// AUTH DIALOG — password gate for Inventory/Admin and (optionally) Rep mode
 // -----------------------------------------------------------------------------
-// Default usage — email/password login via Supabase Auth.
-// Legacy password-gate usage is still supported behind `mode="legacy"` for
-// the remaining summary / rep-mode flows that have not been migrated yet.
+// Default (admin) usage — four passwords, match order, first hit wins:
+//   • editPassword         → 'edit'        (Super Admin — edits everything)
+//   • engineeringPassword  → 'engineering' (Engineering Team)
+//   • productPassword      → 'product'     (Product Team)
+//   • viewPassword         → 'view'        (read-only)
+//
+// Rep-only usage — pass `repOnly` + `repPassword`:
+//   The dialog renders with rep-mode copy ("Sales Rep Access") and only
+//   accepts the rep password. On success, onAuth('rep') is called.
+//   This is what the footer 🔒 Rep mode lock opens.
 // =============================================================================
 
 import React, { useState } from 'react';
-import { getSupabaseClient } from '../lib/supabaseClient.js';
-import { resolveUserRole } from '../lib/supabaseAuth.js';
 import { COLORS, PasswordInput } from './ui.jsx';
 
 export default function AuthDialog({
   onAuth,
   onCancel,
-  mode = 'login',
-  // Legacy password-gate mode (used by the remaining non-Supabase flows).
-  acceptedPasswords,
-  repOnly = false,
-  repPassword,
+  // Admin tier passwords (used when repOnly is false)
+  viewPassword,
   editPassword,
   engineeringPassword,
   productPassword,
-  viewPassword,
+  // Rep-only mode
+  repOnly = false,
+  repPassword,
+  // v3-51: optional generic-accept mode for the Summary tab's Expand-detail
+  // gate. Pass an array of acceptable passwords and a callback that's called
+  // (with no arg) when ANY of them matches. Title/subtitle can be overridden
+  // to fit the specific use case. When `acceptedPasswords` is set, the
+  // repOnly/admin branches above are bypassed.
+  acceptedPasswords,
   customTitle,
   customSubtitle,
+  // v3-51: render as a centered modal overlay (semi-transparent backdrop)
+  // instead of a full-screen page. Used by the Summary tab so authenticating
+  // doesn't replace the entire view.
   modal = false,
 }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [pw, setPw] = useState('');
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
 
-  const tryAuth = async () => {
-    if (mode === 'legacy') {
-      if (Array.isArray(acceptedPasswords)) {
-        const accepted = acceptedPasswords.filter(Boolean);
-        if (accepted.includes(password)) {
-          onAuth?.();
-        } else {
-          setError('Incorrect password');
-          setPassword('');
-        }
-        return;
-      }
-      if (repOnly) {
-        if (password === repPassword) {
-          onAuth?.('rep');
-        } else {
-          setError('Incorrect password');
-          setPassword('');
-        }
-        return;
-      }
-      if (password === editPassword) {
-        onAuth?.('edit');
-      } else if (password === engineeringPassword) {
-        onAuth?.('engineering');
-      } else if (password === productPassword) {
-        onAuth?.('product');
-      } else if (password === viewPassword) {
-        onAuth?.('view');
+  const tryAuth = () => {
+    // v3-51: generic-accept path takes precedence when caller supplied a
+    // password list. Used by the Summary Expand-detail button.
+    if (Array.isArray(acceptedPasswords)) {
+      const accepted = acceptedPasswords.filter(Boolean);
+      if (accepted.includes(pw)) {
+        onAuth();
       } else {
         setError('Incorrect password');
-        setPassword('');
+        setPw('');
       }
       return;
     }
-
-    const supabase = getSupabaseClient();
-    setLoading(true);
-    setError(null);
-    try {
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (signInError) throw signInError;
-      const session = data?.session || null;
-      if (!session?.user) throw new Error('Login succeeded but no session was returned.');
-      const role = await resolveUserRole(session.user);
-      onAuth?.({ session, role });
-    } catch (err) {
-      setError(err?.message || 'Login failed');
-      setPassword('');
-    } finally {
-      setLoading(false);
+    if (repOnly) {
+      // Rep-only branch: single password, single role.
+      if (pw === repPassword) {
+        onAuth('rep');
+      } else {
+        setError('Incorrect password');
+        setPw('');
+      }
+      return;
+    }
+    // Admin branch — order matters: Super Admin first so a duplicated
+    // password (intentional or accidental) doesn't get downgraded to a
+    // lower role.
+    if (pw === editPassword) {
+      onAuth('edit');
+    } else if (pw === engineeringPassword) {
+      onAuth('engineering');
+    } else if (pw === productPassword) {
+      onAuth('product');
+    } else if (pw === viewPassword) {
+      onAuth('view');
+    } else {
+      setError('Incorrect password');
+      setPw('');
     }
   };
 
-  const title = customTitle ?? (mode === 'legacy' && repOnly ? 'Sales Rep Access' : 'Secure Sign In');
-  const subtitle = customSubtitle ?? (mode === 'legacy'
-    ? (repOnly
-      ? 'Enter the rep password to unlock the full calculator view.'
-      : 'Enter password to view or edit calculator parameters.')
-    : 'Use your Supabase email and password to continue.');
+  const title    = customTitle    ?? (repOnly ? 'Sales Rep Access' : 'Admin Access');
+  const subtitle = customSubtitle ?? (repOnly
+                    ? 'Enter the rep password to unlock the full calculator view.'
+                    : 'Enter password to view or edit calculator parameters.');
 
   // Modal-mode overlay: semi-transparent backdrop, centered card. Uses
   // position: fixed so the underlying view scrolls/renders normally
@@ -106,36 +98,14 @@ export default function AuthDialog({
       <div style={styles.card}>
         <h2 style={styles.title}>{title}</h2>
         <p style={styles.subtitle}>{subtitle}</p>
-        {mode === 'legacy' ? (
-          <PasswordInput
-            value={password}
-            onChange={e => { setPassword(e.target.value); setError(null); }}
-            onKeyDown={e => { if (e.key === 'Enter') tryAuth(); }}
-            autoFocus
-            placeholder="Password"
-            style={styles.input}
-          />
-        ) : (
-          <>
-            <input
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={e => { setEmail(e.target.value); setError(null); }}
-              onKeyDown={e => { if (e.key === 'Enter') tryAuth(); }}
-              placeholder="Email address"
-              autoFocus
-              style={styles.input}
-            />
-            <PasswordInput
-              value={password}
-              onChange={e => { setPassword(e.target.value); setError(null); }}
-              onKeyDown={e => { if (e.key === 'Enter') tryAuth(); }}
-              placeholder="Password"
-              style={styles.input}
-            />
-          </>
-        )}
+        <PasswordInput
+          value={pw}
+          onChange={e => { setPw(e.target.value); setError(null); }}
+          onKeyDown={e => { if (e.key === 'Enter') tryAuth(); }}
+          autoFocus
+          placeholder="Password"
+          style={styles.input}
+        />
         {error && <div style={styles.error}>{error}</div>}
         <div style={styles.buttonRow}>
           {onCancel && (
@@ -143,9 +113,7 @@ export default function AuthDialog({
               Cancel
             </button>
           )}
-          <button onClick={tryAuth} style={styles.button} disabled={loading}>
-            {loading ? 'Signing in…' : (mode === 'legacy' ? 'Continue →' : 'Sign in')}
-          </button>
+          <button onClick={tryAuth} style={styles.button}>Continue →</button>
         </div>
       </div>
     </div>

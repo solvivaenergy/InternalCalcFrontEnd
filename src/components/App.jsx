@@ -3,7 +3,7 @@
 // =============================================================================
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, resolveBatteryPackage } from '../data/adminParams.js';
+import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage } from '../data/adminParams.js';
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
          INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
@@ -13,7 +13,8 @@ import {
   computePaymentTerms, popularTenorsTable, systemSizing,
 } from '../lib/calculations.js';
 import {
-  buildHourlyCurve, recommendedBatteryKwh, computeCashFlows, buildAnnex,
+  buildHourlyCurve, batteryDailyExcess, roundBatteryKwhToPackage,
+  computeCashFlows, buildAnnex,
   firstPostInstallDueDate,
 } from '../lib/schedule.js';
 // pdfGenerator is imported dynamically inside handleGeneratePdf so the
@@ -29,14 +30,23 @@ import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
 import AuthDialog from './AuthDialog.jsx';
-import ProtectedAdminRoute from './ProtectedAdminRoute.jsx';
-import { assetPath } from '../lib/assetPath.js';
+
+// v3-70: Step 1 defaults are now Product-settable (ADMIN_PARAMS
+// .defaultUtilityRate / .defaultMonthlyBill). makeInitialState reads the
+// object LIVE — paramsService mutates it in place — so any call after the
+// params load (notably the Step 1 Reset button) uses the server values.
+// The two constants below capture the BUNDLED defaults at module-import
+// time, i.e. before paramsService.load() can have mutated them; they let
+// the boot-race snap in the load().then() callback distinguish "still at
+// the shipped default" from "user typed something".
+const BUNDLED_DEFAULT_RATE = ADMIN_PARAMS.defaultUtilityRate;
+const BUNDLED_DEFAULT_BILL = ADMIN_PARAMS.defaultMonthlyBill;
 
 export function makeInitialState(kind = 'all') {
   const step1 = {
     phase: 1,
-    utilityRate: 14.5,
-    monthlyBill: 15000,
+    utilityRate: ADMIN_PARAMS.defaultUtilityRate,
+    monthlyBill: ADMIN_PARAMS.defaultMonthlyBill,
     deviceRows: Array.from({ length: 2 }, () => ({
       deviceName: null, count: 1, onTime: null, offTime: null, daysPerWeek: null,
     })),
@@ -79,7 +89,6 @@ export function makeInitialState(kind = 'all') {
     // distance — matches the cable-input pattern (default = "included").
     locationKm: LUZON_FREE_TRAVEL_KM,
     miscMaterials: [
-      { description: '', count: 1, unitPrice: 0 },
       { description: '', count: 1, unitPrice: 0 },
     ],
   };
@@ -267,6 +276,26 @@ export default function App() {
       if (!mounted) return;
       setParamsLoading(false);
       setParamsLoadedFromServer(paramsService.isLoadedFromServer());
+      // v3-70: boot-race snap for the Product-settable Step 1 defaults.
+      // First render ran before this fetch resolved, so a brand-new session
+      // booted on the BUNDLED defaults. If a field still equals the bundled
+      // default and the server default differs, move it — the user hasn't
+      // touched it. Anything else (including restored sessions holding old
+      // defaults like 14.5) is left alone. Known, accepted edge: a user who
+      // deliberately typed exactly the bundled default is indistinguishable
+      // from an untouched field and would be snapped.
+      setState(s => {
+        const patch = {};
+        if (s.utilityRate === BUNDLED_DEFAULT_RATE
+            && ADMIN_PARAMS.defaultUtilityRate !== BUNDLED_DEFAULT_RATE) {
+          patch.utilityRate = ADMIN_PARAMS.defaultUtilityRate;
+        }
+        if (s.monthlyBill === BUNDLED_DEFAULT_BILL
+            && ADMIN_PARAMS.defaultMonthlyBill !== BUNDLED_DEFAULT_BILL) {
+          patch.monthlyBill = ADMIN_PARAMS.defaultMonthlyBill;
+        }
+        return Object.keys(patch).length ? { ...s, ...patch } : s;
+      });
     });
     const unsub = paramsService.subscribe(() => {
       if (!mounted) return;
@@ -347,6 +376,7 @@ export default function App() {
   }, [generatedDate, paramsRev]);
 
   const [activeTab, setActiveTab] = useState('calculator');
+  const [adminAccess, setAdminAccess] = useState('none');
   const [adminPage, setAdminPage] = useState(null);
 
   // ─── Mode: 'customer' (default, simplified public view) | 'rep' (full sales-
@@ -565,13 +595,41 @@ export default function App() {
     const sizing = systemSizing(panelCount, recommended.panelWatts, effectiveInverters, phase);
     const recommendedObj = { ...recommended, systemKwp, recommendedPanelCount: recPanelCount };
     const stateForBattRec = { ...inputs, panelCount, selectedInverters: effectiveInverters, batteryKwh: 0 };
-    const recBatteryKwh = recommendedBatteryKwh(stateForBattRec, ADMIN_PARAMS, recommendedObj);
-    const batteryKwh = state.batteryKwh ?? recBatteryKwh;
-    const fullState = { ...inputs, panelCount, selectedInverters: effectiveInverters, batteryKwh };
-    // v3-54: resolve the active battery package once and expose it on the
-    // model so consumers (Step 2 UI, Summary, PDF) can read its label/unit
-    // size without re-importing the resolver everywhere.
-    const activeBatteryPackage = resolveBatteryPackage(ADMIN_PARAMS, state.batteryPackageId);
+    // v3-71: the battery package is now an OUTPUT of the recommendation, not
+    // an input to it. Pipeline:
+    //   1. Probe the hourly curve with no battery → raw daily excess solar.
+    //   2. optimizeBatteryPackage() picks the package that stores ALL of
+    //      that excess at the lowest total cost (units + racks + ATS +
+    //      critical-loads + labor; labor branch follows hasSolar).
+    //   3. recBatteryKwh = excess rounded UP to the AUTO winner's unit size
+    //      — this is what the Recommended tile displays, pinned to the
+    //      optimizer regardless of any rep package override.
+    //   4. activeBatteryPackage = the rep's explicit pick (if any and still
+    //      existing — a deleted id silently falls back to auto) else the
+    //      auto winner. Pricing, the kWh ladder, and the annex all follow
+    //      the ACTIVE package.
+    //   5. activeRecBatteryKwh = excess re-rounded to the ACTIVE package's
+    //      unit size — the "recommended value on the active ladder". It's
+    //      what state.batteryKwh === null falls back to, and what the
+    //      Selected tile's override/amber/snap-back logic compares against
+    //      (recBatteryKwh may not exist on an overridden pack's ladder).
+    const dailyExcess = batteryDailyExcess(stateForBattRec, ADMIN_PARAMS, recommendedObj);
+    const autoBatteryPackage = optimizeBatteryPackage(ADMIN_PARAMS, dailyExcess, panelCount > 0);
+    const recBatteryKwh = roundBatteryKwhToPackage(dailyExcess, autoBatteryPackage);
+    const explicitBatteryPackage = state.batteryPackageId
+      ? (ADMIN_PARAMS.batteryPackages || []).find(p => p.id === state.batteryPackageId) || null
+      : null;
+    const activeBatteryPackage = explicitBatteryPackage || autoBatteryPackage;
+    const activeRecBatteryKwh = explicitBatteryPackage
+      ? roundBatteryKwhToPackage(dailyExcess, activeBatteryPackage)
+      : recBatteryKwh;
+    const batteryKwh = state.batteryKwh ?? activeRecBatteryKwh;
+    // fullState carries the RESOLVED package id so the calc chain
+    // (calculations.js resolveBatteryPackage call sites) prices the auto
+    // winner without knowing the optimizer exists. Downstream consumers
+    // never see a null batteryPackageId.
+    const fullState = { ...inputs, panelCount, selectedInverters: effectiveInverters, batteryKwh,
+                        batteryPackageId: activeBatteryPackage.id };
     const pkg = buildPackageLineItems(fullState, ADMIN_PARAMS, null);
     const terms = computePaymentTerms(fullState, ADMIN_PARAMS, pkg);
     const popularTenors = popularTenorsTable(fullState, ADMIN_PARAMS, pkg);
@@ -601,6 +659,7 @@ export default function App() {
       recommended, recPanelCount, panelCount, systemKwp,
       recInverters, effectiveInverters, sizing,
       recBatteryKwh, batteryKwh, activeBatteryPackage,
+      autoBatteryPackage, activeRecBatteryKwh,
       pkg, terms, popularTenors, schedule, cashFlows, annex, installDate,
     };
   }, [state, generatedDate, paramsRev]);
@@ -630,6 +689,9 @@ export default function App() {
   const quoteExpired = today > validUntil;
 
   const handleAgentClick = () => setAdminPage('inventory');
+  const handleAdminAuth = (level) => setAdminAccess(level);
+  const handleAdminLogout = () => { setAdminAccess('none'); setAdminPage(null); };
+
   // Show a brief loading screen while parameters fetch on first load.
   // Without this, customers might see stale defaults for a flash before
   // server overrides take effect — confusing if a price has been changed.
@@ -640,12 +702,21 @@ export default function App() {
           minHeight: '100vh', display: 'flex', alignItems: 'center',
           justifyContent: 'center', flexDirection: 'column', gap: 12,
         }}>
-          <img src={assetPath('logo-sun-v2.png')} alt="Solviva" width="48" height="48"
+          <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
                style={{ opacity: 0.7 }} />
           <div style={{ fontSize: 13, color: '#6B7280' }}>Loading…</div>
         </div>
       </div>
     );
+  }
+
+  if (adminPage && adminAccess === 'none') {
+    return <AuthDialog onAuth={handleAdminAuth}
+                       onCancel={() => setAdminPage(null)}
+                       viewPassword={AUTH.viewPassword}
+                       editPassword={AUTH.editPassword}
+                       engineeringPassword={AUTH.engineeringPassword}
+                       productPassword={AUTH.productPassword} />;
   }
 
   // Rep-mode auth dialog — opened from the footer 🔒 Rep lock. On success,
@@ -660,7 +731,6 @@ export default function App() {
   if (repAuthOpen) {
     return (
       <AuthDialog
-        mode="legacy"
         customTitle="Sales Rep Access"
         customSubtitle="Enter your access password to unlock the full calculator view."
         acceptedPasswords={[
@@ -676,45 +746,39 @@ export default function App() {
       />
     );
   }
-
-  const normalizedTab =
-    adminPage === 'inventory' ? 'inventory' :
-    adminPage === 'engineering' ? 'engineering' :
-    adminPage === 'product' ? 'product' :
-    'engineering';
-
-  if (adminPage) {
+  if (adminPage && adminAccess !== 'none') {
     // v3-54: 3-tab admin (inventory / engineering / product) with
     // MaintenanceModeBlock rendered above the tabs (always visible).
     // Default tab if `adminPage` is the legacy 'admin' string: route to
     // engineering (the closest analog to the old Admin Parameters page).
+    const normalizedTab =
+      adminPage === 'inventory' ? 'inventory' :
+      adminPage === 'engineering' ? 'engineering' :
+      adminPage === 'product' ? 'product' :
+      'engineering';
     return (
-      <ProtectedAdminRoute onCancel={() => setAdminPage(null)}>
-        {({ accessLevel, signOut }) => (
-          <div style={styles.app}>
-            <Header brand={BRAND} contact={contact} setContact={setContact}
-                    agent={agent} updateAgent={updateAgent}
-                    generatedDate={generatedDate} validUntil={validUntil}
-                    quoteExpired={quoteExpired}
-                    editing={editingContacts} setEditing={setEditingContacts} />
-            <main className="app-main" style={styles.main}>
-              <MaintenanceModeBlock
-                accessLevel={accessLevel}
-                savingDisabled={!paramsLoadedFromServer}
-              />
-              <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} />
-              <AdminShell
-                tab={normalizedTab}
-                accessLevel={accessLevel}
-                onLogout={() => { signOut(); setAdminPage(null); }}
-                savingDisabled={!paramsLoadedFromServer}
-              />
-              <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} position="bottom" />
-            </main>
-            <Footer brand={BRAND} />
-          </div>
-        )}
-      </ProtectedAdminRoute>
+      <div style={styles.app}>
+        <Header brand={BRAND} contact={contact} setContact={setContact}
+                agent={agent} updateAgent={updateAgent}
+                generatedDate={generatedDate} validUntil={validUntil}
+                quoteExpired={quoteExpired}
+                editing={editingContacts} setEditing={setEditingContacts} />
+        <main className="app-main" style={styles.main}>
+          <MaintenanceModeBlock
+            accessLevel={adminAccess}
+            savingDisabled={!paramsLoadedFromServer}
+          />
+          <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} />
+          <AdminShell
+            tab={normalizedTab}
+            accessLevel={adminAccess}
+            onLogout={handleAdminLogout}
+            savingDisabled={!paramsLoadedFromServer}
+          />
+          <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} position="bottom" />
+        </main>
+        <Footer brand={BRAND} />
+      </div>
     );
   }
 
@@ -811,7 +875,7 @@ function Header({ brand, contact, setContact, agent, updateAgent,
     return (
       <header style={styles.header}>
         <div className="header-inner" style={{ ...styles.headerInner, alignItems: 'flex-start' }}>
-          <img src={assetPath('logo-full-v2.png')} alt="Solviva Energy" style={styles.logo} className="header-logo" />
+          <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
           <div style={{ flex: 1 }}>
             <ContactEditForm
               contact={contact} setContact={setContact}
@@ -828,7 +892,7 @@ function Header({ brand, contact, setContact, agent, updateAgent,
   return (
     <header style={styles.header}>
       <div className="header-inner" style={styles.headerInner}>
-        <img src={assetPath('logo-full-v2.png')} alt="Solviva Energy" style={styles.logo} className="header-logo" />
+        <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
         <div className="header-meta" style={styles.headerMeta}>
           <div style={styles.metaRow}>
             <strong>Quote for:</strong> {contact.name || '—'}

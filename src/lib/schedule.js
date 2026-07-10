@@ -19,7 +19,6 @@
 // =============================================================================
 
 import { PV, NPER, IRR, NPV } from './calculations.js';
-import { resolveBatteryPackage } from '../data/adminParams.js';
 
 // ─── Payment due-date helper (Excel ANNEX H column) ──────────────────────────
 // Excel formula:
@@ -310,24 +309,28 @@ export function buildHourlyCurve(inputs, adminParams, recommended) {
 // result, since usableBatteryStorage just caps at dailyExcessSolar) to get
 // the unconstrained daily excess.
 //
-// v3-54: rounding step is the ACTIVE BATTERY PACKAGE'S unit size, not a
-// hardcoded 5. So a customer on the 5 kWh pack sees recommendations like
-// 20 / 25 / 30 kWh (5's); a customer on the 16 kWh pack sees 16 / 32 / 48 kWh
-// (16's). The recommendation is meaningless if it can't be assembled from
-// physical packs of the chosen size.
+// v3-54: rounding step became the active package's unit size (not a
+// hardcoded 5) — a recommendation is meaningless if it can't be assembled
+// from physical packs.
 
-export function recommendedBatteryKwh(inputs, adminParams, recommended) {
+// v3-71: split into two pieces so the battery-package OPTIMIZER can sit
+// between them. `batteryDailyExcess` runs the no-battery probe and returns
+// the raw excess; App.jsx feeds that to optimizeBatteryPackage() (in
+// adminParams.js) to pick the cheapest package, then rounds with
+// `roundBatteryKwhToPackage`. The old recommendedBatteryKwh() — which
+// resolved the pack from state.batteryPackageId — is gone: the pack is no
+// longer an input to the recommendation, it's an OUTPUT of it.
+
+export function batteryDailyExcess(inputs, adminParams, recommended) {
   // Run with no battery to get raw daily excess
   const probeInputs = { ...inputs, batteryKwh: 0, netMeteringEnabled: false };
   const probe = buildHourlyCurve(probeInputs, adminParams, recommended);
-  const dailyExcess = Math.round(probe.totals.excessSolar);
-  // Active battery package determines the rounding step. resolveBatteryPackage
-  // imported via adminParams.js; falls back to packages[0] when state has no
-  // batteryPackageId (default customer view), which by design preserves the
-  // legacy 5-kWh step.
-  const pkg = resolveBatteryPackage(adminParams, inputs.batteryPackageId);
-  const step = pkg.batteryUnitKwh || 5;
-  return Math.ceil(dailyExcess / step) * step;
+  return Math.round(probe.totals.excessSolar);
+}
+
+export function roundBatteryKwhToPackage(dailyExcess, pkg) {
+  const step = pkg?.batteryUnitKwh || 5;
+  return Math.ceil(Math.max(0, dailyExcess || 0) / step) * step;
 }
 
 // ─── Cash flow & investment metrics (Schedule!X8:AC38) ────────────────────────

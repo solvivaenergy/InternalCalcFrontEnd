@@ -10,6 +10,7 @@
 //   • CablingTierTable   — 12-row % allocation editor (Inventory tab)
 //   • BatteryPackagesEditor — N-package list with 9 fields each (Inventory tab)
 //   • PromoCodesTable    — promo code list (Product tab)
+//   • MinDpTiersTable    — tiered minimum-DP editor (Product tab, v3-75)
 //   • ContactGatePasswordToggle — Maintenance Mode checkbox (above tabs)
 //
 // All styling lives here too (Param row, Section heading, table styles) and
@@ -478,6 +479,163 @@ export function PromoCodesTable({ codes, canEdit, onChange }) {
       {canEdit && (
         <div style={{ marginTop: 12 }}>
           <button onClick={addRow} style={tableStyles.addBtn}>+ Add promo code</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── MinDpTiersTable (v3-75) ────────────────────────────────────────────────
+// Tiered minimum-down-payment editor (Product tab → Quote Limits). Each row is
+// { fromNetPrice, minDpPct }: the tier applies to quotes whose "Net Price
+// (before DP Discount)" (AI9) is ≥ fromNetPrice and < the next row's
+// threshold. Row 0 is the BASE TIER — its threshold is locked at ₱0 and the
+// row cannot be deleted, so a floor always resolves. The computed read-only
+// "Applies to" column spells out each tier's effective peso range so
+// off-by-one questions (does ₱500,000 exactly fall in tier 1 or 2?) answer
+// themselves: a row's range STARTS at its own threshold. Ascending-order
+// violations get a red input + inline message here AND block Save via
+// AdminShell's validation chain AND are rejected server-side — three layers,
+// same rule. Max 10 rows (server-enforced; the add button hides at the cap).
+export function MinDpTiersTable({ tiers, canEdit, onChange }) {
+  const rows = Array.isArray(tiers) && tiers.length > 0
+    ? tiers
+    : [{ fromNetPrice: 0, minDpPct: 0 }];
+
+  const updateRow = (idx, patch) => {
+    const next = rows.map((t, i) => i === idx ? { ...t, ...patch } : t);
+    // Row 0's threshold is structurally pinned at 0 whatever happens.
+    next[0] = { ...next[0], fromNetPrice: 0 };
+    onChange(next);
+  };
+  const deleteRow = (idx) => {
+    if (idx === 0) return; // base tier is undeletable
+    const t = rows[idx];
+    if (!window.confirm(
+      `Remove the tier starting at ₱${fmt.num(t.fromNetPrice || 0, 0)} (${Math.round((t.minDpPct || 0) * 100)}% minimum)?`
+    )) return;
+    onChange(rows.filter((_, i) => i !== idx));
+  };
+  const addRow = () => {
+    const last = rows[rows.length - 1];
+    onChange([...rows, {
+      fromNetPrice: (Number(last.fromNetPrice) || 0) + 500000,
+      minDpPct: last.minDpPct || 0,
+    }]);
+  };
+
+  // Per-row ascending check (row i must strictly exceed row i-1). Row 0 is
+  // pinned at 0 so it can never violate.
+  const rowError = (i) =>
+    i > 0 && !((Number(rows[i].fromNetPrice) || 0) > (Number(rows[i - 1].fromNetPrice) || 0))
+      ? `Must exceed ₱${fmt.num(rows[i - 1].fromNetPrice || 0, 0)} (Tier ${i})`
+      : null;
+
+  // Computed "Applies to" range text. A row's range runs from its own
+  // threshold up to (next threshold − 1); the last row is open-ended.
+  const appliesTo = (i) => {
+    const from = Number(rows[i].fromNetPrice) || 0;
+    if (rowError(i)) return '—';
+    const next = rows[i + 1];
+    if (!next || rowError(i + 1)) return `₱${fmt.num(from, 0)} and above`;
+    const to = (Number(next.fromNetPrice) || 0) - 1;
+    return `₱${fmt.num(from, 0)} – ₱${fmt.num(Math.max(from, to), 0)}`;
+  };
+
+  const pesoInputStyle = (bad) => ({
+    width: 110, padding: '4px 6px', textAlign: 'right',
+    border: `1px solid ${bad ? COLORS.error : COLORS.inputBorder}`, borderRadius: 4,
+    backgroundColor: bad ? '#FEF2F2' : COLORS.inputTint,
+    fontFamily: 'inherit', fontSize: 13, fontVariantNumeric: 'tabular-nums',
+  });
+  const pctInputStyle = {
+    width: 64, padding: '4px 6px', textAlign: 'right',
+    border: `1px solid ${COLORS.inputBorder}`, borderRadius: 4,
+    backgroundColor: COLORS.inputTint, fontFamily: 'inherit', fontSize: 13,
+    fontVariantNumeric: 'tabular-nums',
+  };
+  const rangeStyle = { fontSize: 12, color: COLORS.textMuted };
+  const errStyle = { fontSize: 11, color: COLORS.error, marginTop: 3 };
+  const baseNoteStyle = {
+    fontSize: 11, color: COLORS.textMuted, fontStyle: 'italic', marginLeft: 8,
+  };
+
+  return (
+    <div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr>
+            <th style={tableStyles.th}>Tier</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>From Net Price</th>
+            <th style={tableStyles.th}>Applies to</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Minimum DP</th>
+            {canEdit && <th style={tableStyles.th} aria-label="actions" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t, i) => {
+            const err = rowError(i);
+            return (
+              <tr key={i}>
+                <td style={tableStyles.td}>{i + 1}</td>
+                <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                  {canEdit && i > 0 ? (
+                    <>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                        <span style={{ color: COLORS.textMuted, fontSize: 12 }}>₱</span>
+                        <input type="number" style={pesoInputStyle(!!err)}
+                          value={t.fromNetPrice ?? 0}
+                          step={50000} min={0}
+                          onChange={e => updateRow(i, {
+                            fromNetPrice: Math.max(0, Math.round(parseFloat(e.target.value) || 0)),
+                          })} />
+                      </span>
+                      {err && <div style={errStyle}>{err}</div>}
+                    </>
+                  ) : (
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      ₱{fmt.num(t.fromNetPrice || 0, 0)}
+                      {i === 0 && <span style={baseNoteStyle}>base tier</span>}
+                    </span>
+                  )}
+                </td>
+                <td style={tableStyles.td}>
+                  <span style={rangeStyle}>{appliesTo(i)}</span>
+                </td>
+                <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                  {canEdit ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                      <input type="number" style={pctInputStyle}
+                        value={Math.round((t.minDpPct || 0) * 1000) / 10}
+                        step={0.5} min={0} max={50}
+                        onChange={e => updateRow(i, {
+                          minDpPct: Math.max(0, Math.min(0.5, (parseFloat(e.target.value) || 0) / 100)),
+                        })} />
+                      <span style={{ color: COLORS.textMuted }}>%</span>
+                    </span>
+                  ) : fmt.pct(t.minDpPct || 0, 0)}
+                </td>
+                {canEdit && (
+                  <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                    {i > 0 && (
+                      <button onClick={() => deleteRow(i)} style={tableStyles.deleteBtn}
+                              title="Remove this tier">×</button>
+                    )}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {canEdit && rows.length < 10 && (
+        <div style={{ marginTop: 12 }}>
+          <button onClick={addRow} style={tableStyles.addBtn}>+ Add tier</button>
+        </div>
+      )}
+      {canEdit && rows.length >= 10 && (
+        <div style={{ ...tableStyles.emptyHint, marginTop: 8 }}>
+          Up to 10 tiers.
         </div>
       )}
     </div>

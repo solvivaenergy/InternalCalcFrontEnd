@@ -13,7 +13,8 @@
 // =============================================================================
 
 import React from 'react';
-import { Checkbox, CalloutBox, COLORS, fmt } from './ui.jsx';
+import { Checkbox, CalloutBox, InfoTooltip, COLORS, fmt } from './ui.jsx';
+import { ADMIN_PARAMS } from '../data/adminParams.js';
 import RadianceCurve from './charts/RadianceCurve.jsx';
 import CoverageBars from './charts/CoverageBars.jsx';
 
@@ -104,6 +105,60 @@ export default function EnergyVisuals({ state, updateState, model, disclaimers, 
           <h3 style={styles.chartTitle}>
             Radiance Curve
           </h3>
+          {/* v3-76: tooltip expanded per user direction — the v3-72
+              inverter-vs-kWp copy (peak POWER expectations) now shares the
+              popover with seasonal ENERGY-yield expectations. The two heat/
+              derating paragraphs were merged into one to keep the 340px
+              popover from getting too tall. The 5.0 / 3.4 kWh-per-kWp range
+              is Solviva FIELD DATA (observed daily averages: bright summer
+              months vs the rainy and cooler months — the dip is driven
+              mainly by cloud cover, not temperature, so the copy says
+              "rainy and cooler" rather than just "cooler") and is
+              deliberately hardcoded. The conservative year-round average is
+              INTERPOLATED LIVE from ADMIN_PARAMS.kWhPerKwpPerDay (the
+              paramsService in-place-mutation pattern — the same live object
+              calculations.js prices from), so the sentence can never drift
+              from what the model actually assumes when Engineering edits
+              the yield. If the param is ever set OUTSIDE the observed
+              3.4–5.0 band, the copy will read oddly ("conservative average
+              of 5.5" beside "up to 5.0 observed") — at that point the copy
+              is the least of the problems, but it's the one drift scenario.
+              The v3-72 "roughly half your kWp" claim stays: peak radiance
+              ratio 0.132 × 3.8 = 0.5016 ≈ half. */}
+          <InfoTooltip
+            ariaLabel="What your system actually produces"
+            content={
+              <div style={{ fontSize: 13, lineHeight: 1.55 }}>
+                <div style={{ fontWeight: 700, color: COLORS.brandGreen, marginBottom: 6 }}>
+                  What your system actually produces
+                </div>
+                <p style={{ margin: '0 0 8px' }}>
+                  Your kWp figure is a lab rating — measured at full midday sun with
+                  cool 25&nbsp;°C panels. Real output runs lower and follows the sun:
+                  near zero at sunrise and sunset, highest around noon. Heat (a big
+                  factor here in the Philippines), dust, and cabling and inverter
+                  losses trim it further — expect a clear-day midday peak of{' '}
+                  <strong>roughly half your kWp rating</strong>.
+                </p>
+                <p style={{ margin: '0 0 8px' }}>
+                  Seasons and weather matter too. Solviva systems have produced daily
+                  averages of up to <strong>5.0&nbsp;kWh per kWp</strong> in the bright
+                  summer months, easing to around <strong>3.4</strong> through the
+                  rainy and cooler months. This calculator uses a conservative
+                  year-round average of{' '}
+                  <strong>
+                    {Number((ADMIN_PARAMS.kWhPerKwpPerDay).toFixed(1))}&nbsp;kWh per
+                    kWp per day
+                  </strong>{' '}
+                  — so in many months your system will outperform the projections
+                  shown here.
+                </p>
+                <p style={{ margin: 0 }}>
+                  An inverter reading below your kWp number is normal, not a fault.
+                </p>
+              </div>
+            }
+          />
         </div>
         <RadianceCurve
           rows={schedule.rows}
@@ -249,6 +304,9 @@ const styles = {
   },
   chartHeader: {
     marginBottom: 16,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
   },
   chartTitle: {
     fontSize: 14,
