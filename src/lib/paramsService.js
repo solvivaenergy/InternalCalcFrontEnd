@@ -1,8 +1,9 @@
 // =============================================================================
 // PARAMS SERVICE — fetches global parameter overrides from the backend
 // -----------------------------------------------------------------------------
-// On app boot, fetches saved overrides from the Netlify Function at
-//   /.netlify/functions/parameters
+// On app boot, fetches saved overrides from the backend API at
+//   <VITE_API_BASE_URL>/api/parameters
+// or from same-origin /api/parameters when VITE_API_BASE_URL is unset.
 // and merges them on top of the bundled defaults.
 //
 // IMPORTANT IMPLEMENTATION DETAIL: We mutate the exported objects from
@@ -14,7 +15,7 @@
 // through every function call. ES module exports are shared references, so
 // this works.
 //
-// Anything the admin saves via PUT replaces what's in Netlify Blobs storage,
+// Anything the admin saves via PUT replaces what's in backend storage,
 // which is shared across ALL users globally — so changes propagate to every
 // device that loads the app afterward.
 //
@@ -23,15 +24,20 @@
 // and disable saving. The Admin UI will detect the read-only state.
 // =============================================================================
 
-import { ADMIN_PARAMS, BASELINE_RATE, deriveThreePhaseCablingTiers } from '../data/adminParams.js';
+import {
+  ADMIN_PARAMS,
+  BASELINE_RATE,
+  deriveThreePhaseCablingTiers,
+} from "../data/adminParams.js";
 import {
   PANEL_SETTINGS,
   INVERTERS_SINGLE_PHASE,
   INVERTERS_THREE_PHASE,
-} from '../data/inventory.js';
-import { DEVICES } from '../data/devices.js';
+} from "../data/inventory.js";
+import { DEVICES } from "../data/devices.js";
 
-const API_URL = '/.netlify/functions/parameters';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const API_URL = `${API_BASE}/api/parameters`;
 
 // Snapshot of original defaults — captured at module load time so we can
 // always compute "the current state" (defaults + applied overrides) and
@@ -40,7 +46,7 @@ const ORIGINAL = {
   adminParams: deepClone(ADMIN_PARAMS),
   panelSettings: deepClone(PANEL_SETTINGS),
   invertersSinglePhase: deepClone(INVERTERS_SINGLE_PHASE),
-  invertersThreePhase:  deepClone(INVERTERS_THREE_PHASE),
+  invertersThreePhase: deepClone(INVERTERS_THREE_PHASE),
   devices: deepClone(DEVICES),
 };
 
@@ -51,7 +57,7 @@ const _subscribers = new Set();
 // defaults if the network is unreachable.
 export async function load() {
   try {
-    const res = await fetch(API_URL, { method: 'GET', cache: 'no-store' });
+    const res = await fetch(API_URL, { method: "GET", cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const overrides = await res.json();
     applyOverrides(overrides);
@@ -60,8 +66,11 @@ export async function load() {
     // Local dev or network failure → defaults stay in place. Save will be
     // disabled but the calculator still works. We log for diagnostics; the
     // UI surfaces the unreachable state via isLoadedFromServer() = false.
-    if (typeof console !== 'undefined') {
-      console.warn('[paramsService] load() failed; falling back to defaults:', err);
+    if (typeof console !== "undefined") {
+      console.warn(
+        "[paramsService] load() failed; falling back to defaults:",
+        err,
+      );
     }
     resetToDefaults();
     _loadedFromServer = false;
@@ -78,11 +87,11 @@ export async function load() {
 export async function save(snapshot, password, role) {
   try {
     const res = await fetch(API_URL, {
-      method: 'PUT',
+      method: "PUT",
       headers: {
-        'Content-Type': 'application/json',
-        'x-solviva-edit-password': password || '',
-        'x-solviva-role': role || '',
+        "Content-Type": "application/json",
+        "x-solviva-edit-password": password || "",
+        "x-solviva-role": role || "",
       },
       body: JSON.stringify(snapshot),
     });
@@ -104,12 +113,14 @@ export function getSnapshot() {
     adminParams: deepClone(ADMIN_PARAMS),
     panelSettings: deepClone(PANEL_SETTINGS),
     invertersSinglePhase: deepClone(INVERTERS_SINGLE_PHASE),
-    invertersThreePhase:  deepClone(INVERTERS_THREE_PHASE),
+    invertersThreePhase: deepClone(INVERTERS_THREE_PHASE),
     devices: deepClone(DEVICES),
   };
 }
 
-export function isLoadedFromServer() { return _loadedFromServer; }
+export function isLoadedFromServer() {
+  return _loadedFromServer;
+}
 
 // Subscribe to changes (used by App after a save persists, so all subscribed
 // components re-render with the new live values).
@@ -139,10 +150,12 @@ function deepClone(v) {
 //   • an existing minDpTiers array ALWAYS wins over the scalar
 //   • the legacy key is deleted in every case
 export function migrateLegacyMinDp(ap) {
-  if (!ap || typeof ap !== 'object') return ap;
+  if (!ap || typeof ap !== "object") return ap;
   const legacy = ap.minDownPaymentPct;
   if (
-    typeof legacy === 'number' && Number.isFinite(legacy) && legacy > 0 &&
+    typeof legacy === "number" &&
+    Number.isFinite(legacy) &&
+    legacy > 0 &&
     !Array.isArray(ap.minDpTiers)
   ) {
     ap.minDpTiers = [{ fromNetPrice: 0, minDpPct: legacy }];
@@ -155,7 +168,7 @@ export function migrateLegacyMinDp(ap) {
 // This is what makes calculations.js see the live values without refactor.
 function applyOverrides(overrides) {
   resetToDefaults();
-  if (!overrides || typeof overrides !== 'object') return;
+  if (!overrides || typeof overrides !== "object") return;
 
   // v3-54 legacy-blob migration: the 6 flat battery keys
   // (batteryPer5kWhPrice, batteryRackPer3Cap, batteryAtsPrice,
@@ -166,32 +179,35 @@ function applyOverrides(overrides) {
   // exactly. This guarantees zero math drift across the v3-53 → v3-54
   // deploy boundary. The legacy keys are stripped from the override so they
   // don't leak through Object.assign onto ADMIN_PARAMS.
-  if (overrides.adminParams && typeof overrides.adminParams === 'object') {
+  if (overrides.adminParams && typeof overrides.adminParams === "object") {
     const ap = overrides.adminParams;
-    const hasLegacyKeys = (
-      'batteryPer5kWhPrice' in ap ||
-      'batteryRackPer3Cap' in ap ||
-      'batteryAtsPrice' in ap ||
-      'batteryCriticalLoadsMaterials' in ap ||
-      'batteryLaborWithSolarInstall' in ap ||
-      'batteryStandaloneLabor' in ap
-    );
+    const hasLegacyKeys =
+      "batteryPer5kWhPrice" in ap ||
+      "batteryRackPer3Cap" in ap ||
+      "batteryAtsPrice" in ap ||
+      "batteryCriticalLoadsMaterials" in ap ||
+      "batteryLaborWithSolarInstall" in ap ||
+      "batteryStandaloneLabor" in ap;
     if (hasLegacyKeys && !Array.isArray(ap.batteryPackages)) {
       // Build a single legacy-equivalent package using the blob's values,
       // falling back to current defaults for any missing field.
       const def = ADMIN_PARAMS.batteryPackages?.[0] || {};
-      ap.batteryPackages = [{
-        id: def.id || 'pkg5kwh01',
-        label: def.label || '5 kWh',
-        batteryUnitKwh: 5,
-        batteryRackCapacity: 3,
-        batteryUnitPrice:        ap.batteryPer5kWhPrice           ?? def.batteryUnitPrice,
-        batteryRackPrice:        ap.batteryRackPer3Cap            ?? def.batteryRackPrice,
-        atsPrice:                ap.batteryAtsPrice               ?? def.atsPrice,
-        criticalLoadsMaterials:  ap.batteryCriticalLoadsMaterials ?? def.criticalLoadsMaterials,
-        laborWithSolarInstall:   ap.batteryLaborWithSolarInstall  ?? def.laborWithSolarInstall,
-        standaloneLabor:         ap.batteryStandaloneLabor        ?? def.standaloneLabor,
-      }];
+      ap.batteryPackages = [
+        {
+          id: def.id || "pkg5kwh01",
+          label: def.label || "5 kWh",
+          batteryUnitKwh: 5,
+          batteryRackCapacity: 3,
+          batteryUnitPrice: ap.batteryPer5kWhPrice ?? def.batteryUnitPrice,
+          batteryRackPrice: ap.batteryRackPer3Cap ?? def.batteryRackPrice,
+          atsPrice: ap.batteryAtsPrice ?? def.atsPrice,
+          criticalLoadsMaterials:
+            ap.batteryCriticalLoadsMaterials ?? def.criticalLoadsMaterials,
+          laborWithSolarInstall:
+            ap.batteryLaborWithSolarInstall ?? def.laborWithSolarInstall,
+          standaloneLabor: ap.batteryStandaloneLabor ?? def.standaloneLabor,
+        },
+      ];
     }
     // Strip the legacy keys regardless (whether we migrated them or there
     // are also batteryPackages alongside them — the new key wins).
@@ -229,19 +245,25 @@ function applyOverrides(overrides) {
     // Fix: clone the source arrays into local refs first, then assign without
     // aliasing.
     const tiersFromOverride = Array.isArray(overrides.adminParams.cablingTiers)
-      ? overrides.adminParams.cablingTiers.map(t => ({ ...t }))
+      ? overrides.adminParams.cablingTiers.map((t) => ({ ...t }))
       : null;
-    const tiers3pFromOverride = Array.isArray(overrides.adminParams.cablingTiersThreePhase)
-      ? overrides.adminParams.cablingTiersThreePhase.map(t => ({ ...t }))
+    const tiers3pFromOverride = Array.isArray(
+      overrides.adminParams.cablingTiersThreePhase,
+    )
+      ? overrides.adminParams.cablingTiersThreePhase.map((t) => ({ ...t }))
       : null;
     const promosFromOverride = Array.isArray(overrides.adminParams.promoCodes)
-      ? overrides.adminParams.promoCodes.map(p => ({ ...p }))
+      ? overrides.adminParams.promoCodes.map((p) => ({ ...p }))
       : null;
-    const battPkgsFromOverride = Array.isArray(overrides.adminParams.batteryPackages)
-      ? overrides.adminParams.batteryPackages.map(p => ({ ...p }))
+    const battPkgsFromOverride = Array.isArray(
+      overrides.adminParams.batteryPackages,
+    )
+      ? overrides.adminParams.batteryPackages.map((p) => ({ ...p }))
       : null;
-    const minDpTiersFromOverride = Array.isArray(overrides.adminParams.minDpTiers)
-      ? overrides.adminParams.minDpTiers.map(t => ({ ...t }))
+    const minDpTiersFromOverride = Array.isArray(
+      overrides.adminParams.minDpTiers,
+    )
+      ? overrides.adminParams.minDpTiers.map((t) => ({ ...t }))
       : null;
 
     Object.assign(ADMIN_PARAMS, overrides.adminParams);
@@ -257,7 +279,8 @@ function applyOverrides(overrides) {
       // LIVE single-phase tiers via the uplift factors so the seed tracks any
       // admin customizations — not from the bundled code defaults. It becomes
       // a persisted, independently-editable key on the next admin Save.
-      ADMIN_PARAMS.cablingTiersThreePhase = deriveThreePhaseCablingTiers(tiersFromOverride);
+      ADMIN_PARAMS.cablingTiersThreePhase =
+        deriveThreePhaseCablingTiers(tiersFromOverride);
     }
     // (No override at all → bundled default from adminParams.js stands.)
     if (promosFromOverride) {
@@ -275,10 +298,16 @@ function applyOverrides(overrides) {
   }
   if (overrides.panelSettings) {
     if (overrides.panelSettings.singlePhase) {
-      Object.assign(PANEL_SETTINGS.singlePhase, overrides.panelSettings.singlePhase);
+      Object.assign(
+        PANEL_SETTINGS.singlePhase,
+        overrides.panelSettings.singlePhase,
+      );
     }
     if (overrides.panelSettings.threePhase) {
-      Object.assign(PANEL_SETTINGS.threePhase, overrides.panelSettings.threePhase);
+      Object.assign(
+        PANEL_SETTINGS.threePhase,
+        overrides.panelSettings.threePhase,
+      );
     }
   }
   if (Array.isArray(overrides.invertersSinglePhase)) {
@@ -310,7 +339,7 @@ function resetToDefaults() {
 
   // Reset panel settings
   Object.assign(PANEL_SETTINGS.singlePhase, ORIGINAL.panelSettings.singlePhase);
-  Object.assign(PANEL_SETTINGS.threePhase,  ORIGINAL.panelSettings.threePhase);
+  Object.assign(PANEL_SETTINGS.threePhase, ORIGINAL.panelSettings.threePhase);
 
   // Reset inverter arrays
   INVERTERS_SINGLE_PHASE.length = 0;
@@ -329,4 +358,3 @@ function resetToDefaults() {
 }
 
 export { BASELINE_RATE };
-
