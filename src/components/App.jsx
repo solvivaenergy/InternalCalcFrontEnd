@@ -3,7 +3,8 @@
 // =============================================================================
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage } from '../data/adminParams.js';
+import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
+         availableBatteryPackages, availableDeliveryLocations } from '../data/adminParams.js';
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
          INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
@@ -11,11 +12,12 @@ import { DEFAULTS, BRAND, AGENT, AUTH,
 import {
   computeRecommendedPanels, recommendInverters, buildPackageLineItems,
   computePaymentTerms, popularTenorsTable, systemSizing,
+  availableInverters,
 } from '../lib/calculations.js';
 import {
   buildHourlyCurve, batteryDailyExcess, roundBatteryKwhToPackage,
   computeCashFlows, buildAnnex,
-  firstPostInstallDueDate,
+  firstPostInstallDueDate, optimizeSystem,
 } from '../lib/schedule.js';
 // pdfGenerator is imported dynamically inside handleGeneratePdf so the
 // jsPDF + jspdf-autotable bundle (~140 KB gzipped) only loads when a rep
@@ -23,6 +25,7 @@ import {
 // lean — customers never see the button so they never trigger the import.
 import * as paramsService from '../lib/paramsService.js';
 import { isValidPhPhone, formatPhPhone } from '../lib/validation.js';
+import { buildLeadPayload, submitLead, makeLeadRef, LEAD_CONSENT_TEXT } from '../lib/lead.js';
 
 import MaintenanceGate, { readGatePass } from './MaintenanceGate.jsx';
 import Calculator from './Calculator.jsx';
@@ -30,6 +33,7 @@ import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
 import AuthDialog from './AuthDialog.jsx';
+import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
 
 // v3-70: Step 1 defaults are now Product-settable (ADMIN_PARAMS
 // .defaultUtilityRate / .defaultMonthlyBill). makeInitialState reads the
@@ -53,6 +57,22 @@ export function makeInitialState(kind = 'all') {
   };
   const step2 = {
     desiredSavingsPct: 0.5,
+    // v3-110 — Step 2A optimization objective: 'panels' (default — the
+    // standard W7 sizing, byte-identical to the pre-v3-110 pipeline) |
+    // 'battery' | 'cost' (optimizeSystem sweep). A legitimate PUBLIC
+    // customer choice — deliberately NOT reset by the customer-mode safety
+    // net in Step2Packages. Additive with a safe default, so restored
+    // pre-v3-110 sessions boot into 'panels' → no STATE_RECORD_VERSION bump.
+    optimizationMode: 'panels',
+    // v3-136 — "Size panels for peaks and batteries for valleys". When true
+    // (and a sub-7-day device exists) the optimizeSystem sweep certifies
+    // against corner days instead of the average day: savings on the max-load
+    // day, absorb-all on the max-excess day. A PUBLIC customer choice
+    // (locked decision 1) — not reset by the customer-mode safety net. At a
+    // 100% target with a sub-7-day device the model FORCES it on (Variant B:
+    // the average-week system cannot deliver a true 100%). Additive with a
+    // safe default → no STATE_RECORD_VERSION bump (v3-110 precedent).
+    conservativeSizing: false,
     panelCount: null,
     // Total cable meters — first INCLUDED_*_CABLE_METERS (config.js) are
     // bundled at no extra charge; only meters beyond that are billed.
@@ -84,12 +104,27 @@ export function makeInitialState(kind = 'all') {
     //   'cebu'    → fixed + per-panel
     //   'siargao' → fixed + per-panel
     location: 'luzon',
-    // Distance from Rizal Park (Luzon only). Defaults to the free-travel
-    // threshold so the customer sees no surcharge until they type a larger
-    // distance — matches the cable-input pattern (default = "included").
-    locationKm: LUZON_FREE_TRAVEL_KM,
+    // v3-109 (cascade lineage, merged v3-114) — Luzon location is chosen via a
+    // Region → City cascade (src/config.js LUZON_REGIONS) instead of a
+    // free-typed km. The selected city's stored road-km from OUR PARAÑAQUE
+    // LOGISTICS HUB (v3-114 origin rebase; was Km-0/Rizal Park) drives
+    // locationKm, which still feeds the identical charge formula in
+    // calculations.js (parity with workbook AA38). Defaults to NCR / Manila
+    // (18 km — inside the 30 km free zone), so the default quote total is
+    // unchanged (a ₱0 location line, exactly as before).
+    locationRegion: 'NCR',
+    locationCity: 'Manila',
+    // Distance from the Parañaque hub (Luzon only). Derived from the selected
+    // city above; held in state so calculations.js and workbook AA38 parity
+    // are untouched.
+    locationKm: 18,
+    // v3-138 — rows gained `catalogId`: a pick from Anjon's Step 2F catalog,
+    // or the 'other' sentinel for a free-form line (the old behavior). A row
+    // restored from a pre-v3-138 session has no catalogId at all, which reads
+    // as free-form and keeps its typed description + price — so this is NOT a
+    // sessionStorage schema break and STATE_RECORD_VERSION stays put.
     miscMaterials: [
-      { description: '', count: 1, unitPrice: 0 },
+      { catalogId: 'other', description: '', count: 1, unitPrice: 0 },
     ],
   };
   const step3 = {
@@ -102,7 +137,11 @@ export function makeInitialState(kind = 'all') {
     // reps still see Step 3 and can adjust freely. STATE_RECORD_VERSION
     // bumped to 3 below so existing sessions don't restore the old
     // (60, 0.10) defaults from sessionStorage on first load post-deploy.
-    tenor: 1, downPaymentPct: 0.50,
+    // v3-100: tenor 1 → 0. Direct Purchase is now its own tenor-0 sentinel
+    // (v5.1 "Direct Purch"); the default customer scenario is STILL a
+    // Direct Purchase — only its encoding changed. Tenor 1 is now a real
+    // interest-bearing 1-month term.
+    tenor: 0, downPaymentPct: 0.50,
     promoCode: '',
   };
   if (kind === 'step1') return step1;
@@ -150,7 +189,15 @@ const CONTACT_RECORD_VERSION = 2;   // v3-61: added installAddress
 // selector renders cleanly. Customer-mode users see no change (the field
 // stays null; resolution falls back to packages[0] which is bit-exact
 // v3-53's "5 kWh" pack).
-const STATE_RECORD_VERSION   = 6;
+//
+// v3-100 BUMP: tenor 0 = Direct Purchase; tenor 1 is now an interest-bearing
+// 1-month term (v5.1 split "Direct Purch" from the numeric 1-month tenor).
+// Saved sessions hold tenor 1 — which since v3-32 has been the DEFAULT and
+// MEANT Direct Purchase. Restoring them unchanged would silently reprice the
+// most common saved scenario into a ~17–22% 1-month loan; the version wipe
+// returns them to the new defaults (tenor 0 — the same Direct Purchase
+// intent, correctly encoded).
+const STATE_RECORD_VERSION   = 8;
 
 // ─── PDF proposal requirements (v3-61) ───────────────────────────────────────
 // The PDF proposal is rep-mode-only and prints both parties' details plus an
@@ -376,6 +423,12 @@ export default function App() {
   }, [generatedDate, paramsRev]);
 
   const [activeTab, setActiveTab] = useState('calculator');
+  // v3-117 — component-price reveal on the Summary tab (Engineering /
+  // Product / Audit / Super Admin only). Lifted to App so Generate PDF can
+  // FORCE it hidden during the html2canvas snapshot — the PDF must never
+  // show the component-price breakdown (user directive). Not persisted:
+  // resets on reload, privacy-conservative.
+  const [summaryPricesShown, setSummaryPricesShown] = useState(false);
   const [adminAccess, setAdminAccess] = useState('none');
   const [adminPage, setAdminPage] = useState(null);
 
@@ -493,7 +546,6 @@ export default function App() {
     }
     setPdfGenerating(true);
     const originalTab = activeTab;
-    const originalNm = state.netMeteringEnabled;
     try {
       const html2canvasModule = await import('html2canvas');
       const html2canvas = html2canvasModule.default || html2canvasModule;
@@ -525,19 +577,27 @@ export default function App() {
         }
       };
 
-      // Step 1-4: Calculator tab + NM forced on → snapshot Visualizing
+      // Step 1-4: Calculator tab → snapshot Visualizing
+      // v3-127 — NM is NO LONGER forced on for the capture (user-directed):
+      // the PDF mirrors the calculator exactly. NM unchecked → 3 coverage
+      // bars, no NM legend chip, no NM savings note, no CFEI/NM disclosure
+      // (all already gated on-screen by nmEnabledEffective/showNm).
       setActiveTab('calculator');
-      updateState({ netMeteringEnabled: true });
       await sleep(450);
       const visualizingPng = await captureByAttr('visualizing');
 
       // Step 5-6: Summary tab → snapshot Summary
+      // v3-117 — force the component-price reveal OFF for the snapshot: the
+      // PDF never shows the per-line price breakdown, whatever an admin has
+      // toggled on screen. Restored with the other state after capture.
+      const originalPricesShown = summaryPricesShown;
+      setSummaryPricesShown(false);
       setActiveTab('summary');
       await sleep(450);
       const summaryPng = await captureByAttr('summary');
 
       // Step 7: Restore
-      updateState({ netMeteringEnabled: originalNm });
+      setSummaryPricesShown(originalPricesShown);
       setActiveTab(originalTab);
 
       // Step 8: Build PDF
@@ -551,7 +611,6 @@ export default function App() {
     } catch (err) {
       console.error('[generateProposalPdf]', err);
       // Restore on error
-      updateState({ netMeteringEnabled: originalNm });
       setActiveTab(originalTab);
       alert('PDF generation failed: ' + (err?.message || 'unknown error') +
             '\n\nIf this keeps happening, please flag it to the dev team.');
@@ -583,15 +642,85 @@ export default function App() {
 
   const model = useMemo(() => {
     const phase = state.phase === 3 ? 'three' : 'single';
-    const inputs = { ...state, phase, deviceLibrary: DEVICES };
+    // v3-106 — availability forcing happens HERE, at the top of the model,
+    // so every downstream consumer (pricing, schedule, annex, PDF, lead
+    // payload) inherits it from one place:
+    //   • RSD out of stock  → rsdEnabled forced OFF in the pricing inputs
+    //     (a stale session's true can't price an unavailable device).
+    //   • Panels out of stock (per phase) → recommendedPanelCount is already
+    //     0 from computeRecommendedPanels; the rep's panelCount override is
+    //     ALSO ignored (forced 0) below.
+    //   • Batteries all out of stock → batteryKwh forced 0 below.
+    const rsdInStock = ADMIN_PARAMS.rsdAvailable !== false;
+    // v3-116 — a persisted session may hold a delivery-location id that has
+    // since been deleted or marked out of stock. Force it back to 'luzon'
+    // (v3-106 "availability never blocks the flow") so pricing, Summary, PDF
+    // and the lead payload never see a dead id; the 2E Select then shows
+    // Luzon main island with its region/city cascade.
+    const effectiveLocation =
+      state.location === 'luzon' || state.location === 'other'
+        ? state.location
+        : (availableDeliveryLocations(ADMIN_PARAMS).some(l => l.id === state.location)
+            ? state.location : 'luzon');
+    const inputs = { ...state, phase, deviceLibrary: DEVICES,
+                     location: effectiveLocation,
+                     rsdEnabled: rsdInStock ? state.rsdEnabled : false };
     const recommended = computeRecommendedPanels(inputs, ADMIN_PARAMS);
-    const recPanelCount = recommended.recommendedPanelCount;
-    const panelCount = state.panelCount ?? recPanelCount;
+    const panelsAvailable = recommended.panelsAvailable !== false;
+    // v3-110 — Step 2A optimization objective. 'panels' (default) keeps the
+    // v3-109 pipeline BYTE-IDENTICAL: recommendation = W7 (workbook parity)
+    // + the v3-71 battery auto-optimizer, untouched below. 'battery' / 'cost'
+    // derive the recommendation from the optimizeSystem sweep instead. With
+    // panels out of stock every mode collapses to the v3-106 zero-array path
+    // (a sweep over a forced-0 array is meaningless), so sweepActive gates on
+    // panelsAvailable.
+    const optimizationMode =
+      state.optimizationMode === 'battery' || state.optimizationMode === 'cost'
+        ? state.optimizationMode : 'panels';
+    // v3-130 — EVERY mode's recommendation now comes from the sweep. Mode
+    // 'panels' is the sim-certified minimum array with store-all-excess
+    // battery (user decision (a), reversing v3-110's "Mode 1 = W7"); W7
+    // remains the panels-out-of-stock fallback and everything else it feeds.
+    const sweepActive = panelsAvailable;
+    // v3-136 — peaks-and-valleys sizing. hasSub7Device mirrors
+    // buildHourlyCurve's row-validity gate (name + count + both times) so the
+    // checkbox never renders for a row the sim would skip anyway.
+    // conservativeLocked = Variant B: at a 100% target with a sub-7-day
+    // device, conservative certification is FORCED — an average-week system
+    // cannot deliver a true 100% (the daily cap stops light-day surplus from
+    // offsetting appliance-day shortfall), so that claim must not be
+    // quotable. The user's own checkbox choice is preserved in state and
+    // restored when the lock releases.
+    const hasSub7Device = (state.deviceRows || []).some(r =>
+      r && r.deviceName && r.count && r.onTime != null && r.offTime != null
+        // v3-137 — 1–6 days only: an unset/0-day row contributes zero load
+        // (dwFrac 0), so it must not summon the checkbox/caveat (user-
+        // reported: a fresh row with days/wk "—" fired the control).
+        && (r.daysPerWeek || 0) >= 1 && (r.daysPerWeek || 0) < 7);
+    const conservativeLocked =
+      hasSub7Device && (state.desiredSavingsPct || 0) >= 1 - 1e-9;
+    const conservativeSizing =
+      hasSub7Device && (conservativeLocked || !!state.conservativeSizing);
+    const recSweep = sweepActive
+      ? optimizeSystem(optimizationMode, inputs, ADMIN_PARAMS, recommended,
+                       { conservative: conservativeSizing })
+      : null;
+    const recPanelCount = recSweep ? recSweep.panelCount
+                                   : recommended.recommendedPanelCount;
+    const panelCount = panelsAvailable ? (state.panelCount ?? recPanelCount) : 0;
     const systemKwp = panelCount * recommended.panelWatts / 1000;
     const recInverters = recommendInverters(systemKwp, phase);
-    const effectiveInverters = state.selectedInverters.map((sel, i) =>
-      sel ?? recInverters[i] ?? null
-    );
+    // v3-106 — a persisted session may hold an inverter pick that has since
+    // gone out of stock. State stores a COPY of the inverter object, so its
+    // own `available` field is stale; match by ratedKw against the LIVE
+    // in-stock list instead, and fall back to the slot's recommendation.
+    const inStockKw = new Set(availableInverters(phase).map(i => i.ratedKw));
+    const effectiveInverters = state.selectedInverters.map((sel, i) => {
+      const chosen = sel ?? recInverters[i] ?? null;
+      return (chosen && !inStockKw.has(chosen.ratedKw))
+        ? (recInverters[i] ?? null)
+        : chosen;
+    });
     const sizing = systemSizing(panelCount, recommended.panelWatts, effectiveInverters, phase);
     const recommendedObj = { ...recommended, systemKwp, recommendedPanelCount: recPanelCount };
     const stateForBattRec = { ...inputs, panelCount, selectedInverters: effectiveInverters, batteryKwh: 0 };
@@ -613,17 +742,69 @@ export default function App() {
     //      what state.batteryKwh === null falls back to, and what the
     //      Selected tile's override/amber/snap-back logic compares against
     //      (recBatteryKwh may not exist on an overridden pack's ladder).
-    const dailyExcess = batteryDailyExcess(stateForBattRec, ADMIN_PARAMS, recommendedObj);
-    const autoBatteryPackage = optimizeBatteryPackage(ADMIN_PARAMS, dailyExcess, panelCount > 0);
-    const recBatteryKwh = roundBatteryKwhToPackage(dailyExcess, autoBatteryPackage);
+    // v3-106 — the optimizer + resolver already skip out-of-stock packages;
+    // here we (a) require an explicit rep pick to still be IN STOCK (else it
+    // silently falls back to auto, same as a deleted id), and (b) force
+    // batteryKwh to 0 when EVERY package is out of stock so the placeholder
+    // package's prices never reach a line item.
+    const inStockBatteryPackages = availableBatteryPackages(ADMIN_PARAMS);
+    const anyBatteryInStock = inStockBatteryPackages.length > 0;
     const explicitBatteryPackage = state.batteryPackageId
-      ? (ADMIN_PARAMS.batteryPackages || []).find(p => p.id === state.batteryPackageId) || null
+      ? inStockBatteryPackages.find(p => p.id === state.batteryPackageId) || null
       : null;
-    const activeBatteryPackage = explicitBatteryPackage || autoBatteryPackage;
-    const activeRecBatteryKwh = explicitBatteryPackage
-      ? roundBatteryKwhToPackage(dailyExcess, activeBatteryPackage)
-      : recBatteryKwh;
-    const batteryKwh = state.batteryKwh ?? activeRecBatteryKwh;
+    let autoBatteryPackage, recBatteryKwh, activeBatteryPackage,
+        activeRecBatteryKwh, batteryKwh, optimization;
+    if (!sweepActive) {
+      // ── Panels-out-of-stock ONLY (v3-130): every in-stock mode now takes
+      //    its recommendation — battery included — from the sweep branch
+      //    below, so Mode 1's certified config is exactly what the quote
+      //    prices (the v3-71 recomputation could round a boundary-case
+      //    battery below what the certification used).
+      const dailyExcess = batteryDailyExcess(stateForBattRec, ADMIN_PARAMS, recommendedObj);
+      autoBatteryPackage = optimizeBatteryPackage(ADMIN_PARAMS, dailyExcess, panelCount > 0);
+      recBatteryKwh = anyBatteryInStock
+        ? roundBatteryKwhToPackage(dailyExcess, autoBatteryPackage)
+        : 0;
+      activeBatteryPackage = explicitBatteryPackage || autoBatteryPackage;
+      activeRecBatteryKwh = explicitBatteryPackage
+        ? roundBatteryKwhToPackage(dailyExcess, activeBatteryPackage)
+        : recBatteryKwh;
+      batteryKwh = anyBatteryInStock ? (state.batteryKwh ?? activeRecBatteryKwh) : 0;
+      optimization = { mode: 'panels', feasible: true, achievedPct: null,
+                       targetPct: state.desiredSavingsPct };
+    } else {
+      // ── v3-130: ALL in-stock modes route here. 'battery'/'cost' size the
+      //    battery to the TARGET; 'panels' starts from the v3-71 store-all-
+      //    excess rec and steps up only at rounding boundaries — the sweep's
+      //    certified config IS the recommendation, battery included.
+      autoBatteryPackage = recSweep.batteryPackage
+        || optimizeBatteryPackage(ADMIN_PARAMS, 0, panelCount > 0);
+      recBatteryKwh = anyBatteryInStock ? recSweep.batteryKwh : 0;
+      // Active recommendation adapts to live overrides — a pinned array
+      // (panel override) and/or a pinned package — mirroring how the
+      // mode-'panels' excess probe follows the overridden array. Re-running
+      // the sweep constrained yields the recommended kWh ON THE ACTIVE
+      // LADDER (activeRecBatteryKwh semantics, v3-71).
+      const constrained = (panelsAvailable && state.panelCount != null)
+        || explicitBatteryPackage != null;
+      const activeSweep = constrained
+        ? optimizeSystem(optimizationMode, inputs, ADMIN_PARAMS, recommended, {
+            fixedPanelCount: (panelsAvailable && state.panelCount != null) ? panelCount : null,
+            restrictPackageId: explicitBatteryPackage ? explicitBatteryPackage.id : null,
+            conservative: conservativeSizing,   // v3-136 — overrides certify at the same corner
+          })
+        : recSweep;
+      activeBatteryPackage = explicitBatteryPackage
+        || activeSweep.batteryPackage
+        || autoBatteryPackage;
+      activeRecBatteryKwh = anyBatteryInStock ? activeSweep.batteryKwh : 0;
+      batteryKwh = anyBatteryInStock ? (state.batteryKwh ?? activeRecBatteryKwh) : 0;
+      // The amber notice + PDF caveat read the UNCONSTRAINED sweep — the
+      // recommendation's own feasibility, not an override's.
+      optimization = { mode: optimizationMode, feasible: recSweep.feasible,
+                       achievedPct: recSweep.achievedPct,
+                       targetPct: recSweep.targetPct };
+    }
     // fullState carries the RESOLVED package id so the calc chain
     // (calculations.js resolveBatteryPackage call sites) prices the auto
     // winner without knowing the optimizer exists. Downstream consumers
@@ -632,6 +813,19 @@ export default function App() {
                         batteryPackageId: activeBatteryPackage.id };
     const pkg = buildPackageLineItems(fullState, ADMIN_PARAMS, null);
     const terms = computePaymentTerms(fullState, ADMIN_PARAMS, pkg);
+    // v3-100 — Direct Purchase IS a separate option now (v5.1 split it from the
+    // 1-month tenor): tenor 0, 0% interest, no DST, balance due in full upon
+    // installation. Lili's "%" column stays % of the NET PRICE; the two
+    // milestones are the DP at signing and the balance upon installation.
+    const dpTerms = computePaymentTerms({ ...fullState, tenor: 0 }, ADMIN_PARAMS, pkg);
+    const directPurchase = {
+      dpPct: fullState.downPaymentPct,
+      dpAmount: dpTerms.dpTotalCharge,
+      monthly: dpTerms.customerMonthlyPmt,
+      total: dpTerms.summaryTotalDue,   // = totalAmountDue for a Direct Purchase (dst 0)
+      rate: dpTerms.rtoRate,
+      financeCharge: dpTerms.totalInterest,
+    };
     const popularTenors = popularTenorsTable(fullState, ADMIN_PARAMS, pkg);
     const schedule = buildHourlyCurve(fullState, ADMIN_PARAMS, recommendedObj);
     const cashFlows = computeCashFlows(fullState, ADMIN_PARAMS, schedule, terms,
@@ -660,7 +854,21 @@ export default function App() {
       recInverters, effectiveInverters, sizing,
       recBatteryKwh, batteryKwh, activeBatteryPackage,
       autoBatteryPackage, activeRecBatteryKwh,
-      pkg, terms, popularTenors, schedule, cashFlows, annex, installDate,
+      // v3-110 — the Step 2A objective + the sweep's feasibility verdict
+      // (drives the amber notice, the PDF disclosure line, and the lead
+      // payload). mode 'panels' is always feasible:true / achievedPct null.
+      optimizationMode, optimization,
+      // v3-136 — peaks-and-valleys sizing. `conservativeSizing` is the
+      // EFFECTIVE value (state OR the 100%-target Variant-B lock);
+      // `conservativeLocked` drives the disabled checkbox + lock copy;
+      // `hasSub7Device` gates the whole control (hidden when every device
+      // runs 7 days — the corners equal the average day). Consumed by the
+      // Step 2A checkbox block, the PDF disclosure suffix, and the lead
+      // payload.
+      hasSub7Device, conservativeSizing, conservativeLocked,
+      // v3-106 — stock flags for the Step 2 UI (out-of-stock notices).
+      panelsAvailable, anyBatteryInStock, rsdInStock,
+      pkg, terms, popularTenors, directPurchase, schedule, cashFlows, annex, installDate,
     };
   }, [state, generatedDate, paramsRev]);
 
@@ -673,12 +881,15 @@ export default function App() {
   //      viewing one of them when they changed Step 3 inputs to trigger
   //      this state, land them back on Calculator where the 3C callout
   //      explains what to adjust.
+  // v3-117 — Summary + Schedule are PUBLIC (user decision 1): the
+  // customer-mode trigger is gone; only the negativeBalance bounce remains
+  // (the tabs still hide when the math would render nonsense).
   useEffect(() => {
-    if ((mode === 'customer' || model.terms.negativeBalance) &&
+    if (model.terms.negativeBalance &&
         (activeTab === 'summary' || activeTab === 'schedule')) {
       setActiveTab('calculator');
     }
-  }, [mode, activeTab, model.terms.negativeBalance]);
+  }, [activeTab, model.terms.negativeBalance]);
 
   const resetStep1 = () => setState(s => ({ ...s, ...makeInitialState('step1') }));
   const resetStep2 = () => setState(s => ({ ...s, ...makeInitialState('step2') }));
@@ -762,7 +973,7 @@ export default function App() {
                 agent={agent} updateAgent={updateAgent}
                 generatedDate={generatedDate} validUntil={validUntil}
                 quoteExpired={quoteExpired}
-                editing={editingContacts} setEditing={setEditingContacts} />
+                editing={editingContacts} setEditing={setEditingContacts} leadState={state} leadModel={model} />
         <main className="app-main" style={styles.main}>
           <MaintenanceModeBlock
             accessLevel={adminAccess}
@@ -823,7 +1034,8 @@ export default function App() {
               requireForPdf={pdfGateRequired}
               onAgentClick={handleAgentClick}
               mode={mode} onLockMode={() => setLockConfirmOpen(true)}
-              onRepLockClick={() => setRepAuthOpen(true)} />
+              onRepLockClick={() => setRepAuthOpen(true)}
+              leadState={state} leadModel={model} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             negativeBalance={model.terms.negativeBalance}
@@ -833,14 +1045,26 @@ export default function App() {
           <Calculator state={state} updateState={updateState} model={model}
                       adminParams={ADMIN_PARAMS} disclaimers={DISCLAIMERS}
                       mode={mode}
-                      resetStep1={resetStep1} resetStep2={resetStep2} resetStep3={resetStep3} />
+                      resetStep1={resetStep1} resetStep2={resetStep2} resetStep3={resetStep3}
+                      onContactRep={() => {
+                        // v3-98 — the contact form renders inside the header at
+                        // the TOP of the page. A customer clicking the Step 2A
+                        // link is scrolled down mid-page, so without this the
+                        // form opens above the viewport and the click looks dead.
+                        setEditingContacts(true);
+                        if (typeof window !== 'undefined') {
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
+                      }} />
         )}
-        {activeTab === 'summary' && mode === 'rep' && !model.terms.negativeBalance && (
+        {activeTab === 'summary' && !model.terms.negativeBalance && (
           <Summary state={state} model={model} adminParams={ADMIN_PARAMS}
                    contact={contact} agent={agent}
-                   generatedDate={generatedDate} validUntil={validUntil} />
+                   generatedDate={generatedDate} validUntil={validUntil}
+                   pricesShown={summaryPricesShown}
+                   onPricesShown={setSummaryPricesShown} />
         )}
-        {activeTab === 'schedule' && mode === 'rep' && !model.terms.negativeBalance && (
+        {activeTab === 'schedule' && !model.terms.negativeBalance && (
           <Schedule model={model} state={state}
                     contact={contact} generatedDate={generatedDate} />
         )}
@@ -848,6 +1072,35 @@ export default function App() {
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             negativeBalance={model.terms.negativeBalance}
             position="bottom" />
+      {/* v3-123 — spacer keeps the tab strip + page end visible above the
+          fixed LiveTotalBar at full scroll.
+          v3-124 — the bar now shows on ALL tabs (user-directed; was
+          Calculator-only). On Summary/Schedule a tap first switches back to
+          the Calculator, then scrolls to Step 3 once the anchor exists.
+          Still hidden under negativeBalance and from PDF snapshots. */}
+      {!model.terms.negativeBalance && (
+        <>
+          <div className="live-total-spacer" aria-hidden="true" />
+          <LiveTotalBar
+            terms={model.terms}
+            cashFlows={model.cashFlows}
+            irrYears={state.irrYears}
+            utilityRate={state.utilityRate}
+            onJumpToPricing={() => {
+              const jump = () => {
+                const el = document.getElementById('step3-pricing');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              };
+              if (activeTab !== 'calculator') {
+                setActiveTab('calculator');
+                setTimeout(jump, 80);   // let the Calculator mount first
+              } else {
+                jump();
+              }
+            }}
+          />
+        </>
+      )}
       <Footer brand={BRAND}
               mode={mode}
               onRepLockClick={() => setRepAuthOpen(true)} />
@@ -868,7 +1121,7 @@ export default function App() {
 function Header({ brand, contact, setContact, agent, updateAgent,
                   generatedDate, validUntil, quoteExpired,
                   editing, setEditing, requireForPdf, onAgentClick,
-                  mode, onLockMode, onRepLockClick }) {
+                  mode, onLockMode, onRepLockClick, leadState, leadModel }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
 
   if (editing) {
@@ -881,6 +1134,7 @@ function Header({ brand, contact, setContact, agent, updateAgent,
               contact={contact} setContact={setContact}
               agent={agent} updateAgent={updateAgent}
               mode={mode} requireAll={requireForPdf}
+              leadState={leadState} leadModel={leadModel}
               onDone={() => setEditing(false)}
             />
           </div>
@@ -961,7 +1215,19 @@ function Header({ brand, contact, setContact, agent, updateAgent,
             </button>
           )}
           <button onClick={() => setEditing(true)} style={styles.editBtn}>
-            ✎ Edit contact details
+            {mode === 'customer' ? (
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                     strokeLinejoin="round" aria-hidden="true"
+                     style={{ verticalAlign: '-2px', marginRight: 6 }}>
+                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                </svg>
+                Talk to a Solviva Rep
+              </>
+            ) : (
+              <>✎ Edit contact details</>
+            )}
           </button>
           {onAgentClick && (
             <button
@@ -990,13 +1256,22 @@ function Header({ brand, contact, setContact, agent, updateAgent,
 // a permanently unsavable state. Now `canSave = customerValid` alone;
 // the customer-facing render already handles agent.name === '' by
 // falling back to "Solviva Customer Support" automatically.
-function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requireAll = false, onDone }) {
+function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requireAll = false,
+                           leadState, leadModel, onDone }) {
   const [draftCustomer, setDraftCustomer] = useState(contact);
   const [draftAgent, setDraftAgent] = useState(agent);
   // When the form is opened by the PDF gate (requireAll), surface validation
   // immediately so the rep can see exactly which fields are missing.
   const [showErrors, setShowErrors] = useState(requireAll);
   const isCustomer = mode === 'customer';
+
+  // v3-97 — the "talk to a Solviva rep" lead flow: a customer opening the form
+  // via the header button or the Step 2A link (never the rep editor, never the
+  // PDF gate). It shows the reminder + a required DPA consent checkbox, requires
+  // the install address, and submits a lead to Solviva instead of just saving.
+  const isLeadFlow = isCustomer && !requireAll;
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState('idle'); // idle | sending | sent | error
 
   const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || '').trim());
 
@@ -1005,9 +1280,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     custName:  !draftCustomer.name?.trim(),
     custEmail: !validEmail(draftCustomer.email),
     custMobile: !isValidPhPhone(draftCustomer.mobile),
-    // Install address is only *required* at the PDF gate; in ordinary edits
-    // it's optional so customer-mode edits stay frictionless.
-    custAddress: requireAll && !draftCustomer.installAddress?.trim(),
+    // Install address is required at the PDF gate AND in the lead flow (it's the
+    // authoritative "where" Solviva receives); optional for ordinary rep edits.
+    custAddress: (requireAll || isLeadFlow) && !draftCustomer.installAddress?.trim(),
     agentName:  !draftAgent.name?.trim(),
     agentEmail: !validEmail(draftAgent.email),
     agentPhone: !isValidPhPhone(draftAgent.phone),
@@ -1017,15 +1292,38 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   // Agent details are required only when the PDF gate opened this form.
   const agentValid = !requireAll || isCustomer
     || (!err.agentName && !err.agentEmail && !err.agentPhone);
-  const canSave = customerValid && agentValid;
+  // The lead flow additionally requires DPA consent.
+  const canSave = customerValid && agentValid && (!isLeadFlow || consentGiven);
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) { setShowErrors(true); return; }
     setContact(draftCustomer);
     // Only persist agent edits in rep mode — customer mode doesn't render
     // the agent block, so draftAgent === agent (initial value) and this
     // is a no-op, but the explicit guard makes intent clear.
     if (!isCustomer) updateAgent(draftAgent);
+
+    // v3-97 — the lead flow submits to Solviva rather than just closing.
+    if (isLeadFlow) {
+      setSubmitStatus('sending');
+      try {
+        const now = new Date();
+        const payload = buildLeadPayload({
+          state: leadState,
+          model: leadModel,
+          contact: draftCustomer,
+          submittedAt: now.toISOString(),
+          reference: makeLeadRef(now, draftCustomer),
+          adminParams: ADMIN_PARAMS,   // v3-125 — dynamic-location labels
+        });
+        await submitLead(payload);
+        setSubmitStatus('sent');   // show the success panel; onDone on "Done"
+      } catch (_) {
+        setSubmitStatus('error');  // let them retry
+      }
+      return;
+    }
+
     onDone();
   };
 
@@ -1050,8 +1348,53 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     letterSpacing: 0.7, margin: '0 0 8px',
   };
 
+  // v3-97 — success confirmation after a lead is submitted. Replaces the form.
+  if (isLeadFlow && submitStatus === 'sent') {
+    return (
+      <div style={{
+        background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8,
+        padding: '18px 20px', display: 'flex', gap: 14, alignItems: 'flex-start',
+      }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: '50%', background: '#DCFCE7',
+          color: '#15803D', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 20, flexShrink: 0,
+        }} aria-hidden="true">✓</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#166534', marginBottom: 4 }}>
+            Thanks — your request is on its way to Solviva.
+          </div>
+          <div style={{ fontSize: 13, color: '#166534', lineHeight: 1.55 }}>
+            A representative will reach out using the details you provided.
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <button onClick={onDone}
+                    style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
+                             background: '#25543A', border: 'none', borderRadius: 6,
+                             color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}>
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
+    {isLeadFlow && (
+      <div style={{
+        background: '#F7F4ED', borderLeft: '3px solid #25543A',
+        borderRadius: '4px 8px 8px 4px', padding: '12px 16px', marginBottom: 16,
+        fontSize: 13, color: '#25543A', lineHeight: 1.6,
+      }}>
+        Talk to a Solviva representative — complete your contact details and proposed
+        installation address below. The calculator settings you've chosen (panels, battery,
+        inverter, and payment terms) are sent along so your rep can pick up where you left
+        off, so it's worth a quick check that what the calculator shows is what you want.
+        A Solviva representative will reach out using the details below.
+      </div>
+    )}
     {requireAll && (
       <div style={{
         background: '#FEF3C7', border: '1px solid #FBBF24', borderRadius: 6,
@@ -1144,6 +1487,32 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       </div>
       )}
 
+      {isLeadFlow && (
+        <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start',
+                          fontSize: 12.5, color: '#374151', lineHeight: 1.5, cursor: 'pointer' }}>
+            <input type="checkbox" checked={consentGiven}
+                   onChange={e => setConsentGiven(e.target.checked)}
+                   style={{ marginTop: 2, width: 16, height: 16, accentColor: '#25543A',
+                            cursor: 'pointer', flexShrink: 0 }} />
+            <span>{LEAD_CONSENT_TEXT}</span>
+          </label>
+          {showErrors && !consentGiven && (
+            <span style={{ fontSize: 10.5, color: '#DC2626', marginTop: 4, display: 'block', paddingLeft: 26 }}>
+              Please agree before submitting.
+            </span>
+          )}
+        </div>
+      )}
+
+      {isLeadFlow && submitStatus === 'error' && (
+        <div style={{ gridColumn: '1 / -1', fontSize: 12, color: '#B91C1C',
+                      background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6,
+                      padding: '8px 12px' }}>
+          Couldn't send your request just now. Please try again in a moment.
+        </div>
+      )}
+
       <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
         <button onClick={onDone}
                 style={{ padding: '8px 16px', fontSize: 13, background: 'transparent',
@@ -1151,15 +1520,95 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                          cursor: 'pointer', fontFamily: 'inherit' }}>
           Cancel
         </button>
-        <button onClick={save} disabled={!canSave}
-                style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
-                         background: canSave ? '#25543A' : '#9CA3AF', border: 'none',
-                         borderRadius: 6, color: 'white', cursor: canSave ? 'pointer' : 'not-allowed',
-                         fontFamily: 'inherit' }}>
-          {requireAll ? 'Save & generate PDF' : 'Save changes'}
-        </button>
+        {(() => {
+          const sending = submitStatus === 'sending';
+          const disabled = !canSave || sending;
+          const label = isLeadFlow
+            ? (sending ? 'Sending…' : submitStatus === 'error' ? 'Try again' : 'Send to Solviva')
+            : (requireAll ? 'Save & generate PDF' : 'Save changes');
+          return (
+            <button onClick={save} disabled={disabled}
+                    style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
+                             background: disabled ? '#9CA3AF' : '#25543A', border: 'none',
+                             borderRadius: 6, color: 'white', cursor: disabled ? 'not-allowed' : 'pointer',
+                             fontFamily: 'inherit' }}>
+              {label}
+            </button>
+          );
+        })()}
       </div>
     </div>
+    </div>
+  );
+}
+
+// v3-123 — live Total Amount Due bar (user-approved mockup + decisions A-D):
+// pinned to the BOTTOM viewport edge on the Calculator tab in BOTH modes;
+// shows the DST-inclusive summaryTotalDue ALONE (no monthly subtext); tap
+// scrolls to Step 3 · Pricing; hidden on Summary/Schedule (redundant — the
+// figure is the page content there), under negativeBalance (nonsense math),
+// and from PDF snapshots (.no-pdf-capture). Reads terms live from the model,
+// so it reprices on every input change for free. A spacer in the document
+// flow (rendered by App alongside this bar) keeps the bottom tab strip and
+// page content from hiding underneath the fixed bar at full scroll.
+// v3-128 — the bar now carries TWO live figures (user-directed): Total
+// Amount Due (left) and Total Savings Over {irrYears} Years (right) —
+// cashFlows.totalDuSavings, the same Schedule!Z46-parity cumulative figure
+// Step 4 displays, over the same customer-adjustable horizon. Both reprice
+// on every input change.
+function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing }) {
+  // v3-129 — FOUR live figures (user-approved mockup incl. the bold utility
+  // rate): Total Amount Due · Payback Period · System Cost/kWh vs the
+  // customer's OWN utility rate (1B, not hardcoded) · Savings over the
+  // Step-4 horizon. 2×2 on narrow viewports via .live-total-grid CSS.
+  const total = terms.summaryTotalDue ?? terms.totalAmountDue;
+  if (!(total > 0)) return null;
+  const pm = cashFlows?.paybackMonths;
+  const payback = Number.isFinite(pm)
+    ? (() => {
+        const y = Math.floor(pm / 12), mo = pm - y * 12;
+        return y === 0 ? `${mo} mos`
+             : mo === 0 ? `${y} yr${y === 1 ? '' : 's'}`
+             : `${y} yr${y === 1 ? '' : 's'} ${mo} mos`;
+      })()
+    : '\u2014';
+  const lcoe = cashFlows?.lcoe;
+  const savings = cashFlows?.totalDuSavings;
+  const rate = Number(utilityRate);
+  return (
+    <div
+      className="no-pdf-capture live-total-grid"
+      role="button"
+      tabIndex={0}
+      onClick={onJumpToPricing}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onJumpToPricing(); }}
+      title="Jump to Step 3 · Pricing"
+      style={styles.liveTotalBar}
+    >
+      <span className="live-total-cell" style={styles.liveTotalCell}>
+        <span style={styles.liveTotalLabel}>Your Total<br />Amount Due</span>
+        <span style={styles.liveTotalValue}>{fmt.peso(total)}</span>
+      </span>
+      <span className="live-total-cell" style={styles.liveTotalCell}>
+        <span style={styles.liveTotalLabel}>Your Payback<br />Period</span>
+        <span style={styles.liveTotalValue}>{payback}</span>
+      </span>
+      <span className="live-total-cell" style={styles.liveTotalCell}>
+        <span style={styles.liveTotalLabel}>
+          Your System's Cost/kWh vs<br />
+          <strong style={styles.liveTotalRateBold}>
+            {'\u20B1'}{Number.isFinite(rate) ? rate.toFixed(2) : '\u2014'}
+          </strong>{' '}to Utility
+        </span>
+        <span style={styles.liveTotalValue}>
+          {fmt.pesoCents(lcoe)}
+          <span style={styles.liveTotalUnit}> /kWh</span>
+        </span>
+      </span>
+      <span className="live-total-cell" style={styles.liveTotalCell}>
+        <span style={styles.liveTotalLabel}>Your Savings<br />Over {irrYears} Years</span>
+        <span style={styles.liveTotalValue}>{savings > 0 ? fmt.peso(savings) : '\u2014'}</span>
+      </span>
     </div>
   );
 }
@@ -1176,10 +1625,13 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   // Payments rows, ANNEX early-payoff math) all derive from terms and would
   // produce nonsense. Hiding the tabs forces the rep back to Step 3 where
   // the yellow 3C callout suggests lowering DP or shortening tenor.
-  const repTabsAvailable = mode === 'rep' && !negativeBalance;
+  // v3-117 — Summary + Schedule are public (user decision 1); only the
+  // negativeBalance guard hides them now. Generate PDF stays REP-ONLY
+  // (user decision A) via showPdfBtn below.
+  const quoteTabsAvailable = !negativeBalance;
   const tabs = [
     { id: 'calculator', label: 'Calculator' },
-    ...(repTabsAvailable ? [
+    ...(quoteTabsAvailable ? [
       { id: 'summary', label: 'Summary' },
       { id: 'schedule', label: 'Schedule of Payments' },
     ] : []),
@@ -1569,6 +2021,49 @@ const styles = {
   // (where the user just was) rather than to whatever lies further down.
   // Hairline above to detach from the main content; nothing below since the
   // footer separator handles that.
+  // v3-123 — live Total Amount Due bar.
+  liveTotalBar: {
+    position: 'fixed',
+    left: 0, right: 0, bottom: 0,
+    zIndex: 40,
+    padding: '8px 14px',
+    backgroundColor: '#25543A',
+    color: '#FFFFFF',
+    cursor: 'pointer',
+    boxShadow: '0 -2px 8px rgba(0,0,0,0.12)',
+  },
+  liveTotalCell: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    padding: '0 10px',
+    minWidth: 0,
+  },
+  liveTotalLabel: {
+    fontSize: 9.5,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    // rgba (not opacity) so the bold rate below can restore FULL white —
+    // a child can override inherited color, but never a parent's opacity.
+    color: 'rgba(255,255,255,0.75)',
+    lineHeight: 1.35,
+  },
+  liveTotalRateBold: {      // v3-129 — user-directed emphasis on the utility rate
+    fontSize: 13,
+    fontWeight: 700,
+    color: '#FFFFFF',
+  },
+  liveTotalValue: {
+    fontSize: 18,
+    fontWeight: 600,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+  },
+  liveTotalUnit: {
+    fontSize: 12,
+    fontWeight: 400,
+    color: 'rgba(255,255,255,0.8)',
+  },
   tabsBottom: {
     backgroundColor: '#FFFFFF',
     borderTop: '1px solid #E5E1D6',

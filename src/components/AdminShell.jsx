@@ -90,7 +90,7 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     if (!canEditInv) return;
     const setter = which === 'single' ? setSingle : setThree;
     setter(s => {
-      const next = [...s, { ratedKw: 5, directPrice: 0 }];
+      const next = [...s, { ratedKw: 5, cogs: 0, directPrice: 0, available: true }];
       return next.sort((a, b) => a.ratedKw - b.ratedKw);
     });
     markDirty();
@@ -140,6 +140,51 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
   // v3-75: tiered minimum-DP table. Mirrors the server-side rules in
   // netlify/functions/parameters.js — 1–10 rows, base row anchored at ₱0,
   // strictly ascending thresholds, fractions within 0–50%.
+  // v3-116 — delivery locations: <=10 rows, labels non-empty + unique, COGS
+  // finite >= 0. Empty array IS valid (dropdown = Luzon + Other only).
+  const deliveryLocationsValid = (() => {
+    const rows = params.deliveryLocations;
+    if (rows == null) return { ok: true };
+    if (!Array.isArray(rows)) return { ok: false, msg: 'Delivery locations must be a list.' };
+    if (rows.length > 10) return { ok: false, msg: 'At most 10 delivery locations.' };
+    const seen = new Set();
+    for (const r of rows) {
+      const lbl = String(r?.label || '').trim();
+      if (lbl === '') return { ok: false, msg: 'Every delivery location needs a label.' };
+      if (seen.has(lbl.toLowerCase())) return { ok: false, msg: `Duplicate delivery location "${lbl}".` };
+      seen.add(lbl.toLowerCase());
+      for (const k of ['fixedFeeCogs', 'perPanelCogs']) {
+        const v = Number(r?.[k]);
+        if (!Number.isFinite(v) || v < 0) {
+          return { ok: false, msg: `Delivery location "${lbl}" has an invalid ${k === 'fixedFeeCogs' ? 'fixed fee' : 'per-panel'} COGS.` };
+        }
+      }
+    }
+    return { ok: true };
+  })();
+
+  // v3-138 — misc catalog: <=40 rows, descriptions non-empty + unique, cost
+  // finite >= 0. Mirrors the server rules. Empty array IS valid (Step 2F then
+  // offers "Other (please specify)" only).
+  const miscCatalogValid = (() => {
+    const rows = params.miscCatalog;
+    if (rows == null) return { ok: true };
+    if (!Array.isArray(rows)) return { ok: false, msg: 'Misc catalog must be a list.' };
+    if (rows.length > 40) return { ok: false, msg: 'At most 40 misc catalog items.' };
+    const seen = new Set();
+    for (const r of rows) {
+      const lbl = String(r?.label || '').trim();
+      if (lbl === '') return { ok: false, msg: 'Every misc catalog item needs a description.' };
+      if (seen.has(lbl.toLowerCase())) return { ok: false, msg: `Duplicate misc catalog item "${lbl}".` };
+      seen.add(lbl.toLowerCase());
+      const v = Number(r?.cogs);
+      if (!Number.isFinite(v) || v < 0) {
+        return { ok: false, msg: `Misc catalog item "${lbl}" has an invalid cost.` };
+      }
+    }
+    return { ok: true };
+  })();
+
   const minDpTiersValid = (() => {
     const t = params.minDpTiers;
     if (!Array.isArray(t) || t.length < 1) {
@@ -162,6 +207,57 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     }
     return { ok: true };
   })();
+  // v3-79 — the three rate anchors ARE the curve; if they aren't strictly
+  // increasing the generalized-lognormal is undefined and every rate in the app
+  // comes back NaN. Block the save before it can reach the server.
+  const rateAnchorsValid = (() => {
+    const { rateAnchorMin: lo, rateAnchorMid: mid, rateAnchorMax: hi } = params;
+    if (![lo, mid, hi].every(v => Number.isFinite(v))) {
+      return { ok: false, msg: 'Interest rate anchors must all be numbers.' };
+    }
+    if (!(lo < mid && mid < hi)) {
+      return { ok: false, msg:
+        'Interest rate anchors must increase: min < mid < max. '
+        + `Currently min ${(lo * 100).toFixed(2)}%, mid ${(mid * 100).toFixed(2)}%, max ${(hi * 100).toFixed(2)}%.` };
+    }
+    // v3-100 — DST rate lives in the same Interest Rates section. A fraction
+    // ≥ 1 would tax more than the financed amount; NaN would NaN the DST line
+    // and the summary total on every financed quote (mirrors the server guard).
+    const dstRate = params.documentaryStampTaxRate;
+    if (dstRate != null && (!Number.isFinite(dstRate) || dstRate < 0 || dstRate >= 1)) {
+      return { ok: false, msg:
+        'Documentary Stamp Tax rate must be a fraction between 0% and 100%.' };
+    }
+    return { ok: true };
+  })();
+
+  // v3-83 / v3-92 — the margin curve + MDR drive every price in the app; a bad
+  // value blanks the entire price list rather than degrading one number. Gross
+  // margin is now a GENLINV curve over capacity: three anchors that must be
+  // strictly increasing fractions in [0,1), three positive strictly-increasing
+  // kWp breakpoints, and a positive reference kWp (mirrors the server guard).
+  const marginsValid = (() => {
+    const MDR_CEILING = 1 - (0.12 / 1.12);   // 0.892857…
+    const { grossMarginMin: q1, grossMarginMid: q2, grossMarginMax: q3,
+            grossMarginMinKwp: x1, grossMarginMidKwp: x2, grossMarginMaxKwp: x3,
+            grossMarginReference: xref, merchantDiscountRate: mdr } = params;
+    if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 < q2 && q2 < q3)) {
+      return { ok: false, msg: 'Gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.' };
+    }
+    if (![x1, x2, x3].every(v => Number.isFinite(v) && v > 0) || !(x1 < x2 && x2 < x3)) {
+      return { ok: false, msg: 'Gross-margin capacity breakpoints (kWp) must be positive and strictly increasing: MinKwp < MidKwp < MaxKwp.' };
+    }
+    if (!Number.isFinite(xref) || xref < 0 || xref >= 1) {
+      return { ok: false, msg: 'Reference gross margin must be a fraction in [0%, 100%).' };
+    }
+    if (!Number.isFinite(mdr) || mdr < 0 || mdr >= MDR_CEILING) {
+      return { ok: false, msg:
+        `Merchant discount rate must be below ${(MDR_CEILING * 100).toFixed(1)}% — at or above it, `
+        + 'the acquirer\'s cut plus the VAT remittance exceeds the whole sale and every price would be zero.' };
+    }
+    return { ok: true };
+  })();
+
   const validationError =
     !tiersValid       ? 'Single-phase cabling tier table cannot be empty — add at least one row before saving.' :
     !tiers3pValid     ? 'Three-phase cabling tier table cannot be empty — add at least one row before saving.' :
@@ -169,6 +265,10 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     !validityDaysValid ? 'Quote validity must be a whole number of days, 1 or more.' :
     !promosValid.ok   ? promosValid.msg :
     !minDpTiersValid.ok ? minDpTiersValid.msg :
+    !deliveryLocationsValid.ok ? deliveryLocationsValid.msg :
+    !miscCatalogValid.ok ? miscCatalogValid.msg :
+    !marginsValid.ok ? marginsValid.msg :
+    !rateAnchorsValid.ok ? rateAnchorsValid.msg :
     null;
 
   // ─── Save / Discard ───────────────────────────────────────────────────────
@@ -225,6 +325,12 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
           <h1 style={adminStyles.title}>{titleByTab[tab] || 'Admin'}</h1>
           <p style={adminStyles.subtitle}>
             Mode: <strong>{roleLabel(accessLevel)}</strong>
+            {/* v3-141 — build stamp so admins can read the deployed version at
+                a glance. Injected by Vite define onto import.meta.env; the
+                optional chain keeps non-Vite contexts (smoke tests) safe. */}
+            {import.meta.env?.APP_VERSION && (
+              <span style={{ color: '#9A968A', marginLeft: 10 }}>· {import.meta.env.APP_VERSION}</span>
+            )}
           </p>
         </div>
         <button onClick={onLogout} style={adminStyles.logoutBtn}>Sign out</button>

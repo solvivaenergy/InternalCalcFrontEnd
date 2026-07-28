@@ -129,6 +129,127 @@ export const INCLUDED_AC_CABLE_METERS = 10;
 // type their actual distance.
 export const LUZON_FREE_TRAVEL_KM = 30;
 
+// ---------------------------------------------------------------------------
+// Luzon main-island Region → City → road-km table (v3-109 cascade; distances
+// REBASED v3-114).
+//
+// Replaces the free-typed "distance from Rizal Park" input. The rep/customer
+// picks a region and a chartered city; the city's `km` is written to
+// state.locationKm, which feeds the SAME charge formula in calculations.js
+// (parity with workbook CALCULATOR!AA38). The picker is purely a front-end
+// that yields a km — the pricing math is unchanged.
+//
+// v3-114 — ORIGIN CHANGED (user-directed): distances are one-way road km from
+// SOLVIVA'S PARAÑAQUE LOGISTICS HUB (DB Schenker, West Service Rd, Parañaque;
+// 14.4717 N, 121.0450 E) — the actual dispatch point — no longer the symbolic
+// Km-0 / Rizal Park marker. Customer/rep copy says "our Parañaque logistics
+// hub"; the facility name lives only in this comment.
+// POLICY B (user-directed): TRUE distances everywhere, INCLUDING NCR — any
+// city > LUZON_FREE_TRAVEL_KM (30) from the hub is billable, so far-north NCR
+// (Malabon / Navotas / Valenzuela) and Antipolo now carry the charge, while
+// the southern belt (Carmona, Biñan, Santa Rosa, General Trias) moved INSIDE
+// the free zone. Cavite City sits exactly ON 30 → free (billable is strictly
+// > 30).
+//
+// Scope is deliberately the ROAD-CONNECTED mainland only ("Luzon main island").
+// Island provinces (MIMAROPA — Palawan/Mindoro/Marinduque/Romblon; plus
+// Batanes, Catanduanes, Masbate) are NOT road-reachable and fall to the
+// "Other" location (rep enters sea/air freight as a 2F line; customer sees the
+// "contact your representative" note).
+//
+// ⚠️ ALL km VALUES ARE DRAFT — Google-Maps-informed estimates, re-based
+// v3-114, for ANJON to verify against Google Maps routes from the Parañaque
+// hub before treating as final. Only cities beyond 30 km are billable, so
+// precision matters only for those; ≤30 km resolves to a ₱0 location line
+// regardless of the exact figure.
+export const LUZON_REGIONS = [
+  { code: 'NCR', label: 'NCR — Metro Manila', cities: [
+    { name: 'Parañaque',     km: 3 },
+    { name: 'Las Piñas',     km: 7 },
+    { name: 'Muntinlupa',    km: 8 },
+    { name: 'Pasay',         km: 12 },
+    { name: 'Taguig',        km: 12 },
+    { name: 'Makati',        km: 14 },
+    { name: 'Manila',        km: 18 },
+    { name: 'Mandaluyong',   km: 18 },
+    { name: 'Pasig',         km: 19 },
+    { name: 'San Juan',      km: 20 },
+    { name: 'Quezon City',   km: 24 },
+    { name: 'Marikina',      km: 25 },
+    { name: 'Caloocan',      km: 28 },
+    { name: 'Malabon',       km: 31 },
+    { name: 'Navotas',       km: 32 },
+    { name: 'Valenzuela',    km: 33 },
+  ]},
+  { code: 'III', label: 'Region III — Central Luzon', cities: [
+    { name: 'Meycauayan',            km: 38 },
+    { name: 'San Jose del Monte',    km: 45 },
+    { name: 'Malolos',               km: 58 },
+    { name: 'San Fernando (Pampanga)', km: 82 },
+    { name: 'Angeles City',          km: 95 },
+    { name: 'Gapan',                 km: 100 },
+    { name: 'Mabalacat',             km: 100 },
+    { name: 'Cabanatuan',            km: 125 },
+    { name: 'Tarlac City',           km: 135 },
+    { name: 'Balanga',               km: 140 },
+    { name: 'Olongapo',              km: 140 },
+    { name: 'Palayan',               km: 145 },
+    { name: 'Science City of Muñoz', km: 165 },
+    { name: 'San Jose City',         km: 175 },
+  ]},
+  { code: 'IV-A', label: 'Region IV-A — CALABARZON', cities: [
+    { name: 'San Pedro',       km: 12 },
+    { name: 'Bacoor',          km: 13 },
+    { name: 'Imus',            km: 16 },
+    { name: 'Biñan',           km: 20 },
+    { name: 'Carmona',         km: 22 },
+    { name: 'Dasmariñas',      km: 24 },
+    { name: 'Santa Rosa',      km: 26 },
+    { name: 'General Trias',   km: 27 },
+    { name: 'Cavite City',     km: 30 },
+    { name: 'Cabuyao',         km: 31 },
+    { name: 'Antipolo',        km: 35 },
+    { name: 'Calamba',         km: 37 },
+    { name: 'Tagaytay',        km: 45 },
+    { name: 'Santo Tomas',     km: 48 },
+    { name: 'Tanauan',         km: 53 },
+    { name: 'Lipa',            km: 68 },
+    { name: 'San Pablo',       km: 73 },
+    { name: 'Batangas City',   km: 98 },
+    { name: 'Lucena',          km: 125 },
+    { name: 'Tayabas',         km: 130 },
+  ]},
+  { code: 'I', label: 'Region I — Ilocos', cities: [
+    { name: 'Urdaneta',                km: 200 },
+    { name: 'San Carlos (Pangasinan)', km: 210 },
+    { name: 'Dagupan',                 km: 220 },
+    { name: 'Alaminos',                km: 250 },
+    { name: 'San Fernando (La Union)', km: 280 },
+    { name: 'Candon',                  km: 350 },
+    { name: 'Vigan',                   km: 410 },
+    { name: 'Batac',                   km: 470 },
+    { name: 'Laoag',                   km: 490 },
+  ]},
+  { code: 'II', label: 'Region II — Cagayan Valley', cities: [
+    { name: 'Santiago',    km: 340 },
+    { name: 'Cauayan',     km: 360 },
+    { name: 'Ilagan',      km: 390 },
+    { name: 'Tuguegarao',  km: 490 },
+  ]},
+  { code: 'CAR', label: 'CAR — Cordillera', cities: [
+    { name: 'Baguio', km: 260 },
+    { name: 'Tabuk',  km: 350 },
+  ]},
+  { code: 'V', label: 'Region V — Bicol', cities: [
+    { name: 'Naga',           km: 390 },
+    { name: 'Iriga',          km: 410 },
+    { name: 'Ligao',          km: 440 },
+    { name: 'Legazpi',        km: 460 },
+    { name: 'Tabaco',         km: 480 },
+    { name: 'Sorsogon City',  km: 540 },
+  ]},
+];
+
 export const AGENT = {
   // Default contact info shown in the header and on the contact gate.
   //

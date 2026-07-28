@@ -12,7 +12,9 @@
 //        [Excel V18–V22, W19–W21, Y19–Y21, AA19–AA21]
 //   2D — Roof Material: surcharge based on roof type.
 //   2E — Location: delivery / travel charges.
-//   2F — Misc materials: dynamic 1–6 free-form rows (add/remove).
+//   2F — Misc materials: dynamic 1–12 rows (add/remove), each either a pick
+//        from Anjon's standing catalog (priced live at the quote's margin)
+//        or a free-form "Other" line the rep describes and prices.
 //        [Excel V33–AA36]
 //
 // 2A's Selected row uses inline controls inside tiles (NumberInput spinner
@@ -22,16 +24,20 @@
 // =============================================================================
 
 import React, { useEffect } from 'react';
-import { availableInverters } from '../lib/calculations.js';
+import { availableInverters, directFromCogs, grossMarginForCapacity } from '../lib/calculations.js';
+import { availableDeliveryLocations, availableMiscCatalog,
+         findMiscCatalogItem, MISC_CATALOG_OTHER } from '../data/adminParams.js';
 import { INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_FREE_TRAVEL_KM } from '../config.js';
+         LUZON_FREE_TRAVEL_KM, LUZON_REGIONS } from '../config.js';
 import {
   SectionCard, Subsection, Field, NumberInput, Select, Checkbox, TextInput,
   CalloutBox, RecommendationPill, StatTile, COLORS, fmt, RSD_INFO,
+  InfoTooltip,   // v3-136 — peaks-and-valleys checkbox info
+  DC_AC_RATIO_INFO,   // v3-138 — 2C ratio explainer
 } from './ui.jsx';
 
 export default function Step2Packages({ state, updateState, model, adminParams, onReset,
-                                        afterSection2A, mode = 'rep' }) {
+                                        afterSection2A, mode = 'rep', onContactRep }) {
   // afterSection2A: optional ReactNode rendered between subsections 2A and 2B.
   // Used by Calculator.jsx to embed the "Visualizing your system" block
   // (Radiance Curve + Energy Use Coverage) immediately after the size/battery
@@ -67,24 +73,35 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
   useEffect(() => {
     if (!isCustomer) return;
     const patch = {};
-    if (state.location !== 'luzon')                   patch.location = 'luzon';
-    if (state.locationKm !== LUZON_FREE_TRAVEL_KM)    patch.locationKm = LUZON_FREE_TRAVEL_KM;
-    if (state.roofMaterial !== 'metal')               patch.roofMaterial = 'metal';
+    // v3-109 (cascade lineage, merged v3-114) — location + locationKm are now
+    // CUSTOMER-set inputs (the Region → City picker in 2E is exposed in public
+    // view), so they are no longer force-reset here. The customer chooses their
+    // own install location and it materially affects the quote — same rationale
+    // as roofMaterial (v3-97).
+    // v3-97 — roofMaterial is now a CUSTOMER-set input (2D is exposed in public
+    // view), so it is no longer force-reset to 'metal' here. The customer knows
+    // their own roof type and it materially affects the quote.
     if (state.dcCableMeters !== INCLUDED_DC_CABLE_METERS) patch.dcCableMeters = INCLUDED_DC_CABLE_METERS;
     if (state.acCableMeters !== INCLUDED_AC_CABLE_METERS) patch.acCableMeters = INCLUDED_AC_CABLE_METERS;
-    if (state.panelCount  !== null)                   patch.panelCount = null;
-    if (state.batteryKwh  !== null)                   patch.batteryKwh = null;
-    if (state.batteryPackageId !== null)              patch.batteryPackageId = null;
-    // Reset any inverter overrides; null per slot means "use recommended"
-    if (Array.isArray(state.selectedInverters)
-        && state.selectedInverters.some(s => s !== null)) {
-      patch.selectedInverters = [null, null, null];
-    }
+    // v3-120 — panelCount / batteryKwh / batteryPackageId are now CUSTOMER-set
+    // inputs (the Selected row is public), so they are no longer force-reset
+    // here — same rationale as roofMaterial (v3-97) and location (v3-114).
+    // This reverses the v3-71 batteryPackageId reset. The v3-110 mode-switch
+    // clear still applies to everyone (the ladder under an override changes).
+    // v3-121 — selectedInverters are now CUSTOMER-set inputs (2C is public),
+    // so inverter overrides are no longer force-reset here (v3-97/v3-114/
+    // v3-120 rationale). The v3-106 stock revalidation still governs stale
+    // picks.
     // Empty out any misc materials that have data
+    // v3-138 — a CATALOG row carries neither description nor unitPrice, so the
+    // pre-v3-138 predicate would have left a rep's ₱45,385 Service Entry
+    // Remodelling line silently priced into a customer quote. catalogId is now
+    // part of the "has data" test.
     if (Array.isArray(state.miscMaterials)
-        && state.miscMaterials.some(m => m && (m.description || m.unitPrice))) {
+        && state.miscMaterials.some(m => m && (m.description || m.unitPrice
+             || (m.catalogId && m.catalogId !== MISC_CATALOG_OTHER)))) {
       patch.miscMaterials = [
-        { description: '', count: 1, unitPrice: 0 },
+        { catalogId: MISC_CATALOG_OTHER, description: '', count: 1, unitPrice: 0 },
       ];
     }
     if (Object.keys(patch).length > 0) {
@@ -95,9 +112,8 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
     // unexpected external state mutation).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCustomer,
-      state.location, state.locationKm, state.roofMaterial,
-      state.dcCableMeters, state.acCableMeters,
-      state.panelCount, state.batteryKwh]);
+      state.roofMaterial,
+      state.dcCableMeters, state.acCableMeters]);
 
   // v3-68: enforce the Product-set minimum system size (Quote Limits) on the
   // rep's manual panel override. Runs whenever the override or the floor
@@ -107,15 +123,24 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
   // Snapping to the recommendation (null) when the floor equals it keeps the
   // "override" amber state honest.
   useEffect(() => {
+    // v3-106 — skip the floor snap while panels are out of stock: the model
+    // forces the array to 0 panels regardless, so snapping a stale override
+    // up to the floor would just churn state to no effect.
+    if (model.panelsAvailable === false) return;
     const floor = model.recommended?.minPanelsFloor || 0;
     if (state.panelCount != null && state.panelCount > 0 && state.panelCount < floor) {
       updateState({ panelCount: floor === model.recPanelCount ? null : floor });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.panelCount, model.recommended?.minPanelsFloor, model.recPanelCount]);
+  }, [state.panelCount, model.recommended?.minPanelsFloor, model.recPanelCount, model.panelsAvailable]);
   const { recommended, recPanelCount, panelCount, recInverters, effectiveInverters,
           sizing, recBatteryKwh, batteryKwh, activeBatteryPackage,
-          autoBatteryPackage, activeRecBatteryKwh } = model;
+          autoBatteryPackage, activeRecBatteryKwh,
+          panelsAvailable, anyBatteryInStock, rsdInStock,
+          optimization,
+          // v3-136 — peaks-and-valleys sizing (checkbox gate / effective
+          // value / Variant-B 100%-target lock)
+          hasSub7Device, conservativeSizing, conservativeLocked } = model;
 
   const phase = state.phase === 3 ? 'three' : 'single';
   const phaseInverters = availableInverters(phase);
@@ -123,6 +148,18 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
   // ─── DC/AC ratio warning (Excel V22 conditional formatting) ────────────
   // Excel: warns when sizing.dcAcRatio > sizing.maxRatio
   const ratioWarn = sizing.totalInverterKw > 0 && sizing.ratioExceeded;
+
+  // ─── 2F misc catalog (v3-138) ──────────────────────────────────────────
+  // THIS quote's capacity margin — the same value buildPackageLineItems
+  // resolves before re-pricing every COGS-derived line (v3-92). Computing it
+  // here means the unit price the rep reads in 2F is the identical number the
+  // Summary bills, and both move together as panel count changes.
+  const quoteMargin = grossMarginForCapacity(sizing.systemKwp, panelCount, adminParams);
+  // Only IN-STOCK items are offerable. A row already holding a now-hidden id
+  // re-injects it below so the Select never renders blank.
+  const miscCatalogOptions = availableMiscCatalog(adminParams).map(m => ({
+    value: m.id, label: m.label,
+  }));
 
   return (
     <SectionCard
@@ -165,22 +202,161 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           />
         </div>
 
+        {/* v3-110 — optimization objective selector (user-approved mockup).
+            PUBLIC-facing, both modes. Three objectives, all "reach your
+            target savings, minimizing X":
+              'panels'  — standard W7 sizing (default; workbook parity)
+              'battery' — optimizeSystem sweep, min battery kWh
+              'cost'    — optimizeSystem sweep, min total direct cost
+            Switching modes CLEARS the panel/battery/package overrides
+            (locked decision B) — the ladder underneath them changed, same
+            rationale as the v3-71 package-switch-nukes-kWh rule. */}
+        <div style={styles.optModeLabel}>Optimize my system for</div>
+        <div style={styles.optModeRow}>
+          {[
+            { id: 'panels',
+              // v3-126 — fuller title (user-directed): 'Fewest panels' alone
+              // is ambiguous when Least-battery ties on panel count with ZERO
+              // batteries while this mode still recommends one — the waste-
+              // minimization half (store-all-excess) is what justifies it.
+              title: 'Fewest panels & least solar production wasted',
+              sub: 'Smallest rooftop footprint' },
+            { id: 'battery', title: 'Least battery',
+              sub: 'Minimal indoor bulk' },
+            { id: 'cost',    title: 'Lowest cost',
+              sub: 'Cheapest system that hits your target' },
+          ].map(opt => {
+            const active = (state.optimizationMode || 'panels') === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  if (active) return;
+                  updateState({ optimizationMode: opt.id,
+                                panelCount: null, batteryKwh: null,
+                                batteryPackageId: null });
+                }}
+                style={{ ...styles.optModeCard,
+                         ...(active ? styles.optModeCardActive : null) }}
+              >
+                <span style={{ ...styles.optModeTitle,
+                               ...(active ? styles.optModeTitleActive : null) }}>
+                  {opt.title}
+                </span>
+                <span style={{ ...styles.optModeSub,
+                               ...(active ? styles.optModeSubActive : null) }}>
+                  {opt.sub}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* v3-106 — panels out of stock for the selected phase. The quote is
+            NOT blocked: the solar array is forced to 0 panels and the rest
+            (batteries / inverters / RSD retrofits for an existing
+            installation) stays orderable via the standalone pricing paths. */}
+        {/* v3-136 — "Size panels for peaks and batteries for valleys"
+            (approved mockup, Variant B). Rendered ONLY when a sub-7-day
+            device exists — otherwise the corner days equal the average day
+            and the control would be pure noise. Toggling clears the
+            panel/battery/package overrides (locked decision 4 — the
+            recommendation basis changed under them, same rationale as the
+            v3-110 mode-switch clear). At a 100% target the model FORCES the
+            flag on and the checkbox renders ticked + disabled (Variant B);
+            the user's own choice survives in state and returns when the
+            lock releases. */}
+        {hasSub7Device && (
+          <div style={styles.consvBlock}>
+            <label style={styles.consvRow}>
+              <input
+                type="checkbox"
+                checked={conservativeSizing}
+                disabled={conservativeLocked}
+                onChange={e => updateState({ conservativeSizing: e.target.checked,
+                                             panelCount: null, batteryKwh: null,
+                                             batteryPackageId: null })}
+                style={styles.consvCheckbox}
+              />
+              <span>
+                <span style={styles.consvLabel}>
+                  Size panels for peaks and batteries for valleys
+                  <span
+                    style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 6 }}
+                    onClick={e => e.preventDefault()}
+                  >
+                    <InfoTooltip
+                      ariaLabel="More info about sizing for peaks and valleys"
+                      content={'Appliances that run fewer than 7 days a week make some days heavier than others. Normally the calculator sizes your system to your average day. Ticking this sizes it against your real week instead: enough panels to reach your target savings on the days everything runs ("peaks"), and enough battery to store your excess solar on the light days ("valleys"). The recommended system will be somewhat larger — and honest on every day of the week.'}
+                    />
+                  </span>
+                </span>
+                <span style={styles.consvHint}>
+                  Some of your appliances don't run every day. Tick this to get
+                  a system that reaches your target savings even on the days
+                  they all run — and stores your excess solar even on the days
+                  they don't.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+        {hasSub7Device && conservativeSizing && (
+          <div style={styles.consvConfirm}>
+            {conservativeLocked
+              ? 'Because you\u2019re targeting 100% savings and some appliances don\u2019t run every day, sizing for peaks and valleys is required \u2014 a system sized to the average week cannot deliver a true 100%.'
+              : 'Sized for your peak days \u2014 this system reaches your target savings on the days your appliances run and stores your excess solar on the days they don\u2019t.'}
+          </div>
+        )}
+        {hasSub7Device && !conservativeSizing && (
+          <div style={styles.consvCaveat}>
+            Some appliances you listed run fewer than 7 days a week. This
+            recommendation is sized to your average week &mdash; on days those
+            appliances run, savings will fall below your target; on lighter
+            days, some excess solar may go unstored.
+          </div>
+        )}
+
+        {!panelsAvailable && (
+          <div style={{ margin: '0 0 16px' }}>
+            <CalloutBox kind="warn">
+              <strong>Solar panels are temporarily out of stock</strong> for{' '}
+              {state.phase === 3 ? '3-phase' : 'single-phase'} systems, so this
+              quote doesn't include a solar array. You can still order
+              batteries, inverters, or a Rapid Shutdown Device for an existing
+              installation — or contact your Solviva representative about
+              panel availability.
+            </CalloutBox>
+          </div>
+        )}
+
         {(() => {
           // Override flags drive the amber treatment on the Selected tiles.
           // A null state value means "use the recommendation" — either the
           // customer hasn't typed anything yet, or they clicked the snap-back
           // link. Any non-null value that differs from the recommendation is
           // an override.
-          const panelOverridden   = state.panelCount   != null && state.panelCount   !== recPanelCount;
+          // v3-106 — with panels out of stock the model forces the array to
+          // 0 regardless of any override, so no amber / snap-back either.
+          const panelOverridden   = panelsAvailable
+            && state.panelCount   != null && state.panelCount   !== recPanelCount;
           // v3-71: kWh override compares against the recommendation ON THE
           // ACTIVE PACKAGE'S LADDER (activeRecBatteryKwh) — the auto-pack
           // recBatteryKwh may not exist on an overridden pack's ladder.
-          const batteryOverridden = state.batteryKwh   != null && state.batteryKwh   !== activeRecBatteryKwh;
+          // v3-106 — with every package out of stock the model forces both
+          // batteryKwh and the recommendation to 0, so a stale session value
+          // must not paint amber / offer a snap-back to a control that's been
+          // replaced by the out-of-stock note.
+          const batteryOverridden = anyBatteryInStock
+            && state.batteryKwh   != null && state.batteryKwh   !== activeRecBatteryKwh;
           // Package override: an explicit pick that differs from the auto
           // winner. Explicitly picking the pack that IS the winner pins it
           // but stays visually non-amber (numerically identical), matching
           // how a typed panel count equal to the rec isn't an override.
-          const packageOverridden = state.batteryPackageId != null
+          const packageOverridden = anyBatteryInStock
+            && state.batteryPackageId != null
             && activeBatteryPackage?.id !== autoBatteryPackage?.id;
           // System Size is a pure derivative of panel count, so it inherits
           // the panel override state for amber tinting purposes.
@@ -195,12 +371,33 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                   read-only display of the auto-optimized winner. Public
                   quotes are fully auto-optimized (no package control). */}
 
-              {/* v3-71: optimization caption rides the row label (user-
-                  approved mockup) — one continuous small-caps line, shown in
-                  BOTH modes. */}
+              {/* v3-71: optimization caption rides the row label — one
+                  continuous small-caps line, shown in BOTH modes.
+                  v3-110: the v3-71 wording ("…at the lowest cost") asserted a
+                  system-level cost claim the pipeline never made (it minimized
+                  panels/wastage, not cost). Replaced with per-objective
+                  captions that say exactly what each mode does (user-approved
+                  copy). */}
               <div style={styles.tileRowLabel}>
-                Recommended — optimized to reach your target savings at the lowest cost
+                {{
+                  panels:  'Recommended — the fewest panels and least solar production wasted to reach your target savings',
+                  battery: 'Recommended — the smallest battery that reaches your target savings',
+                  cost:    'Recommended — the lowest-cost system that reaches your target savings',
+                }[state.optimizationMode] ||
+                  'Recommended — the fewest panels and least solar production wasted to reach your target savings'}
               </div>
+              {/* v3-110 — infeasible-target notice (locked decision A): when
+                  the sweep can't reach the target inside the panel cap, the
+                  tiles show the BEST-ACHIEVABLE system and this amber line
+                  says so honestly. Never fires in mode 'panels' (W7 has no
+                  cap concept — the existing DC/AC ratio warning covers it). */}
+              {optimization && optimization.feasible === false && (
+                <div style={styles.optInfeasibleNote}>
+                  Your target savings can't be fully reached within system
+                  limits — showing the closest achievable
+                  (~{Math.round((optimization.achievedPct || 0) * 100)}%).
+                </div>
+              )}
               <div style={styles.recTilesRow}>
                 <StatTile
                   label="System Size"
@@ -211,7 +408,12 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                 />
                 <StatTile
                   label="Panels"
-                  value={fmt.num(recommended.recommendedPanelCount)}
+                  /* v3-111 HOTFIX — read the MODE-AWARE recPanelCount, not the
+                     raw W7 field. The two were aliases until v3-110's sweep
+                     made them diverge; this tile kept reading raw W7 while
+                     System Size read recPanelCount, so a sweep-mode quote
+                     showed 5.04 kWp beside 7 panels (7 × 630 ≠ 5.04). */
+                  value={fmt.num(recPanelCount)}
                   sub={`× ${recommended.panelWatts}W panels`}
                   color={COLORS.brandGreen}
                   xl
@@ -219,7 +421,12 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                 <StatTile
                   label="Battery"
                   value={recBatteryKwh > 0 ? fmt.num(recBatteryKwh) : '—'}
-                  sub={recBatteryKwh > 0 ? 'kWh storage' : 'Not needed at this savings level'}
+                  /* v3-106 — a 0 recommendation now has TWO distinct causes:
+                     genuinely not needed vs. every package out of stock. The
+                     "not needed" copy would be a lie in the second case. */
+                  sub={recBatteryKwh > 0 ? 'kWh storage'
+                    : anyBatteryInStock ? 'Not needed at this savings level'
+                    : 'Temporarily out of stock'}
                   color={COLORS.brandGreen}
                   xl
                   /* v3-71: tooltip reworded — the sizing-economics comparison
@@ -234,7 +441,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                      choice, user-confirmed). When the recommendation is 0
                      ("Not needed at this savings level") the winner is
                      meaningless, so the aside shows an em dash. */
-                  aside={adminParams?.batteryPackages?.length > 0 ? (
+                  aside={anyBatteryInStock && adminParams?.batteryPackages?.length > 0 ? (
                     <div style={styles.battPkgAside}>
                       <label style={styles.battPkgAsideLabel}>Battery Package</label>
                       {recBatteryKwh > 0 ? (
@@ -261,11 +468,13 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                 />
               </div>
 
-              {/* Selected (override) row — REP MODE ONLY. In customer mode the
-                  recommendation is the answer. State stays at null for
-                  panelCount/batteryKwh so the calc engine falls back to the
-                  recommendation automatically. */}
-              {!isCustomer && (
+              {/* Selected (override) row — v3-120: PUBLIC in both modes
+                  (user-directed). Customers can now adjust the panel count
+                  and pick a battery package/kWh directly; state stays null
+                  until they touch a control, so the calc engine falls back
+                  to the recommendation automatically. The DC/AC cable
+                  inputs below remain REP-ONLY. */}
+              {(
                 <>
                   <div style={styles.tileRowLabel}>Selected</div>
                   <div style={styles.recTilesRow}>
@@ -293,6 +502,18 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             onClick: () => updateState({ panelCount: null }) }
                         : null}
                     >
+                      {/* v3-106 — panels out of stock: the model prices 0
+                          panels no matter what's typed, so an editable
+                          spinner here would show a number the quote ignores.
+                          Render a read-only 0 instead (the section-level
+                          callout above explains why). */}
+                      {!panelsAvailable ? (
+                        <>
+                          <div style={selectedTileStyles.value(false)}>0</div>
+                          <div style={selectedTileStyles.sub}>panels — temporarily out of stock</div>
+                        </>
+                      ) : (
+                        <>
                       <div style={selectedTileStyles.controlRow}>
                         <NumberInput
                           value={state.panelCount ?? recPanelCount}
@@ -312,6 +533,8 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                         />
                       </div>
                       <div style={selectedTileStyles.sub}>× {recommended.panelWatts}W panels</div>
+                        </>
+                      )}
                     </SelectedTile>
 
                     {/* Selected Battery — dropdown inline. Multiples of 5 kWh
@@ -330,6 +553,19 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             onClick: () => updateState({ batteryKwh: null }) }
                         : null}
                     >
+                      {/* v3-106 — every package out of stock: the model has
+                          already forced batteryKwh to 0, so the controls
+                          would be dead weight. Replace them with a note; the
+                          quote proceeds battery-free (an existing-installation
+                          panels/inverter/RSD order stays possible). */}
+                      {!anyBatteryInStock ? (
+                        <div style={selectedTileStyles.oosNote}>
+                          All battery packages are temporarily out of stock, so
+                          a battery can't be added to this quote. The rest of
+                          the quote is unaffected.
+                        </div>
+                      ) : (
+                      <>
                       {/* v3-71: the Battery Package dropdown lives HERE now
                           (rep-only Selected row), replacing the v3-63
                           placement in the Recommended tile — and it renders
@@ -344,7 +580,14 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                         <div style={selectedTileStyles.battPkgSelBlock}>
                           <label style={selectedTileStyles.battPkgSelLabel}>Battery Package</label>
                           <Select
-                            value={state.batteryPackageId ?? ''}
+                            /* v3-106 — a pinned id that has since gone out of
+                               stock is no longer in the options; the pricing
+                               resolver already ignores it (falls through to
+                               the first in-stock package), so render as Auto
+                               rather than letting the <select> show a blank. */
+                            value={adminParams.batteryPackages.some(p =>
+                                     p.id === state.batteryPackageId && p.available !== false)
+                                   ? state.batteryPackageId : ''}
                             onChange={v => {
                               updateState({ batteryPackageId: v || null, batteryKwh: null });
                             }}
@@ -352,9 +595,13 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             amber={packageOverridden}
                             options={[
                               { value: '', label: `Auto — ${autoBatteryPackage?.label}` },
-                              ...adminParams.batteryPackages.map(p => ({
-                                value: p.id, label: p.label,
-                              })),
+                              /* v3-106 — out-of-stock packages keep their row
+                                 in the admin editor but leave the rep menu. */
+                              ...adminParams.batteryPackages
+                                .filter(p => p.available !== false)
+                                .map(p => ({
+                                  value: p.id, label: p.label,
+                                })),
                             ]}
                           />
                           <span style={selectedTileStyles.battPkgSelHint}>
@@ -409,6 +656,8 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                           </div>
                         );
                       })()}
+                      </>
+                      )}
                     </SelectedTile>
                   </div>
 
@@ -478,13 +727,6 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             inline (we don't want them tinkering with engineering details
             without rep guidance). Rep-mode keeps the inline override
             controls instead. */}
-        {isCustomer && (
-          <div style={styles.repCustomizeHint}>
-            Your Solviva representative can work with you to further customize your
-            solar package in terms of panels, batteries, and inverters.
-          </div>
-        )}
-
         {/* v3-52: pack-composition detail moved into the Selected Battery
             tile (rep-mode only). Customer mode no longer surfaces it —
             it's engineering detail the rep walks through during follow-up. */}
@@ -537,30 +779,46 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             panelCount === 0 — a rep-only path, not a customer flow). */}
       <Subsection title="2B · Rapid Shutdown Device (RSD)"
                   hint="recommended for safety">
-        <Checkbox
-          checked={state.rsdEnabled}
-          onChange={v => updateState({ rsdEnabled: v })}
-          label="Include RSD with my solar package"
-          info={RSD_INFO}
-        />
-        {!isCustomer && state.rsdEnabled && panelCount === 0 && (
-          <div style={{ marginTop: 12 }}>
-            <Field label="Standalone RSD retrofit — number of existing panels" inline>
-              <NumberInput
-                value={state.rsdStandalonePanelCount}
-                onChange={v => updateState({ rsdStandalonePanelCount: v ?? 0 })}
-                min={0} step={1} width={100} suffix="panels"
-              />
-            </Field>
-          </div>
+        {/* v3-106 — RSD stock gate. When the admin marks RSD out of stock
+            (Inventory → Variable Charges), the checkbox is REPLACED by this
+            notice in both modes; App.jsx independently forces rsdEnabled off
+            in the pricing inputs, so a stale session value can't price it. */}
+        {!rsdInStock ? (
+          <CalloutBox kind="warn">
+            <strong>Rapid Shutdown Devices are temporarily out of stock</strong>{' '}
+            and can't be added to quotes right now. The rest of your quote is
+            unaffected — contact your Solviva representative about availability.
+          </CalloutBox>
+        ) : (
+          <>
+            <Checkbox
+              checked={state.rsdEnabled}
+              onChange={v => updateState({ rsdEnabled: v })}
+              label="Include RSD with my solar package"
+              info={RSD_INFO}
+            />
+            {!isCustomer && state.rsdEnabled && panelCount === 0 && (
+              <div style={{ marginTop: 12 }}>
+                <Field label="Standalone RSD retrofit — number of existing panels" inline>
+                  <NumberInput
+                    value={state.rsdStandalonePanelCount}
+                    onChange={v => updateState({ rsdStandalonePanelCount: v ?? 0 })}
+                    min={0} step={1} width={100} suffix="panels"
+                  />
+                </Field>
+              </div>
+            )}
+          </>
         )}
       </Subsection>
 
       {/* ─────────── 2C · Inverters ─────────── */}
-      {/* Functionality unchanged. Rep mode only — customers get the
-          recommended inverter selection automatically (effectiveInverters
-          falls back to recInverters when state.selectedInverters is null). */}
-      {!isCustomer && (
+      {/* v3-121 — now shown in PUBLIC view too (user-directed): customers can
+          see and customize their inverter slots. effectiveInverters still
+          falls back to recInverters for untouched slots; the v3-106 stock
+          filter/revalidation, recommendation pills, and DC/AC ratio warning
+          all apply to customers unchanged. */}
+      {(
         <Subsection title="2C · Inverters"
                     hint="Solviva uses only BNEF Tier-1 inverters">
           {phaseInverters.length === 0 ? (
@@ -598,6 +856,10 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                   <strong style={ratioWarn ? styles.dcAcWarn : null}>
                     {sizing.totalInverterKw > 0 ? fmt.num(sizing.dcAcRatio, 2) : '—'}
                   </strong>
+                  {/* v3-138 — the ⓘ sits on the RATIO, not on the 2C header
+                      (which already carries the BNEF Tier-1 hint). Public
+                      since v3-121, so the copy is customer-facing. */}
+                  <InfoTooltip content={DC_AC_RATIO_INFO} ariaLabel="More info about the DC/AC ratio" />
                   <span style={styles.dcAcMax}>(max allowed: {fmt.num(sizing.maxRatio, 1)})</span>
                 </div>
               </div>
@@ -627,110 +889,161 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
         </Subsection>
       )}
 
-      {/* ─────────── 2E · Roof Material (NEW v3) ─────────── */}
-      {/* Rep mode only — customer mode keeps state.roofMaterial='metal'
-          (₱0 charge), so the calculator produces a clean baseline number
-          for lead-gen. The rep nails down the exact roof type during
-          follow-up; any surcharge appears on the formal quote. */}
-      {!isCustomer && (
-        <Subsection title="2D · Roof Material"
-                    hint="for properly mounting solar panels">
-          <Field label="Roof material" inline>
-            <Select
-              value={state.roofMaterial}
-              onChange={v => updateState({ roofMaterial: v })}
-              width={300}
-              options={[
-                // Order: default first, then alphabetical
-                { value: 'metal',    label: 'Metal — no roof prep needed' },
-                { value: 'asphalt',  label: 'Asphalt / Shingles / Tiled' },
-                { value: 'concrete', label: 'Concrete' },
-              ]}
-            />
-          </Field>
-          <div style={styles.roofHint}>
-            {state.roofMaterial === 'metal' && (
-              <span>Metal roofs need no prep work — no additional charge.</span>
-            )}
-            {state.roofMaterial === 'asphalt' && (
-              <span>Asphalt/shingles/tiled roofs require additional mounting prep
-                at <strong>{fmt.peso(adminParams.roofAsphaltPerKwp)}/kWp</strong>.</span>
-            )}
-            {state.roofMaterial === 'concrete' && (
-              <span>Concrete roofs require the most prep work
-                at <strong>{fmt.peso(adminParams.roofConcretePerKwp)}/kWp</strong>.</span>
-            )}
-          </div>
-        </Subsection>
-      )}
+      {/* ─────────── 2D · Roof Material ─────────── */}
+      {/* v3-97 — now shown in PUBLIC view too. Roof type is customer-knowable
+          (unlike inverter selection) and materially changes the price
+          (metal ₱0 / asphalt / concrete per kWp), so exposing it makes the
+          public quote materially more accurate. The rep still confirms during
+          follow-up. */}
+      <Subsection title="2D · Roof Material"
+                  hint="for properly mounting solar panels">
+        <Field label="Roof material" inline>
+          <Select
+            value={state.roofMaterial}
+            onChange={v => updateState({ roofMaterial: v })}
+            width={300}
+            options={[
+              // Order: default first, then alphabetical
+              { value: 'metal',    label: 'Metal — no roof prep needed' },
+              { value: 'asphalt',  label: 'Asphalt / Shingles / Tiled' },
+              { value: 'concrete', label: 'Concrete' },
+            ]}
+          />
+        </Field>
+        <div style={styles.roofHint}>
+          {state.roofMaterial === 'metal' && (
+            <span>Metal roofs need no prep work — no additional charge.</span>
+          )}
+          {state.roofMaterial === 'asphalt' && (
+            <span>Asphalt/shingles/tiled roofs require additional mounting prep
+              at <strong>{fmt.peso(adminParams.roofAsphaltPerKwp)}/kWp</strong>.</span>
+          )}
+          {state.roofMaterial === 'concrete' && (
+            <span>Concrete roofs require the most prep work
+              at <strong>{fmt.peso(adminParams.roofConcretePerKwp)}/kWp</strong>.</span>
+          )}
+        </div>
+      </Subsection>
 
-      {/* ─────────── 2F · Location (NEW v3) ─────────── */}
-      {/* Customer mode shows a simple disclaimer ("Additional charges may apply
-          for certain locations.") instead of the full region picker — the
-          calc engine sees state.location='luzon' + locationKm=30 (zero
-          surcharge), and the rep nails down the exact location during
-          follow-up. Rep mode keeps the full picker. */}
-      {isCustomer ? (
-        <Subsection title="2C · Installation Location">
-          <div style={styles.roofHint}>
-            <span>Pricing shown assumes installation within {LUZON_FREE_TRAVEL_KM} km of Metro Manila.
-              <strong> Additional charges may apply for certain locations.</strong> Your Solviva agent
-              will confirm any location-specific costs during follow-up.</span>
-          </div>
-        </Subsection>
-      ) : (
-        <Subsection title="2E · Location"
-                    hint="determines delivery & travel charges">
-          <Field label="Installation location" inline>
-            <Select
-              value={state.location}
-              onChange={v => updateState({ location: v })}
-              width={300}
-              options={[
-                // Order: default first, then by frequency
-                { value: 'luzon',   label: 'Luzon' },
-                { value: 'cebu',    label: 'Cebu' },
-                { value: 'siargao', label: 'Siargao' },
-              ]}
-            />
-          </Field>
+      {/* ─────────── 2E · Location (v3-109 Region → City cascade) ─────────── */}
+      {/* Both modes now show the picker (v3-109 — exposed to customers). For
+          "Luzon main island" the rep/customer picks a Region then a City; the
+          city's stored road-km from the Parañaque logistics hub (config
+          LUZON_REGIONS, v3-114 origin rebase) is written to state.locationKm
+          and feeds the identical charge formula in
+          calculations.js (workbook AA38 parity). Cebu / Siargao apply their
+          fixed + per-panel tier. "Other" covers non-road-connected addresses:
+          in customer mode it shows a "contact your rep" note (2F is rep-only);
+          in rep mode the rep enters the cost as a 2F line. */}
+      {/* v3-121 — customer letter was 2C; Inverters (2C) is public now, so customer lettering runs 2A–2E cleanly */}
+      <Subsection title={isCustomer ? '2E · Installation Location' : '2E · Location'}
+                  hint={isCustomer ? undefined : 'determines delivery & travel charges'}>
+        <Field label="Installation location" inline>
+          {/* v3-116 — the middle options are the DYNAMIC in-stock delivery
+              locations (admin-editable, Inventory-toggle idiom). Luzon main
+              island and Other are structural. A stale pick of a hidden/
+              deleted id is forced back to 'luzon' by App.jsx before pricing,
+              so the Select's value is always a live option. */}
+          <Select
+            value={state.location}
+            onChange={v => updateState({ location: v })}
+            width={300}
+            options={[
+              { value: 'luzon', label: 'Luzon main island' },
+              ...availableDeliveryLocations(adminParams).map(l => ({
+                value: l.id, label: l.label,
+              })),
+              { value: 'other', label: isCustomer ? 'Other' : 'Other (Specify in 2F)' },
+            ]}
+          />
+        </Field>
 
-          {/* Distance input — only visible for Luzon */}
-          {state.location === 'luzon' && (
+        {/* Region → City cascade — only for Luzon main island. */}
+        {state.location === 'luzon' && (() => {
+          const region = LUZON_REGIONS.find(r => r.code === state.locationRegion) || LUZON_REGIONS[0];
+          const cities = region.cities;
+          const city   = cities.find(c => c.name === state.locationCity) || cities[0];
+          const km     = city ? city.km : 0;
+          // v3-115 — excess-km only, mirroring the corrected AA38 formula.
+          const surcharge = km > LUZON_FREE_TRAVEL_KM
+            ? adminParams.luzonOver30FixedFee
+              + (km - LUZON_FREE_TRAVEL_KM) * adminParams.luzonOver30PerKm
+            : 0;
+          return (
             <div style={{ marginTop: 10 }}>
-              <Field label="Land travel distance from Rizal Park" inline>
-                <NumberInput
-                  value={state.locationKm}
-                  onChange={v => updateState({ locationKm: Math.max(0, v ?? 0) })}
-                  min={0} step={1} width={120} suffix="km"
+              <Field label="Region" inline>
+                <Select
+                  value={region.code}
+                  onChange={code => {
+                    const r = LUZON_REGIONS.find(x => x.code === code) || LUZON_REGIONS[0];
+                    const first = r.cities[0];
+                    updateState({ locationRegion: r.code, locationCity: first.name, locationKm: first.km });
+                  }}
+                  width={300}
+                  options={LUZON_REGIONS.map(r => ({ value: r.code, label: r.label }))}
                 />
               </Field>
+              <div style={{ marginTop: 10 }}>
+                <Field label="City" inline>
+                  <Select
+                    value={city ? city.name : ''}
+                    onChange={name => {
+                      const c = cities.find(x => x.name === name) || cities[0];
+                      updateState({ locationCity: c.name, locationKm: c.km });
+                    }}
+                    width={300}
+                    options={cities.map(c => ({ value: c.name, label: c.name }))}
+                  />
+                </Field>
+              </div>
               <div style={styles.locationHint}>
-                {state.locationKm <= LUZON_FREE_TRAVEL_KM ? (
-                  <span>Within {LUZON_FREE_TRAVEL_KM} km of Rizal Park — <strong>no delivery charge</strong>.</span>
+                {surcharge === 0 ? (
+                  <span>{city ? city.name : '—'} — within {LUZON_FREE_TRAVEL_KM} km of our Parañaque logistics hub. <strong>No delivery charge</strong>.</span>
                 ) : (
-                  <span>Beyond {LUZON_FREE_TRAVEL_KM} km — adds <strong>{fmt.peso(adminParams.luzonOver30FixedFee)}</strong> fixed
-                    + <strong>{fmt.peso(adminParams.luzonOver30PerKm)}/km</strong>.
-                    At {state.locationKm} km, that's <strong>{
-                      fmt.peso(adminParams.luzonOver30FixedFee + state.locationKm * adminParams.luzonOver30PerKm)
-                    }</strong>.</span>
+                  <span>{city.name} — approx. {km} km from our Parañaque logistics hub. Adds <strong>{fmt.peso(adminParams.luzonOver30FixedFee)}</strong> fixed
+                    + <strong>{fmt.peso(adminParams.luzonOver30PerKm)}/km</strong> beyond {LUZON_FREE_TRAVEL_KM} km, totaling <strong>{fmt.peso(surcharge)}</strong>.</span>
                 )}
               </div>
             </div>
-          )}
-          {state.location === 'cebu' && (
+          );
+        })()}
+
+        {/* v3-116 — one generic hint serves every dynamic row (was two
+            hardcoded Cebu/Siargao blocks). Reads the boot-margin derived
+            prices off the live row, exactly as the old scalars did. */}
+        {(() => {
+          if (state.location === 'luzon' || state.location === 'other') return null;
+          const row = (adminParams.deliveryLocations || []).find(l => l.id === state.location);
+          if (!row) return null;
+          return (
             <div style={styles.locationHint}>
-              Cebu delivery: <strong>{fmt.peso(adminParams.cebuFixedFee)}</strong> fixed
-              + <strong>{fmt.peso(adminParams.cebuPerPanel)}/panel</strong>.
+              {row.label} delivery: <strong>{fmt.peso(row.fixedFee)}</strong> fixed
+              + <strong>{fmt.peso(row.perPanel)}/panel</strong>.
             </div>
-          )}
-          {state.location === 'siargao' && (
-            <div style={styles.locationHint}>
-              Siargao delivery: <strong>{fmt.peso(adminParams.siargaoFixedFee)}</strong> fixed
-              + <strong>{fmt.peso(adminParams.siargaoPerPanel)}/panel</strong>.
-            </div>
-          )}
-        </Subsection>
+          );
+        })()}
+        {state.location === 'other' && isCustomer && (
+          <div style={styles.locationOtherNote}>
+            Additional delivery and location charges may apply in certain areas.
+            Please contact your Solviva representative for a location-specific quote.
+          </div>
+        )}
+      </Subsection>
+
+      {/* v3-121 — customer-facing closing note for Step 2 (user-directed copy,
+          lightly refined). Replaces the old 2A rep-customize hint and covers
+          the inputs customers still can't see (cables, misc line items,
+          promos). The representative phrase keeps the contact-rep link. */}
+      {isCustomer && (
+        <div style={styles.repCustomizeHint}>
+          Additional charges may apply for extra cabling, location and delivery,
+          and other necessary works specific to your site and requirements;
+          discounts may also apply under existing promos. Your{' '}
+          <button type="button" onClick={onContactRep} style={styles.repLink}>
+            Solviva representative
+          </button>{' '}
+          can work with you to further refine your solar package.
+        </div>
       )}
 
       {/* ─────────── 2G · Misc Materials (was 2E) ─────────── */}
@@ -738,7 +1051,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           the customer (e.g. roof reinforcement). Hidden from customer view. */}
       {!isCustomer && (
         <Subsection title="2F · Add MISCELLANEOUS MATERIALS, LABOR &amp; OTHER SERVICES"
-                    hint="optional — up to six free-form line items">
+                    hint="optional — pick from the standing catalog, or specify your own">
           <div style={miscStyles.tableWrap}>
             <table className="step2g-misc-table" style={miscStyles.table}>
               <thead>
@@ -752,22 +1065,69 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
               </thead>
               <tbody>
                 {state.miscMaterials.map((row, i) => {
-                  const total = (row.count || 0) * (row.unitPrice || 0);
                   const canRemove = state.miscMaterials.length > MISC_MIN_ROWS && i >= MISC_MIN_ROWS;
+                  // v3-138 — a row is either CATALOG-backed or free-form. A row
+                  // restored from a pre-v3-138 session has no catalogId at all,
+                  // which reads as free-form and keeps its typed description +
+                  // price — hence no STATE_RECORD_VERSION bump.
+                  const isOther = !row.catalogId || row.catalogId === MISC_CATALOG_OTHER;
+                  const item = isOther ? null : findMiscCatalogItem(adminParams, row.catalogId);
+                  // Stale = the rep picked an item that Anjon has since deleted
+                  // or marked out of stock. calculations.js prices it at ₱0; we
+                  // say so here rather than letting the line vanish silently.
+                  const stale = !isOther && (!item || item.available === false);
+                  // Catalog unit price is LIVE at THIS quote's capacity margin —
+                  // the identical call the engine makes, so 2F and the Summary
+                  // can never disagree. It moves with panel count by design.
+                  const unitPrice = isOther
+                    ? (row.unitPrice || 0)
+                    : (stale ? 0 : directFromCogs(item.cogs, adminParams, quoteMargin));
+                  const total = (row.count || 0) * unitPrice;
                   return (
                     <tr key={i}>
                       <td style={miscStyles.td}>
-                        <TextInput
-                          value={row.description}
+                        <Select
+                          value={isOther ? MISC_CATALOG_OTHER : row.catalogId}
                           onChange={v => {
                             const next = [...state.miscMaterials];
-                            next[i] = { ...next[i], description: v };
+                            // Switching KIND clears the other kind's fields, so a
+                            // stale free-form price can never ride along on a
+                            // catalog row (or vice versa).
+                            next[i] = v === MISC_CATALOG_OTHER
+                              ? { catalogId: MISC_CATALOG_OTHER, description: '', count: next[i].count ?? 1, unitPrice: 0 }
+                              : { catalogId: v, description: '', count: next[i].count ?? 1, unitPrice: 0 };
                             updateState({ miscMaterials: next });
                           }}
-                          placeholder="e.g. Roof reinforcement"
+                          options={[
+                            ...miscCatalogOptions,
+                            // Keep a deleted/out-of-stock pick addressable so the
+                            // Select doesn't render blank while the notice below
+                            // explains itself.
+                            ...(stale ? [{ value: row.catalogId,
+                                           label: `${item ? item.label : 'Previous item'} — no longer available` }] : []),
+                            { value: MISC_CATALOG_OTHER, label: 'Other (please specify)' },
+                          ]}
                         />
+                        {isOther && (
+                          <div style={{ marginTop: 6 }}>
+                            <TextInput
+                              value={row.description}
+                              onChange={v => {
+                                const next = [...state.miscMaterials];
+                                next[i] = { ...next[i], description: v };
+                                updateState({ miscMaterials: next });
+                              }}
+                              placeholder="e.g. Roof reinforcement"
+                            />
+                          </div>
+                        )}
+                        {stale && (
+                          <div style={miscStyles.staleNote}>
+                            No longer offered — this line prices at ₱0 until you pick another item.
+                          </div>
+                        )}
                       </td>
-                      <td style={miscStyles.td}>
+                      <td style={{ ...miscStyles.td, verticalAlign: 'top' }}>
                         <NumberInput
                           value={row.count}
                           onChange={v => {
@@ -778,21 +1138,29 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                           min={0} step={1} width={70}
                         />
                       </td>
-                      <td style={miscStyles.td}>
-                        <NumberInput
-                          value={row.unitPrice}
-                          onChange={v => {
-                            const next = [...state.miscMaterials];
-                            next[i] = { ...next[i], unitPrice: v ?? 0 };
-                            updateState({ miscMaterials: next });
-                          }}
-                          min={0} step={100} prefix="₱" width={120}
-                        />
+                      <td style={{ ...miscStyles.td, verticalAlign: 'top' }}>
+                        {isOther ? (
+                          <NumberInput
+                            value={row.unitPrice}
+                            onChange={v => {
+                              const next = [...state.miscMaterials];
+                              next[i] = { ...next[i], unitPrice: v ?? 0 };
+                              updateState({ miscMaterials: next });
+                            }}
+                            min={0} step={100} prefix="₱" width={120}
+                          />
+                        ) : (
+                          // Read-only by instruction: a catalog price is Anjon's
+                          // to set. A rep who needs a different number uses Other.
+                          <span style={miscStyles.catalogPrice}>
+                            {unitPrice > 0 ? fmt.peso(unitPrice) : '—'}
+                          </span>
+                        )}
                       </td>
-                      <td style={{ ...miscStyles.td, textAlign: 'right', fontWeight: 600 }}>
+                      <td style={{ ...miscStyles.td, textAlign: 'right', fontWeight: 600, verticalAlign: 'top' }}>
                         {total > 0 ? fmt.peso(total) : '—'}
                       </td>
-                      <td style={miscStyles.removeCell}>
+                      <td style={{ ...miscStyles.removeCell, verticalAlign: 'top' }}>
                         {canRemove && (
                           <button
                             type="button"
@@ -822,7 +1190,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                 updateState({
                   miscMaterials: [
                     ...state.miscMaterials,
-                    { description: '', count: 1, unitPrice: 0 },
+                    { catalogId: MISC_CATALOG_OTHER, description: '', count: 1, unitPrice: 0 },
                   ],
                 });
               }}
@@ -832,7 +1200,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             </button>
           ) : (
             <div style={miscStyles.maxHint}>
-              Up to six line items — increase a row's Count for repeated items.
+              Up to twelve line items — increase a row's Count for repeated items.
             </div>
           )}
         </Subsection>
@@ -986,6 +1354,14 @@ const selectedTileStyles = {
     marginTop: 8,
     lineHeight: 1.45,
   },
+  // v3-106 — out-of-stock note that replaces the battery controls inside the
+  // Selected tile. Muted, non-alarming: the quote proceeds without a battery.
+  oosNote: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    lineHeight: 1.5,
+    padding: '6px 0',
+  },
   // Snap-back link — ghost-style, brand-green, underlined so it reads as
   // an action without dominating the tile.
   snapBack: {
@@ -1093,6 +1469,122 @@ const styles = {
     marginTop: 14,
     marginBottom: 8,
   },
+  // v3-110 — optimization objective selector (2A, above the Recommended row).
+  // Card treatment mirrors the approved mockup: three equal cards, selected
+  // card gets the brand-green border + cream fill; the responsive grid wraps
+  // to one column on narrow (~390px) mobile viewports via auto-fit.
+  optModeLabel: {
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+    color: COLORS.textMuted,
+    marginTop: 2,
+    marginBottom: 8,
+  },
+  optModeRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+    gap: 10,
+    marginBottom: 16,
+  },
+  optModeCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 3,
+    textAlign: 'left',
+    padding: '11px 13px',
+    background: COLORS.surfaceCard,
+    border: `1px solid ${COLORS.divider}`,
+    borderRadius: 8,
+    cursor: 'pointer',
+    font: 'inherit',
+  },
+  optModeCardActive: {
+    background: COLORS.brandCream,
+    border: `2px solid ${COLORS.brandGreen}`,
+    padding: '10px 12px',   // compensate the thicker border → no layout shift
+  },
+  optModeTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: COLORS.textBody,
+  },
+  optModeTitleActive: {
+    color: COLORS.brandGreen,
+  },
+  optModeSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    lineHeight: 1.45,
+  },
+  optModeSubActive: {
+    color: COLORS.brandGreenLight,
+  },
+  // v3-110 — infeasible-target amber notice under the Recommended caption.
+  // Active-constraint styling per the v3-75 idiom (warning amber, 600 weight,
+  // not italic — it's a fact about the quote, not an error).
+  optInfeasibleNote: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: COLORS.warning,
+    margin: '-2px 0 8px',
+    lineHeight: 1.5,
+  },
+  // v3-136 — "Size panels for peaks and batteries for valleys" (approved
+  // mockup): cream card holding the checkbox + hint, then a green confirm
+  // or amber caveat line below it. Amber reuses the optInfeasibleNote /
+  // v3-75 active-constraint palette; the confirm uses brandGreenLight
+  // (matching the active mode-card sub text) — a fact, not a warning.
+  consvBlock: {
+    display: 'flex',
+    padding: '10px 12px',
+    background: COLORS.brandCream,
+    border: `1px solid ${COLORS.divider}`,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  consvRow: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 9,
+    cursor: 'pointer',
+  },
+  consvCheckbox: {
+    width: 16,
+    height: 16,
+    marginTop: 2,
+    accentColor: COLORS.brandGreen,
+    flexShrink: 0,
+  },
+  consvLabel: {
+    display: 'block',
+    fontSize: 13.5,
+    fontWeight: 600,
+    color: COLORS.textBody,
+  },
+  consvHint: {
+    display: 'block',
+    fontSize: 12,
+    color: COLORS.textMuted,
+    lineHeight: 1.5,
+    marginTop: 2,
+  },
+  consvConfirm: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: COLORS.brandGreenLight,
+    margin: '0 0 12px',
+    lineHeight: 1.55,
+  },
+  consvCaveat: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: COLORS.warning,
+    margin: '0 0 12px',
+    lineHeight: 1.55,
+  },
   roofHint: {
     fontSize: 12,
     color: COLORS.textMuted,
@@ -1106,6 +1598,16 @@ const styles = {
     marginTop: 8,
     paddingLeft: 4,
     lineHeight: 1.5,
+  },
+  locationOtherNote: {
+    fontSize: 12.5,
+    color: '#854F0B',
+    background: '#FAEEDA',
+    border: '0.5px solid #FAC775',
+    borderRadius: 8,
+    padding: '10px 12px',
+    marginTop: 10,
+    lineHeight: 1.55,
   },
   inverterRows: {
     display: 'flex',
@@ -1148,14 +1650,22 @@ const styles = {
   // reads it as "Solviva is talking to you" rather than "system instruction."
   repCustomizeHint: {
     marginTop: 16,
-    padding: '12px 16px',
+    padding: '14px 18px',
     backgroundColor: COLORS.brandCream,
     borderLeft: `3px solid ${COLORS.brandGreen}`,
     borderRadius: '4px 8px 8px 4px',
-    fontSize: 13,
+    fontSize: 15,
     fontStyle: 'italic',
     color: COLORS.brandGreen,
-    lineHeight: 1.5,
+    lineHeight: 1.55,
+  },
+  // v3-97 — "Solviva representative" rendered as an inline link that opens the
+  // contact form (same action as the header "Talk to a Solviva Rep" button).
+  repLink: {
+    background: 'none', border: 'none', padding: 0, margin: 0,
+    font: 'inherit', fontStyle: 'italic', fontWeight: 700,
+    color: COLORS.brandGreen, textDecoration: 'underline',
+    textUnderlineOffset: 2, cursor: 'pointer',
   },
   // Rep-mode-only hint shown beneath the Selected row when the rep has
   // dialed the battery LARGER than the recommendation. Uses the same amber
@@ -1200,7 +1710,7 @@ const inverterStyles = {
 // pattern. Floor of 1 (row 0 never gets a ✕); cap of 6 protects the
 // fixed-size PDF quote-summary snapshot from overflow.
 const MISC_MIN_ROWS = 1;
-const MISC_MAX_ROWS = 6;
+const MISC_MAX_ROWS = 12;   // v3-138 — was 6; the standing catalog makes multi-line quotes routine
 
 const miscStyles = {
   tableWrap: { overflowX: 'auto', maxWidth: '100%', minWidth: 0 },
@@ -1244,6 +1754,22 @@ const miscStyles = {
     borderRadius: 6,
     cursor: 'pointer',
     fontFamily: 'inherit',
+  },
+  // v3-138 — read-only unit price on a catalog-backed row. Deliberately styled
+  // as TEXT, not a disabled input: a greyed-out box invites clicking and then
+  // reads as broken. This reads as "not yours to set".
+  catalogPrice: {
+    display: 'inline-block',
+    padding: '7px 0',
+    color: COLORS.textMuted,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  // v3-138 — the picked catalog item was deleted or marked out of stock.
+  staleNote: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#B45309',
+    lineHeight: 1.4,
   },
   // Replaces the add button at the cap — muted, non-shouting.
   maxHint: {

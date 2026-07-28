@@ -73,41 +73,153 @@ export const deriveThreePhaseCablingTiers = (singlePhaseTiers) =>
 // so the three-phase default can be derived from the same source. Cloned into
 // the ADMIN_PARAMS literal (never referenced directly) so in-place mutation
 // by paramsService can't corrupt this constant.
+// v3-91 RE-SEED — tiers 1–31 mirror Solviva_Calc_v_B_4_5.xlsm Admin!B33:G40
+// (single-phase) exactly. The Excel table is 8 rows; its VLOOKUP holds the
+// 31-row rate for any count >31. The 62/103/155/206 rows below are app-only
+// commercial tiers (finer resolution for large arrays) with no Excel
+// equivalent — PRESERVED on re-seed rather than dropped, so >31-panel quotes
+// keep their existing behavior. Drop these four rows for an exact 8-tier
+// Excel mirror if commercial resolution is not wanted.
 const SINGLE_PHASE_CABLING_TIERS_DEFAULT = [
-  { minPanels: 1,   dcCablePct: 0.27, acCablePct: 0.08, conduitsPct: 0.12, panelBoardPct: 0.09 },
-  { minPanels: 8,   dcCablePct: 0.27, acCablePct: 0.08, conduitsPct: 0.12, panelBoardPct: 0.09 },
-  { minPanels: 10,  dcCablePct: 0.27, acCablePct: 0.07, conduitsPct: 0.10, panelBoardPct: 0.08 },
-  { minPanels: 13,  dcCablePct: 0.27, acCablePct: 0.06, conduitsPct: 0.10, panelBoardPct: 0.08 },
-  { minPanels: 16,  dcCablePct: 0.22, acCablePct: 0.06, conduitsPct: 0.10, panelBoardPct: 0.07 },
-  { minPanels: 19,  dcCablePct: 0.19, acCablePct: 0.06, conduitsPct: 0.09, panelBoardPct: 0.06 },
-  { minPanels: 24,  dcCablePct: 0.15, acCablePct: 0.05, conduitsPct: 0.07, panelBoardPct: 0.05 },
-  { minPanels: 31,  dcCablePct: 0.13, acCablePct: 0.05, conduitsPct: 0.07, panelBoardPct: 0.04 },
+  { minPanels: 1,   dcCablePct: 0.30, acCablePct: 0.20, conduitsPct: 0.60, panelBoardPct: 0.25 },
+  { minPanels: 8,   dcCablePct: 0.29, acCablePct: 0.16, conduitsPct: 0.57, panelBoardPct: 0.23 },
+  { minPanels: 10,  dcCablePct: 0.29, acCablePct: 0.13, conduitsPct: 0.46, panelBoardPct: 0.19 },
+  { minPanels: 13,  dcCablePct: 0.29, acCablePct: 0.13, conduitsPct: 0.38, panelBoardPct: 0.17 },
+  { minPanels: 16,  dcCablePct: 0.25, acCablePct: 0.11, conduitsPct: 0.31, panelBoardPct: 0.17 },
+  { minPanels: 19,  dcCablePct: 0.21, acCablePct: 0.11, conduitsPct: 0.25, panelBoardPct: 0.14 },
+  { minPanels: 24,  dcCablePct: 0.17, acCablePct: 0.09, conduitsPct: 0.20, panelBoardPct: 0.11 },
+  { minPanels: 31,  dcCablePct: 0.15, acCablePct: 0.09, conduitsPct: 0.20, panelBoardPct: 0.07 },
+  // App-only commercial tiers (>31 panels) — no Excel equivalent; preserved.
   { minPanels: 62,  dcCablePct: 0.12, acCablePct: 0.04, conduitsPct: 0.06, panelBoardPct: 0.03 },
   { minPanels: 103, dcCablePct: 0.11, acCablePct: 0.04, conduitsPct: 0.06, panelBoardPct: 0.03 },
   { minPanels: 155, dcCablePct: 0.10, acCablePct: 0.04, conduitsPct: 0.06, panelBoardPct: 0.03 },
   { minPanels: 206, dcCablePct: 0.09, acCablePct: 0.04, conduitsPct: 0.06, panelBoardPct: 0.03 },
 ];
 
+// v3-91 RE-SEED — tiers 1–31 mirror Solviva_Calc_v_B_4_5.xlsm Admin!B44:G51
+// (three-phase) EXACTLY. These are hand-tuned in the workbook and DIFFER from
+// the uplift-derived values in 12 cells, so they are seeded explicitly rather
+// than via deriveThreePhaseCablingTiers(). The >31 commercial tiers keep the
+// prior uplift-derived behavior (from the single-phase commercial tiers).
+const THREE_PHASE_CABLING_TIERS_DEFAULT = [
+  { minPanels: 1,   dcCablePct: 0.30, acCablePct: 0.30, conduitsPct: 0.72, panelBoardPct: 0.37 },
+  { minPanels: 8,   dcCablePct: 0.29, acCablePct: 0.24, conduitsPct: 0.68, panelBoardPct: 0.34 },
+  { minPanels: 10,  dcCablePct: 0.29, acCablePct: 0.19, conduitsPct: 0.55, panelBoardPct: 0.28 },
+  { minPanels: 13,  dcCablePct: 0.29, acCablePct: 0.19, conduitsPct: 0.45, panelBoardPct: 0.25 },
+  { minPanels: 16,  dcCablePct: 0.24, acCablePct: 0.16, conduitsPct: 0.37, panelBoardPct: 0.24 },
+  { minPanels: 19,  dcCablePct: 0.21, acCablePct: 0.16, conduitsPct: 0.30, panelBoardPct: 0.21 },
+  { minPanels: 24,  dcCablePct: 0.17, acCablePct: 0.14, conduitsPct: 0.24, panelBoardPct: 0.15 },
+  { minPanels: 31,  dcCablePct: 0.15, acCablePct: 0.14, conduitsPct: 0.24, panelBoardPct: 0.11 },
+  // App-only commercial tiers (>31 panels) — uplift-derived from the
+  // single-phase commercial tiers, preserving prior behavior.
+  ...deriveThreePhaseCablingTiers(SINGLE_PHASE_CABLING_TIERS_DEFAULT.slice(8)),
+];
+
 export const ADMIN_PARAMS = {
 
   // ─── Interest rates ────────────────────────────────────────────────────────
   // Admin C22, C23, C24, C27, C28, C25
-  baseRtoInterestRate: 0.28,             // C22 — 28% base RTO rate
-  smallPackagePanelThreshold: 8,         // C23 — packages below this many panels
-                                         //       get a risk premium
-  smallPackageRiskPremiumBps: 400,       // C24 — basis points to ADD to RTO rate
-                                         //       when below threshold (4.00% added)
-                                         //       Excel formula: C24/10000 = 0.04
+  // ─── MARGINS (v3-83) ──────────────────────────────────────────────────────
+  // The two Product levers that turn Engineering's COGS into every direct
+  // purchase price in the app. See directFromCogs() in calculations.js.
+  //   DP = CEILING( COGS × 1.12 / (1 − grossMargin) / (1.12 × (1 − MDR) − 0.12) )
+  // Changing either moves EVERY price at once.
+  // ─── FINANCING ENTITY (v3-87) ────────────────────────────────────────────
+  // WHO extends the credit. Named in the customer-facing T&Cs and on the PDF's
+  // payment-disclosure page.
+  //
+  // TODAY THIS IS SOLVIVA ENERGY INCORPORATED ITSELF — the seller finances its
+  // own installment sales. An OpCo / financing-co split is contemplated but NO
+  // SUCH COMPANY EXISTS YET and its name is NOT SETTLED, so naming one in a
+  // customer contract would name a non-existent party. Parameterised precisely so
+  // that if/when financing is separated this is a ONE-FIELD change, not a release.
+  //
+  // The MATH is identical either way (same cash flows). What changes is the legal
+  // narrative — see the T&C block below and HANDOFF v3-87.
+  financingEntityName: 'Solviva Energy Incorporated',
+  // Set true once the financier is a SEPARATE entity from the seller. Flips the
+  // T&C wording from seller-financed installment sale to third-party financing.
+  financingEntityIsSeparate: false,
+
+  // ─── GROSS MARGIN SURFACE (v3-92) ─────────────────────────────────────────
+  // Gross margin is no longer a flat scalar — it rides a GENLINV curve over the
+  // solar array's rated capacity (kWp), fitted through three anchors, exactly as
+  // the RTO rate surface rides a curve over tenor/DP. See grossMarginCurve() /
+  // grossMarginForCapacity() in calculations.js. Mirrors PRODUCT sheet of
+  // Solviva_Calc_v_B_4_8.xlsm:
+  //   grossMarginMin @ grossMarginMinKwp — 25th pctile (small systems, floor)
+  //   grossMarginMid @ grossMarginMidKwp — 50th pctile (curvature)
+  //   grossMarginMax @ grossMarginMaxKwp — 75th pctile (large systems, ceiling)
+  // An order with NO solar panels (battery/RSD/inverter-only) is priced at
+  // grossMarginMax (the ceiling) — see grossMarginForCapacity().
+  grossMarginMinKwp: 1,                  // kWp of the min-margin anchor
+  grossMarginMidKwp: 15,                 // kWp of the mid-margin anchor (curvature)
+  grossMarginMaxKwp: 30,                 // kWp of the max-margin anchor
+  grossMarginMin: 0.20,                  // 20% — small systems / floor
+  grossMarginMid: 0.22,                  // 22% — mid systems (curvature)
+  grossMarginMax: 0.30,                  // 30% — large systems / ceiling / no-panels default
+  // The margin used for the ADMIN Inventory/Engineering "DP Price" columns and the
+  // boot price derivation — set DIRECTLY (v3-95) rather than via a reference kWp.
+  // Default = the max anchor (ceiling price). Does NOT affect quotes; those resolve
+  // their own margin from actual capacity.
+  grossMarginReference: 0.30,
+  // The acquirer's cut. NOTE: it is deducted from the VAT-INCLUSIVE amount the
+  // customer is charged, while the full output VAT is still remitted — which is
+  // why the denominator is 0.832, not 0.85. Anjon's original sheet used 0.85 and
+  // quietly realised 24.4% against a 26% target; this form realises 26%.
+  merchantDiscountRate: 0.15,
+
+  // ─── RTO INTEREST RATE SURFACE (v3-79) ────────────────────────────────────
+  // REPLACES the v3-78 flat `baseRtoInterestRate` + small-package risk premium.
+  //
+  // The rate is now a function of BOTH tenor and down payment, fitted through
+  // three anchors with Myerson's generalized-lognormal quantile function (the
+  // same curve SimTools' GENLINV() implements). See `rtoRate()` in
+  // calculations.js for the full derivation.
+  //
+  //   rateAnchorMax  @ 60 mo /  0% DP   — the riskiest cell, top-left
+  //   rateAnchorMid  @ 30 mo / 25% DP   — sets the CURVATURE of the surface
+  //   rateAnchorMin  @  1 mo / 50% DP   — the safest CHARGED cell (Direct Purchase
+  //                                       is tenor 0 and interest-free; the surface
+  //                                       spans the interest-bearing range 1..60,
+  //                                       per the v3-100 tenor-axis split)
+  //
+  // Placing the mid anchor BELOW the arithmetic mean of the two extremes bends
+  // the surface convex — rates stay low across most of the grid and climb
+  // steeply only in the long-tenor / low-DP corner, where the credit risk is.
+  //
+  // rateAnchorMax doubles as the CATALOGUE rate: it is the rate at 60 mo / 0% DP,
+  // which is exactly what the "Std. 60-Mo. Term Package Price" means. Using it
+  // for the price list keeps the PMT/PV round-trip in computePaymentTerms exact.
+  rateAnchorMax: 0.48,                   // 48% — 60 mo / 0% DP  (also the catalogue rate)
+  rateAnchorMid: 0.18,                   // 18% — 30 mo / 25% DP (curvature)  [v3-99: was 0.15]
+  rateAnchorMin: 0.16,                   // 16% —  1 mo / 50% DP               [v3-99: was 0.12]
+  // Blend weight between the two axes: u = w*uTenor + (1-w)*uDownPayment.
+  // 0 = down payment alone sets the rate; 1 = tenor alone. At 0.25 the down
+  // payment carries three quarters of the weight. This knob provably CANNOT
+  // move the three anchors (at each of them uTenor and uDownPayment agree), so
+  // it reshapes only the interior of the grid.
+  rateTenorWeight: 0.30,                 // v3-99: was 0.25 — matches v5.1 PRODUCT!C61
+  // Every rate snaps to the nearest multiple of this — a rate card, not a
+  // continuum. 0.00125 = one eighth of a percentage point.
+  rateStepPct: 0.00125,
+
   earlyPayoffDiscountRate: 0.08,         // C28 — 8% NPV discount for ANNEX early payoffs
 
-  // Note: the "calculator RTO interest rate" used everywhere is computed at
-  // runtime as: baseRtoInterestRate + (panelCount < threshold ? premium : 0)
-  // See calculations.js → `effectiveRtoRate(panelCount)`.
+  // v3-99 — Documentary Stamp Tax rate: ₱1.50 per ₱200 (or part) of the financed
+  // amount = 0.0075 (Solviva_Calc_v_B_5_1.xlsm PRODUCT!C3). Charged on financed
+  // deals only, prorated by loan-year fraction. Feeds CALCULATOR!AH13 →
+  // year-1 IRR outflow + the ANNEX signing payment. Fixed seed for now — NOT in
+  // PARAM_KEY_TO_SECTION, so it is not yet admin-editable (keeps the 61-key
+  // permissions maps and their sync gate unchanged); surface it as a Product
+  // knob in a later release if editability is wanted.
+  documentaryStampTaxRate: 0.0075,
 
   // ─── Mounting support (Admin D32, C33) ─────────────────────────────────────
   // Customer pays max(floor, 13% of panel price). Panel pricing lives on the
   // Inventory page; only the mounting numbers are here.
-  mountingSupportFloorPrice: 8579,       // D32
+  mountingSupportFloorCogs: 9019.7,       // D32
+  mountingSupportFloorPrice: 0,   // DERIVED from mountingSupportFloorCogs — see deriveDirectPrices()
   mountingSupportPctOfPanels: 0.13,      // C33 — 13% of panel price
 
   // ─── SINGLE-PHASE AC/DC cabling tier table (Admin B36:G48) ──────────────────
@@ -124,13 +236,16 @@ export const ADMIN_PARAMS = {
   // table via THREE_PHASE_CABLING_UPLIFT (DC ×1.0, AC ×1.5, Conduits ×1.2,
   // Panel board ×1.5); engineering edits each tier independently thereafter.
   // Not in the Excel reference workbook yet — Excel mirror update deferred.
-  cablingTiersThreePhase: deriveThreePhaseCablingTiers(SINGLE_PHASE_CABLING_TIERS_DEFAULT),
+  cablingTiersThreePhase: THREE_PHASE_CABLING_TIERS_DEFAULT.map(t => ({ ...t })),
 
   // ─── Variable & per-unit charges (Admin D51:D53) ───────────────────────────
   // Direct-purchase prices straight from v3.2 Admin sheet column D.
-  additionalDcCablePerMeter: 1137,       // D51 — extra DC cable beyond 30m
-  additionalAcCablePerMeter: 2426,       // D52 — extra AC cable beyond 10m
-  laborInstallationPerKwp: 8341,         // D53 — variable solar labor per kWp
+  additionalDcCablePerMeterCogs: 750,       // D51 — extra DC cable beyond 30m
+  additionalDcCablePerMeter: 0,   // DERIVED from additionalDcCablePerMeterCogs — see deriveDirectPrices()
+  additionalAcCablePerMeterCogs: 1600,       // D52 — extra AC cable beyond 10m
+  additionalAcCablePerMeter: 0,   // DERIVED from additionalAcCablePerMeterCogs — see deriveDirectPrices()
+  laborInstallationPerKwpCogs: 5500,         // D53 — variable solar labor per kWp
+  laborInstallationPerKwp: 0,   // DERIVED from laborInstallationPerKwpCogs — see deriveDirectPrices()
 
   // ─── Roof Material (Admin D54:D55) ─────────────────────────────────────────
   // Three options for the customer (Step 2E in web GUI):
@@ -139,41 +254,118 @@ export const ADMIN_PARAMS = {
   //   concrete  → kWp × roofConcretePerKwp
   // (These map to Excel M36 values 2, 1, 3 respectively — Excel's
   //  ordering happens to differ, but the math is identical.)
-  roofAsphaltPerKwp: 9200,               // D54 — Asphalt/Shingles/Tiled per kWp
-  roofConcretePerKwp: 17000,             // D55 — Concrete per kWp
+  roofAsphaltPerKwpCogs: 6500,               // D54 — Asphalt/Shingles/Tiled per kWp
+  roofAsphaltPerKwp: 0,   // DERIVED from roofAsphaltPerKwpCogs — see deriveDirectPrices()
+  roofConcretePerKwpCogs: 12000,             // D55 — Concrete per kWp
+  roofConcretePerKwp: 0,   // DERIVED from roofConcretePerKwpCogs — see deriveDirectPrices()
 
   // ─── Location / Delivery (Admin D56:D61) ───────────────────────────────────
   // Three options for the customer (Step 2F in web GUI):
   //   luzon (DEFAULT)
-  //        ≤ 30 km from Rizal Park → ₱0
+  //        ≤ 30 km from the Parañaque logistics hub (v3-114) → ₱0
   //        > 30 km → luzonOver30FixedFee + (km × luzonOver30PerKm)
-  //   cebu     → cebuFixedFee + (panels × cebuPerPanel)
-  //   siargao  → siargaoFixedFee + (panels × siargaoPerPanel)
-  cebuFixedFee: 57114,                   // D56
-  cebuPerPanel: 5660,                    // D57
-  siargaoFixedFee: 495000,               // D58
-  siargaoPerPanel: 8700,                 // D59
-  luzonOver30FixedFee: 7000,             // D60 — fixed delivery surcharge for Luzon >30km
-  luzonOver30PerKm: 200,                 // D61 — per-km charge for Luzon >30km
+  //   dynamic location row → row.fixedFee + (panels × row.perPanel)
+  // v3-116 — the four Cebu/Siargao scalars became a DYNAMIC deliveryLocations
+  // array (Inventory-tab stock-toggle idiom + add/delete, user-directed).
+  // Each row: { id, label, fixedFeeCogs, perPanelCogs, available } with
+  // fixedFee/perPanel DERIVED per-row in deriveDirectPrices() at quote margin
+  // (battery-packages pattern). Luzon main island (per-km, AA38) and "Other"
+  // are STRUCTURAL — not rows here, never deletable. Seed ids 'cebu' /
+  // 'siargao' deliberately match the legacy state.location values so existing
+  // sessions restore untouched (no STATE_RECORD_VERSION bump).
+  // available:false hides the row from the Step 2E dropdown (both modes); a
+  // live session holding a hidden/deleted id falls back to Luzon main island
+  // (v3-106 "availability never blocks the flow").
+  deliveryLocations: [
+    { id: 'cebu',    label: 'Cebu',    fixedFeeCogs: 37736,  perPanelCogs: 3740,   // D56/D57
+      fixedFee: 0, perPanel: 0, available: true },   // fixedFee/perPanel DERIVED
+    { id: 'siargao', label: 'Siargao', fixedFeeCogs: 327053, perPanelCogs: 5748,   // D58/D59
+      fixedFee: 0, perPanel: 0, available: true },
+  ],
+  // ─── Misc materials / labor / services catalog (v3-138) ────────────────────
+  // Step 2F used to be six wholly free-form rows: the rep typed a description
+  // AND a price, and the line carried `cogs: null` — no COGS basis, no margin
+  // discipline, no way to know what any of it actually cost. This catalog is
+  // Anjon's BOM Q3 list, maintained on the Engineering tab exactly like
+  // deliveryLocations (add / delete / In-stock checkbox), so a rep picks from
+  // priced standards instead of inventing numbers.
+  //
+  // `cogs` is PRE-VAT COST — the workbook's "Cost (VAT Exc)" column, same
+  // basis as every other Anjon-entered figure. `price` is DERIVED per row in
+  // deriveDirectPrices() at the QUOTE's capacity margin (battery-packages /
+  // deliveryLocations pattern), which means the unit price a rep sees in 2F
+  // moves with panel count — a ₱4,650 breaker bills at ₱7,825 on a 1 kWp job
+  // and ₱8,943 at the 30% ceiling. That is the margin curve working as
+  // specified (v3-92), not a bug; user-confirmed before build.
+  //
+  // COGS carries CENTAVOS here (four rows are ₱4,089.12), unlike the integer
+  // COGS scalars elsewhere. directFromCogs() already CEILINGs to whole pesos,
+  // so the derived price is unaffected — but rounding the INPUT would silently
+  // drift Anjon's sheet, so the editor preserves 2dp.
+  //
+  // available:false keeps the row (and its price history) but drops it from
+  // the 2F dropdown — v3-106 stock idiom. A live session holding a hidden or
+  // deleted id prices at ZERO and shows an amber notice in 2F, mirroring
+  // "availability never blocks the flow".
+  miscCatalog: [
+    { id: 'mc-acb125', label: 'AC Breaker, 125AT, 2-pole',                cogs: 4650.00,  price: 0, available: true },
+    { id: 'mc-acb100', label: 'AC Breaker, 100AT, 2-pole',                cogs: 4350.00,  price: 0, available: true },
+    { id: 'mc-acb80',  label: 'AC Breaker, 80AT, 2-pole',                 cogs: 4089.12,  price: 0, available: true },
+    { id: 'mc-acb75',  label: 'AC Breaker, 75AT, 2-pole',                 cogs: 4089.12,  price: 0, available: true },
+    { id: 'mc-acb70',  label: 'AC Breaker, 70AT, 2-pole',                 cogs: 4089.12,  price: 0, available: true },
+    { id: 'mc-acb60',  label: 'AC Breaker, 60AT, 2-pole',                 cogs: 4089.12,  price: 0, available: true },
+    { id: 'mc-acb50',  label: 'AC Breaker, 50AT, 2-pole',                 cogs: 4089.12,  price: 0, available: true },
+    { id: 'mc-acb40',  label: 'AC Breaker, 40AT, 2-pole',                 cogs: 4089.12,  price: 0, available: true },
+    { id: 'mc-acb30',  label: 'AC Breaker, 30AT, 2-pole',                 cogs: 4089.12,  price: 0, available: true },
+    { id: 'mc-canopy', label: 'Canopy',                                   cogs: 17920.00, price: 0, available: true },
+    { id: 'mc-trench', label: 'Trenching (per Meter)',                    cogs: 6400.00,  price: 0, available: true },
+    { id: 'mc-serem',  label: 'Service Entry Remodelling',                cogs: 23600.00, price: 0, available: true },
+    { id: 'mc-cfei',   label: 'CFEI',                                     cogs: 15000.00, price: 0, available: true },
+    { id: 'mc-rtpi',   label: 'Request for Temporary Power Interruption', cogs: 10000.00, price: 0, available: true },
+    { id: 'mc-signse', label: 'Sign and seal of the plan',                cogs: 10000.00, price: 0, available: true },
+  ],
+
+  luzonOver30FixedFeeCogs: 4625,             // D60 — fixed delivery surcharge for Luzon >30km
+  luzonOver30FixedFee: 0,   // DERIVED from luzonOver30FixedFeeCogs — see deriveDirectPrices()
+  luzonOver30PerKmCogs: 132,                 // D61 — per-km charge for Luzon >30km
+  luzonOver30PerKm: 0,   // DERIVED from luzonOver30PerKmCogs — see deriveDirectPrices()
 
   // ─── RSD pricing (Admin D62:D65) ───────────────────────────────────────────
   // Direct prices from v3.2 D-column.
-  rsdVariablePerPanel: 3161,             // D62
-  rsdFixedTransmitter: 10615,            // D63
-  rsdStandaloneLaborPerPanel: 500,       // D64
-  rsdStandaloneLaborMobilization: 10000, // D65
+  // v3-106 — rsdAvailable: stock flag for the RSD hardware itself. When false,
+  // the Step 2B "Include RSD" checkbox is replaced by an out-of-stock note and
+  // App.jsx forces rsdEnabled off in the pricing inputs (so a stale session
+  // can't price an unavailable device). Editable in the Inventory tab's
+  // Variable Charges section (moved there from Engineering in v3-106); gated
+  // by the 'variableCharges' section like the RSD prices beside it.
+  rsdAvailable: true,
+  rsdVariablePerPanelCogs: 1850,             // D62
+  rsdVariablePerPanel: 0,   // DERIVED from rsdVariablePerPanelCogs — see deriveDirectPrices()
+  rsdFixedTransmitterCogs: 9506,            // D63
+  rsdFixedTransmitter: 0,   // DERIVED from rsdFixedTransmitterCogs — see deriveDirectPrices()
+  rsdStandaloneLaborPerPanelCogs: 330,       // D64
+  rsdStandaloneLaborPerPanel: 0,   // DERIVED from rsdStandaloneLaborPerPanelCogs — see deriveDirectPrices()
+  rsdStandaloneLaborMobilizationCogs: 6607, // D65
+  rsdStandaloneLaborMobilization: 0,   // DERIVED from rsdStandaloneLaborMobilizationCogs — see deriveDirectPrices()
 
   // ─── Inverter labor (Admin D68, D69) ───────────────────────────────────────
-  inverterStandaloneLaborPerUnit: 1500,  // D68
-  inverterStandaloneMobilization: 10000, // D69
+  inverterStandaloneLaborPerUnitCogs: 2500,  // D68
+  inverterStandaloneLaborPerUnit: 0,   // DERIVED from inverterStandaloneLaborPerUnitCogs — see deriveDirectPrices()
+  inverterStandaloneMobilizationCogs: 6607, // D69
+  inverterStandaloneMobilization: 0,   // DERIVED from inverterStandaloneMobilizationCogs — see deriveDirectPrices()
 
   // ─── Fixed overhead (Admin D109:D113) ──────────────────────────────────────
   // Total auto-calculated as the sum of the five lines below.
-  fixedOverheadDeliveryLogistics: 2943,  // D109
-  fixedOverheadWarehouse: 2066,          // D110
-  fixedOverheadCustoms: 0,               // D111
-  fixedOverheadSafetySupervision: 7582,  // D112
-  fixedOverheadTesting: 4549,            // D113
+  fixedOverheadDeliveryLogisticsCogs: 19381,  // D109
+  fixedOverheadDeliveryLogistics: 0,   // DERIVED from fixedOverheadDeliveryLogisticsCogs — see deriveDirectPrices()
+  fixedOverheadWarehouseCogs: 832,          // D110
+  fixedOverheadWarehouse: 0,   // DERIVED from fixedOverheadWarehouseCogs — see deriveDirectPrices()
+  fixedOverheadCustomsCogs: 0,               // D111
+  fixedOverheadCustoms: 0,   // DERIVED from fixedOverheadCustomsCogs — see deriveDirectPrices()
+  fixedOverheadSafetySupervisionCogs: 3000,  // D112
+  fixedOverheadSafetySupervision: 0,   // DERIVED from fixedOverheadSafetySupervisionCogs — see deriveDirectPrices()
+  fixedOverheadTestingCogs: 3000,            // D113
+  fixedOverheadTesting: 0,   // DERIVED from fixedOverheadTestingCogs — see deriveDirectPrices()
 
   // ─── Battery packages (v3-54 NEW: array of packages) ──────────────────────
   // Up to v3-53 there was a single hardcoded 5 kWh / 3-cap pack pricing block
@@ -212,45 +404,81 @@ export const ADMIN_PARAMS = {
     {
       id: 'pkg5kwh01',
       label: '5 kWh Pylontech',
+      available: true,   // v3-106 — stock flag; false = excluded from the optimizer, the Step 2 dropdown, and fallbacks
       batteryUnitKwh: 5,
-      batteryUnitPrice: 90099,
       batteryRackCapacity: 3,
-      batteryRackPrice: 17807,
-      atsPrice: 10684,
-      criticalLoadsMaterials: 37393,
-      laborWithSolarInstall: 32942,
-      standaloneLabor: 44516,
+      // v3-83 — COGS (pre-VAT), Engineering-entered. Prices below are DERIVED.
+      batteryUnitCogs: 50600,
+      batteryRackCogs: 10000,
+      atsCogs: 6000,
+      criticalLoadsMaterialsCogs: 21000,
+      laborWithSolarInstallCogs: 18500,
+      standaloneLaborCogs: 25000,
+      batteryUnitPrice: 0,
+      batteryRackPrice: 0,
+      atsPrice: 0,
+      criticalLoadsMaterials: 0,
+      laborWithSolarInstall: 0,
+      standaloneLabor: 0,
     },
     {
-      id: 'pkg16kw01',
+      // v3-83 — NEW. Anjon's sheet carries a full COGS set for a 16 kWh
+      // Pylontech; the app had no such package. Added as a second option (purely
+      // additive — no existing quote changes). Battery unit COGS is the sheet's
+      // 110,000 + 10,600 = 120,600 (unit + cables & lugs), and the rack COGS is
+      // ZERO: the 16 kWh unit is free-standing and needs no rack.
+      id: 'pkg16kwh01',
       label: '16 kWh Pylontech',
+      available: true,   // v3-106 — stock flag (see pkg5kwh01)
       batteryUnitKwh: 16,
-      batteryUnitPrice: 214741,
       batteryRackCapacity: 1,
+      batteryUnitCogs: 120600,
+      batteryRackCogs: 0,
+      atsCogs: 6000,
+      criticalLoadsMaterialsCogs: 21000,
+      laborWithSolarInstallCogs: 18500,
+      standaloneLaborCogs: 25000,
+      batteryUnitPrice: 0,
       batteryRackPrice: 0,
-      atsPrice: 10684,
-      criticalLoadsMaterials: 37393,
-      laborWithSolarInstall: 32942,
-      standaloneLabor: 44516,
+      atsPrice: 0,
+      criticalLoadsMaterials: 0,
+      laborWithSolarInstall: 0,
+      standaloneLabor: 0,
     },
   ],
 
   // ─── Schedule constants (Admin C125:C134) ──────────────────────────────────
   kWhPerKwpPerDay: 3.8,                  // C125 — daily yield assumption (PH, ~18° tilt)
   batteryEfficiency: 0.92,               // C126 — round-trip
+  // v3-132 — Mode-1 ("Fewest panels & least solar production wasted") spill
+  // tolerance: the recommended battery may leave AT MOST this much raw daily
+  // excess unabsorbed (kWh/day). 0 = strict absorb-all (the v3-131 policy).
+  // v3-136 — SEED CHANGED 1.0 → 0 (user-directed, alongside the peaks-and-
+  // valleys feature): strict absorb-all is the seed baseline again, restoring
+  // the v3-131 economics AT SEEDS — the flagship default steps 1×5 → 2×5
+  // (Std ₱537,168.04 → ₱622,732.04). ⚠️ The LIVE BLOB likely still holds the
+  // v3-132-era 1.0 from a post-deploy save; a seed change does not touch the
+  // blob — Engineering must set the live param to 0 and Save for the deployed
+  // site to follow. Engineering-editable; NO workbook counterpart (Mode-1
+  // policy knob, deferred Excel-sync list).
+  maxDailySpillKwh: 0,
   batteryDepthOfDischarge: 0.95,         // C127 — usable fraction
   panelAnnualDegradation: 0.005,         // C128 — 0.5%/yr loss (also used in NPER for payback)
   lcoeNpvDiscountRate: 0.06,             // C129 / C134 — both refer to 6%
   maintenanceInflationRate: 0.03,        // C130 — annual inflation on maintenance
   netMeteringEfficiency: 0.5,            // C131 — credit value vs full retail rate
-  preventiveMaintenancePerPanel: 500,    // C132
-  preventiveMaintenancePerVisit: 5000,   // C133
+  preventiveMaintenancePerPanelCogs: 330,    // C132
+  preventiveMaintenancePerPanel: 0,   // DERIVED from preventiveMaintenancePerPanelCogs — see deriveDirectPrices()
+  preventiveMaintenancePerVisitCogs: 3303,   // C133
+  preventiveMaintenancePerVisit: 0,   // DERIVED from preventiveMaintenancePerVisitCogs — see deriveDirectPrices()
 
   // ─── Promo code discounts (Admin A137:C140) ────────────────────────────────
+  // v3-91 RE-SEED — mirrors Solviva_Calc_v_B_4_5.xlsm Admin!A112:C115.
   promoCodes: [
-    { code: 'SENIOR', label: 'Senior Citizen',  discount: 0.01 },
-    { code: 'SOLV',   label: 'Solviva Partner',  discount: 0.10 },
-    { code: 'CASH',   label: 'Cash Discount',    discount: 0.05 },
+    { code: 'SENIOR', label: 'Senior Citizen',                               discount: 0.03 },
+    { code: 'SOLV',   label: 'Solviva Partner',                              discount: 0.15 },
+    { code: 'CASH',   label: 'Cash / Check / Direct Deposit Payment Method', discount: 0.12 },
+    { code: 'SEMP',   label: 'Solviva Employee',                             discount: 0.20 },
   ],
 
   // ─── Quote validity ───────────────────────────────────────────────────────
@@ -275,7 +503,7 @@ export const ADMIN_PARAMS = {
   //   minDpTiers        — (v3-75, replaces the v3-68 scalar minDownPaymentPct)
   //                       TIERED minimum down payment keyed on the quote's
   //                       "Net Price (before DP Discount)" — i.e. AI9 =
-  //                       terms.totalPaymentsOverTenor, which depends on the
+  //                       terms.netDirectPrice (v3-80; tenor-independent), which depends on the
   //                       package/promo/tenor but NOT on the DP% itself, so
   //                       there is no circularity. Array of
   //                       { fromNetPrice, minDpPct } rows sorted strictly
@@ -296,7 +524,11 @@ export const ADMIN_PARAMS = {
   //                       highest allowed option. Tenor 1 (Direct Purchase)
   //                       is always available.
   minSystemKwp: 0,
-  minDpTiers: [{ fromNetPrice: 0, minDpPct: 0 }],
+  minDpTiers: [                          // v3-99: seeded from Solviva_Calc_v_B_5_1.xlsm PRODUCT!B7:C9
+    { fromNetPrice: 0,       minDpPct: 0.10 },   // ₱0 – ₱499,999        → 10% floor
+    { fromNetPrice: 500000,  minDpPct: 0.15 },   // ₱500,000 – ₱999,999  → 15% floor
+    { fromNetPrice: 1000000, minDpPct: 0.20 },   // ₱1,000,000 and above → 20% floor
+  ],
   maxTenorMonths: 60,
 
   // ─── Step 1 defaults (NEW v3-70) ───────────────────────────────────────────
@@ -350,13 +582,22 @@ export const ADMIN_PARAMS = {
   minDaysToFirstPostInstallPayment: 44,
 };
 
+// ─── Battery-package availability helper (v3-106) ──────────────────────────
+// Absent flag = available, so pre-v3-106 blobs need no migration.
+export function availableBatteryPackages(adminParams) {
+  return (adminParams?.batteryPackages || []).filter(p => p?.available !== false);
+}
+
 // ─── Battery-package resolution helper ─────────────────────────────────────
 // Given a state.batteryPackageId (synthetic uuid) and the live admin params,
-// return the matching package object. Falls back to packages[0] if the id
-// isn't found (e.g. admin deleted the previously-selected package, or the
-// state was persisted in a session that predates the package). Always returns
-// a valid package because adminParams.batteryPackages is guaranteed non-empty
-// (server + client floor at 1).
+// return the matching package object. Falls back to the first AVAILABLE
+// package if the id isn't found or is out of stock (e.g. admin deleted or
+// de-stocked the previously-selected package, or the state was persisted in
+// a session that predates the package). Always returns a valid package
+// because adminParams.batteryPackages is guaranteed non-empty (server +
+// client floor at 1) — if EVERY package is out of stock, packages[0] is
+// returned as a pricing-safe placeholder: App.jsx forces batteryKwh to 0 in
+// that case, so the placeholder's prices never reach a line item.
 export function resolveBatteryPackage(adminParams, batteryPackageId) {
   const list = adminParams?.batteryPackages || [];
   if (list.length === 0) {
@@ -376,11 +617,13 @@ export function resolveBatteryPackage(adminParams, batteryPackageId) {
       standaloneLabor: 0,
     };
   }
+  // v3-106 — an explicit pick must still be IN STOCK to win; otherwise fall
+  // through to the first available package (then packages[0] as last resort).
   if (batteryPackageId) {
-    const match = list.find(p => p.id === batteryPackageId);
+    const match = list.find(p => p.id === batteryPackageId && p.available !== false);
     if (match) return match;
   }
-  return list[0];
+  return list.find(p => p.available !== false) || list[0];
 }
 
 // ─── Battery package auto-optimizer (v3-71) ─────────────────────────────────
@@ -410,8 +653,39 @@ export function resolveBatteryPackage(adminParams, batteryPackageId) {
 // The comparison is on DIRECT prices. The RTO uplift is a uniform
 // multiplier on the package subtotal, so the direct-price winner is also
 // the RTO winner.
+// v3-116 — in-stock delivery locations (absent flag = available, v3-106
+// semantics). Feeds the Step 2E dropdown and App.jsx's stale-pick fallback.
+export function availableDeliveryLocations(adminParams) {
+  return (adminParams?.deliveryLocations || []).filter(l => l && l.available !== false);
+}
+
+// v3-138 — in-stock misc catalog items (absent flag = available, v3-106
+// semantics). Feeds the Step 2F description dropdown.
+export function availableMiscCatalog(adminParams) {
+  return (adminParams?.miscCatalog || []).filter(m => m && m.available !== false);
+}
+
+// v3-138 — resolve a stored catalogId against the FULL catalog, in stock or
+// not. Deliberately NOT filtered: Step 2F needs to tell "this row's item went
+// out of stock / was deleted" apart from "this row is free-form", and pricing
+// needs the same distinction. Returns null for both an unknown id and the
+// free-form sentinel.
+export function findMiscCatalogItem(adminParams, catalogId) {
+  if (!catalogId || catalogId === MISC_CATALOG_OTHER) return null;
+  return (adminParams?.miscCatalog || []).find(m => m && m.id === catalogId) || null;
+}
+
+// The 2F dropdown's free-form sentinel. Stored in state.miscMaterials[i]
+// .catalogId when the rep picks "Other (please specify)"; a row restored from
+// a pre-v3-138 session has NO catalogId at all and is read as free-form too,
+// which is why the falsy case and this sentinel behave identically everywhere.
+export const MISC_CATALOG_OTHER = 'other';
+
 export function optimizeBatteryPackage(adminParams, dailyExcessKwh, hasSolar) {
-  const list = adminParams?.batteryPackages || [];
+  // v3-106 — only IN-STOCK packages compete. If every package is out of
+  // stock, delegate to resolveBatteryPackage's placeholder fallback (App.jsx
+  // forces batteryKwh to 0 in that case, so the winner is never priced).
+  const list = availableBatteryPackages(adminParams);
   if (list.length === 0) return resolveBatteryPackage(adminParams, null);
   const excess = Math.max(0, dailyExcessKwh || 0);
   let best = null;
@@ -566,36 +840,82 @@ export const DISCLAIMERS = {
 // user. Trailing/leading whitespace and parenthetical notes preserved.
 export const PROPOSAL_CONTENT = {
   termsAndConditions: [
+    // ═══ v3-104 — RECONCILED WITH MARKETING'S PROPOSAL TEMPLATE (071426) ═════
+    // Marketing supplied a standard proposal PDF; its page-6 T&C is adopted
+    // where it agrees with the calculator, and corrected where it doesn't:
+    //   • "more than one (1) month" → "any financed term (other than a Direct
+    //     Purchase)" — since v3-100 the 1-month tenor IS financed (interest +
+    //     DST); only tenor 0 is not an installment sale.
+    //   • Validity is the `quoteValidityDays` PARAM (user-directed). The two
+    //     hardcoded "thirty (30) days" mentions become {{QUOTE_VALIDITY_DAYS}}
+    //     / {{VALID_UNTIL}} tokens, substituted by the PDF generator from the
+    //     LIVE param + computed date — the T&C can never contradict the
+    //     cover's "Valid until". (The Suitability REFUND's thirty (30) days is
+    //     a distinct policy period and stays literal, as does the Definitive
+    //     Agreement's seven (7)-day execution window.)
+    //   • Early settlement wording now matches the annex math: PV of remaining
+    //     payments (Admin C28 discount), NOT "outstanding principal".
+    //   • DST added to the RA 3765 item list + its own bullet.
+    //   • NEW: RSD compliance note (PEC 2017 §6.90.2.6) from Marketing pg 4.
+    //   • Warranty table split to Marketing's 5 rows (Inverter / Battery).
+    //   • RETAINED vs Marketing's template (user-ratified): the Financing &
+    //     Ownership section (their template is generic; ours actually
+    //     finances), Definitive Agreement + partial-turnover paragraphs, and
+    //     the net-metering closing note.
+    //
+    // ═══ v3-87 — FINANCING & OWNERSHIP (seller-financed conditional sale) ════
+    // ⚠ NOT REVIEWED BY COUNSEL. Drafted from the structure the user chose and
+    // MUST be cleared before it reaches a customer.
+    //
+    // The creditor is Solviva Energy Incorporated — which is also the SELLER.
+    // The name is the `financingEntityName` param: a one-field change if/when
+    // financing is ever separated out. RA 8556 / RA 9474 regulate entities
+    // whose PRINCIPAL BUSINESS is extending credit to OTHERS; a vendor selling
+    // ITS OWN goods on installment is doing SELLER FINANCING under the Civil
+    // Code. COUNSEL TO CONFIRM.
+    //
+    // STILL OPEN FOR COUNSEL / THE ACCOUNTANT (unchanged):
+    //   (a) Art. 415 — rooftop panels may be IMMOVABLE BY DESTINATION; title
+    //       retention may be unenforceable as drafted. THE BIGGEST HOLE.
+    //   (b) Recto Law (Arts. 1484-86) — one remedy only; reflected below.
+    //   (c) ⚠ VAT ON THE FINANCE CHARGE — the model taxes neither GRT nor VAT
+    //       on interest. NOT TAX ADVICE — put in front of the accountant.
+    //   (d) DST is charged to the customer below — confirm allocation.
     {
       kind: 'heading',
-      text: 'PERMITTING REQUIREMENTS PROVIDED BY THE CLIENT',
+      text: 'FINANCING, OWNERSHIP & PAYMENT DISCLOSURE',
     },
     {
       kind: 'bullets',
       items: [
-        'Electricity bill (should be under the name of the client)',
-        'Valid ID of the person in the electricity bill',
-        'Tax Declaration',
-        'OCT/TCT (Land/Property title)',
-        'Official Receipt of the latest payment of Real Property Tax (Land & Building)',
-        'Building Permit',
-        'Certificate of Occupancy',
+        'Where you elect a financed payment term (any term other than a Direct Purchase), Solviva Energy Incorporated sells the system to you on installment, on a conditional sale basis. The credit is extended by Solviva Energy Incorporated as seller.',
+        'Title and ownership of the system are retained by Solviva Energy Incorporated until the total amount payable is settled in full. Ownership transfers to you automatically upon final payment. You have the right to possess and use the system from installation.',
+        'Interest is computed on the DIMINISHING BALANCE \u2014 you pay interest only on the amount still outstanding, never on the original amount. The rate stated in your proposal is the rate actually applied to your account.',
+        'A written Disclosure Statement setting out the cash price, down payment, amount financed, finance charge, documentary stamp tax, total amount payable and the interest rate will be issued to you before any installment agreement is signed, in accordance with Republic Act No. 3765 (the Truth in Lending Act). These figures already appear in your proposal.',
+        'Documentary stamp tax on the installment agreement is for your account, is itemized in your proposal, and is payable upon installation. No documentary stamp tax applies to a Direct Purchase.',
+        'You bear the risk of loss or damage to the system from installation and shall keep it insured for its full value until ownership transfers to you.',
+        'Should you default on two (2) or more consecutive installments, Solviva Energy Incorporated may elect ONE of the remedies available to it by law: to demand payment of the unpaid balance, to cancel the sale, or to repossess the system. If it elects to repossess, it shall have no further claim against you for any unpaid balance.',
+        'You may settle the outstanding balance early at any time. The early settlement amount is the present value of your remaining payments, as shown in the Early Payoff column of the Schedule of Payments.',
       ],
     },
     {
       kind: 'heading',
-      text: 'Some LGUs may also require the following documents (varies per LGU)',
+      text: 'Permitting Requirements',
     },
     {
-      kind: 'bullets',
-      items: [
-        'Electrical Plan / Load Schedule signed and sealed by a Professional Electrical Engineer (Can be provided by Solviva if client avails)',
-        'Electrical Design Analysis (Can be provided by Solviva if client avails)',
-        'Structural Roof Plan (Can be provided by Solviva if client avails)',
-        'Structural Analysis (Can be provided by Solviva if client avails)',
-        'Barangay Clearance for Solar Installation',
-        'Homeowners Association Clearance',
-      ],
+      kind: 'paragraph',
+      text:
+        'Client to provide: Electricity bill (under client name), Valid ID, ' +
+        'Tax Declaration, OCT/TCT, Official Receipt of latest Real Property ' +
+        'Tax, Building Permit, Certificate of Occupancy.',
+    },
+    {
+      kind: 'paragraph',
+      text:
+        'Some LGUs may also require: Electrical Plan / Load Schedule, ' +
+        'Electrical Design Analysis, Structural Roof Plan, Structural ' +
+        'Analysis, Barangay Clearance, HOA Clearance. Solviva can provide ' +
+        'engineering documents if client avails.',
     },
     {
       kind: 'heading',
@@ -613,16 +933,30 @@ export const PROPOSAL_CONTENT = {
       kind: 'paragraph',
       text:
         'Any excess distance beyond the first 30 kilometers (km) from ' +
-        'Kilometer 0 (Rizal Park) will be charged per kilometer at a ' +
-        'specified rate.',
+        "Solviva's Parañaque logistics hub will be charged per kilometer " +
+        'at a specified rate.',   // v3-114 origin rebase (was Km-0/Rizal Park)
     },
     { kind: 'heading', text: 'Price Validity' },
     {
       kind: 'paragraph',
+      // {{tokens}} substituted by the PDF generator from the LIVE
+      // quoteValidityDays param + the computed validUntil date (v3-104).
       text:
-        'The prices provided in this proposal are valid for a period of ' +
-        'thirty (30) days from the date of issuance. After this period, ' +
-        'the prices are subject to change without prior notice.',
+        'The prices provided in this proposal are valid for ' +
+        '{{QUOTE_VALIDITY_DAYS}} days from the date of issuance \u2014 ' +
+        'until {{VALID_UNTIL}}. After this period, the prices are subject ' +
+        'to change without prior notice.',
+    },
+    { kind: 'heading', text: 'Compliance \u2014 Rapid Shutdown Device (RSD)' },
+    {
+      kind: 'paragraph',
+      text:
+        'A Rapid Shutdown Device (RSD) is required by the Philippine ' +
+        'Electrical Code (PEC) 2017 (Section 6.90.2.6) for all solar ' +
+        'installations. This ensures your system protects your home during ' +
+        'emergencies while meeting regulatory standards and avoiding ' +
+        'potential LGU compliance issues. RSD and CFEI are also required ' +
+        'by the PEC when net metering conversion is availed.',
     },
     { kind: 'heading', text: 'Exclusions' },
     {
@@ -677,9 +1011,10 @@ export const PROPOSAL_CONTENT = {
           term: 'Quotation Validity:',
           rest:
             ' The special quotation we\u2019ve provided is valid for ' +
-            'thirty (30) days from the date it was issued. We are ' +
-            'committed to being transparent about pricing and will inform ' +
-            'you of any necessary adjustments as soon as possible.',
+            '{{QUOTE_VALIDITY_DAYS}} days from the date it was issued ' +
+            '(until {{VALID_UNTIL}}). We are committed to being ' +
+            'transparent about pricing and will inform you of any ' +
+            'necessary adjustments as soon as possible.',
         },
         {
           term: 'Price Adjustments:',
@@ -707,11 +1042,43 @@ export const PROPOSAL_CONTENT = {
       ],
     },
     { kind: 'heading', text: 'Payment Obligation' },
+    // v3-105 — replaces the template's satisfaction pleasantry (which said
+    // nothing about payment) with an actual obligation clause, user-directed:
+    //   • Mirrors EXACTLY how the calculator schedules payments (annex rows:
+    //     DP at signing → DST or Direct Purchase Balance upon installation →
+    //     monthlies per the Schedule).
+    //   • "Installation" is pinned to SOLVIVA'S PHYSICAL COMPLETION of the
+    //     works, and payments due upon/after installation are expressly NOT
+    //     contingent on third-party matters outside Solviva's control (CFEI,
+    //     LGU/utility/HOA permits and clearances, net-metering processing,
+    //     energization delays from the client's own construction/renovation).
+    //   • ⚠ Legal clause — NOT REVIEWED BY COUNSEL; clear together with the
+    //     v3-87 financing section.
+    // The satisfaction sentence moved to the closing paragraph below.
     {
       kind: 'paragraph',
       text:
-        'Your satisfaction is our priority, and we will manage the entire ' +
-        'process diligently from start to finish.',
+        'You agree to pay the amounts shown in this proposal as they fall ' +
+        'due: the down payment upon contract signing; on a financed term, ' +
+        'the documentary stamp tax upon installation and each monthly ' +
+        'payment on the due dates shown in the Schedule of Payments; and ' +
+        'on a Direct Purchase, the remaining balance in full upon ' +
+        'installation.',
+    },
+    {
+      kind: 'paragraph',
+      text:
+        'For payment purposes, \u201cinstallation\u201d means Solviva\u2019s ' +
+        'completion of the physical installation of the system at the ' +
+        'Premises. Payments falling due upon or after installation are not ' +
+        'conditioned on, and shall not be withheld or deferred on account ' +
+        'of, matters outside Solviva\u2019s control \u2014 including, without ' +
+        'limitation, the issuance of a CFEI or other LGU, utility, or ' +
+        'homeowners\u2019 association permits and clearances; net-metering ' +
+        'processing; or energization delays attributable to the ' +
+        'Premises\u2019 ongoing construction, renovation, or repair. Solviva ' +
+        'will continue to assist with these processes where they are ' +
+        'included in the scope of this proposal.',
     },
     { kind: 'heading', text: 'Definitive Agreement' },
     {
@@ -747,17 +1114,20 @@ export const PROPOSAL_CONTENT = {
       text:
         'We appreciate your understanding that the net metering status ' +
         'does not impact the payment terms outlined in this proposal. ' +
-        'Thank you for choosing Solviva. We look forward to helping you ' +
-        'make the switch to clean, renewable energy.',
+        'Your satisfaction is our priority, and we will manage the entire ' +
+        'process diligently from start to finish. Thank you for choosing ' +
+        'Solviva. We look forward to helping you make the switch to ' +
+        'clean, renewable energy.',
     },
   ],
 
-  // Warranties and Coverage table — rendered where the {kind: 'warrantyTable'}
-  // marker appears in `termsAndConditions` above. Office-supplied schedule.
+  // Warranties and Coverage — Marketing's 5-row schedule (v3-104: Inverter and
+  // Battery split into their own rows; previously combined).
   warranties: [
     { component: 'Solar Panels Performance', term: '30 years' },
-    { component: 'Product Warranty', term: '12 years' },
-    { component: 'Inverter and Batteries', term: '5 years' },
+    { component: 'Solar Panels Product Warranty', term: '12 years' },
+    { component: 'Inverter', term: '5 years' },
+    { component: 'Battery', term: '5 years' },
     { component: 'Workmanship', term: '1 year' },
   ],
 

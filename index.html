@@ -200,6 +200,22 @@
     }
 
     /* Print styles — hide nav and footer for clean PDFs */
+    /* v3-129 — live bar: 4 cells desktop, 2×2 on narrow; divider only where
+       a cell has a right-hand neighbour (structural, via nth-child). */
+    .live-total-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      row-gap: 7px;
+    }
+    .live-total-cell { border-right: 1px solid rgba(255,255,255,0.18); }
+    .live-total-cell:nth-child(4n) { border-right: none; }
+    .live-total-spacer { height: 56px; }
+    @media (max-width: 560px) {
+      .live-total-grid { grid-template-columns: repeat(2, 1fr); }
+      .live-total-cell { border-right: none; }
+      .live-total-cell:nth-child(odd) { border-right: 1px solid rgba(255,255,255,0.18); }
+      .live-total-spacer { height: 104px; }
+    }
     @media print {
       header, nav, footer, button { -webkit-print-color-adjust: exact; }
       [data-no-print] { display: none !important; }

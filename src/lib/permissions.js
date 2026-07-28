@@ -42,6 +42,7 @@ export const ADMIN_SECTIONS = {
   quoteValidity:     'Quote Validity',
   quoteLimits:       'Quote Limits',
   step1Defaults:     'Step 1 Defaults',
+  margins:           'Gross Margin & Merchant Discount',
   interestRates:     'Interest Rates',
   solarPanel:        'Solar Panel & Mounting',
   variableCharges:   'Variable Charges',
@@ -63,6 +64,7 @@ const ROLE_ADMIN_SECTIONS = {
     'solarPanel',
     'variableCharges',
     'roofMaterial',
+    'miscCatalog',   // v3-138 — Step 2F standing catalog
     'location',
     'cabling',
     'batteryPackage',
@@ -72,6 +74,7 @@ const ROLE_ADMIN_SECTIONS = {
     'maintenance',
   ]),
   product: new Set([
+    'margins',          // v3-83 — the two levers that drive every derived price
     'quoteValidity',
     'quoteLimits',      // v3-68 — min system size / min DP / max tenor
     'step1Defaults',    // v3-70 — default utility rate / monthly bill
@@ -127,29 +130,42 @@ export function hasAnyEditAccess(role) {
 // sections — and also mirrored server-side as the security boundary.
 export const PARAM_KEY_TO_SECTION = {
   // Interest Rates
-  baseRtoInterestRate:           'interestRates',
-  smallPackagePanelThreshold:    'interestRates',
-  smallPackageRiskPremiumBps:    'interestRates',
+  financingEntityName:           'margins',
+  financingEntityIsSeparate:     'margins',
+  grossMarginMinKwp:             'margins',
+  grossMarginMidKwp:             'margins',
+  grossMarginMaxKwp:             'margins',
+  grossMarginMin:                'margins',
+  grossMarginMid:                'margins',
+  grossMarginMax:                'margins',
+  grossMarginReference:          'margins',
+  merchantDiscountRate:          'margins',
+  rateAnchorMax:                 'interestRates',
+  rateAnchorMid:                 'interestRates',
+  rateAnchorMin:                 'interestRates',
+  rateTenorWeight:               'interestRates',
+  rateStepPct:                   'interestRates',
   earlyPayoffDiscountRate:       'interestRates',
+  documentaryStampTaxRate:       'interestRates',   // v3-100 — Product-editable DST rate
   // Solar Panel & Mounting
-  mountingSupportFloorPrice:     'solarPanel',
+  mountingSupportFloorCogs:        'solarPanel',
   mountingSupportPctOfPanels:    'solarPanel',
   // Variable Charges
-  additionalDcCablePerMeter:     'variableCharges',
-  additionalAcCablePerMeter:     'variableCharges',
-  laborInstallationPerKwp:       'variableCharges',
-  rsdVariablePerPanel:           'variableCharges',
-  rsdFixedTransmitter:           'variableCharges',
+  additionalDcCablePerMeterCogs:   'variableCharges',
+  additionalAcCablePerMeterCogs:   'variableCharges',
+  laborInstallationPerKwpCogs:     'variableCharges',
+  rsdVariablePerPanelCogs:         'variableCharges',
+  rsdFixedTransmitterCogs:         'variableCharges',
+  rsdAvailable:                    'variableCharges',   // v3-106 — RSD stock flag
   // Roof Material
-  roofAsphaltPerKwp:             'roofMaterial',
-  roofConcretePerKwp:            'roofMaterial',
+  roofAsphaltPerKwpCogs:           'roofMaterial',
+  roofConcretePerKwpCogs:          'roofMaterial',
+  // Misc Materials / Labor / Services catalog (v3-138)
+  miscCatalog:                     'miscCatalog',
   // Location / Delivery
-  cebuFixedFee:                  'location',
-  cebuPerPanel:                  'location',
-  siargaoFixedFee:               'location',
-  siargaoPerPanel:               'location',
-  luzonOver30FixedFee:           'location',
-  luzonOver30PerKm:              'location',
+  deliveryLocations:               'location',   // v3-116 — replaces the 4 Cebu/Siargao scalars
+  luzonOver30FixedFeeCogs:         'location',
+  luzonOver30PerKmCogs:            'location',
   // Cabling
   cablingTiers:                  'cabling',
   cablingTiersThreePhase:        'cabling',   // NEW v3-62 — 3-phase tier table
@@ -157,26 +173,27 @@ export const PARAM_KEY_TO_SECTION = {
   // with a single array). Edit gate stays on the 'batteryPackage' section.
   batteryPackages:               'batteryPackage',
   // Standalone Retrofit Charges (RSD-only / Inverter-only orders without solar)
-  rsdStandaloneLaborPerPanel:    'standaloneCharges',
-  rsdStandaloneLaborMobilization:'standaloneCharges',
-  inverterStandaloneLaborPerUnit:'standaloneCharges',
-  inverterStandaloneMobilization:'standaloneCharges',
+  rsdStandaloneLaborPerPanelCogs:  'standaloneCharges',
+  rsdStandaloneLaborMobilizationCogs: 'standaloneCharges',
+  inverterStandaloneLaborPerUnitCogs: 'standaloneCharges',
+  inverterStandaloneMobilizationCogs: 'standaloneCharges',
   // Fixed Overhead (rolled into "Solar Labor & Installation" line on the quote)
-  fixedOverheadDeliveryLogistics:'fixedOverhead',
-  fixedOverheadWarehouse:        'fixedOverhead',
-  fixedOverheadCustoms:          'fixedOverhead',
-  fixedOverheadSafetySupervision:'fixedOverhead',
-  fixedOverheadTesting:          'fixedOverhead',
+  fixedOverheadDeliveryLogisticsCogs: 'fixedOverhead',
+  fixedOverheadWarehouseCogs:      'fixedOverhead',
+  fixedOverheadCustomsCogs:        'fixedOverhead',
+  fixedOverheadSafetySupervisionCogs: 'fixedOverhead',
+  fixedOverheadTestingCogs:        'fixedOverhead',
   // Schedule Constants
   kWhPerKwpPerDay:               'scheduleConstants',
   batteryEfficiency:             'scheduleConstants',
+  maxDailySpillKwh:              'scheduleConstants',   // v3-132 — Mode-1 spill tolerance
   batteryDepthOfDischarge:       'scheduleConstants',
   panelAnnualDegradation:        'scheduleConstants',
   lcoeNpvDiscountRate:           'scheduleConstants',
   maintenanceInflationRate:      'scheduleConstants',
   netMeteringEfficiency:         'scheduleConstants',
-  preventiveMaintenancePerPanel: 'scheduleConstants',
-  preventiveMaintenancePerVisit: 'scheduleConstants',
+  preventiveMaintenancePerPanelCogs: 'scheduleConstants',
+  preventiveMaintenancePerVisitCogs: 'scheduleConstants',
   minDaysToFirstPostInstallPayment: 'scheduleConstants',
   // Promo Codes
   promoCodes:                    'promoCodes',

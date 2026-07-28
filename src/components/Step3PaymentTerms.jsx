@@ -42,13 +42,26 @@ import { resolveMinDpPct } from '../lib/calculations.js';
 
 // ─── Hardcoded Step 3 dropdown value sets ────────────────────────────────────
 // These are the customer-facing options for tenor and DP%. The base lists are
-// locked to these 13 and 11 values respectively across both rep and customer
-// modes. v3-68: Product can now NARROW them via Quote Limits —
-// the tier resolved from adminParams.minDpTiers (v3-75) hides lower DP options and
-// adminParams.maxTenorMonths hides longer tenors (see the filters inside the
-// component). The base lists themselves are still not admin-editable.
-const TENOR_OPTIONS = [1, 3, 6, 9, 12, 18, 24, 30, 36, 42, 48, 54, 60];
-const DP_PCT_OPTIONS = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50];
+// locked across both rep and customer modes. v3-68: Product can now NARROW
+// them via Quote Limits — the tier resolved from adminParams.minDpTiers
+// (v3-75) hides lower DP options and adminParams.maxTenorMonths hides longer
+// tenors (see the filters inside the component). The base lists themselves are
+// still not admin-editable.
+//
+// v3-100 — 0 = DIRECT PURCHASE, a distinct option mirroring v5.1's
+// "Direct Purch" sentinel (CALCULATOR!AG12): 0% interest, no DST, balance due
+// in full upon installation. The numeric 1-month tenor is now a REAL financed
+// month on the rate curve (v5.1's N-column) — no longer a synonym for Direct
+// Purchase. (The workbook's axis also offers a 2-month tenor; the app's list
+// keeps its established 13 numeric values — 9/42/54 instead — per user.)
+const TENOR_OPTIONS = [0, 1, 3, 6, 9, 12, 18, 24, 30, 36, 42, 48, 54, 60];
+// v3-82 — extended from a 50% ceiling to 100%. A 100% down payment is simply a
+// full cash purchase: nothing is financed, the monthly is ₱0, and the tenor
+// stops meaning anything (see terms.isFullyPaid).
+const DP_PCT_OPTIONS = [
+  0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50,
+  0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00,
+];
 
 // Float-safe comparison epsilon for DP fractions (0.15 vs 0.15000000000002).
 const DP_EPS = 1e-9;
@@ -62,16 +75,14 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
   // tier's DP floor ≤ 0.5, tenor cap 1–60), so the filtered lists are never
   // empty.
   //
-  // v3-75: the DP floor is TIERED on the quote's "Net Price (before DP
-  // Discount)" — AI9 = terms.totalPaymentsOverTenor, which depends on the
-  // package, promo, and TENOR but not on the DP% itself (no circularity).
-  // Because the net price moves with the tenor, lengthening a tenor can
-  // cross a tier boundary and raise the floor mid-quote; the snap effect
-  // below then lifts the selected DP to the new lowest allowed option.
-  // Crossing DOWN a boundary loosens the floor but never auto-lowers the
-  // user's selection (the snap only ever moves DP up). The active minimum is
-  // always displayed in the 3A subsection title — both public and rep views.
-  const minDpPct  = resolveMinDpPct(adminParams.minDpTiers, terms.totalPaymentsOverTenor);
+  // v3-75: the DP floor is TIERED on the quote's net price.
+  // v3-80: that key is now `terms.netDirectPrice` — the Direct Purchase Price
+  // less any promo. Unlike the old `totalPaymentsOverTenor`, it does NOT depend
+  // on the tenor, so lengthening a tenor can no longer cross a tier boundary and
+  // silently raise the minimum DP mid-quote. The floor is now a property of the
+  // QUOTE, not of the term the customer happens to be looking at. Still no
+  // circularity: netDirectPrice doesn't depend on the DP% either.
+  const minDpPct  = resolveMinDpPct(adminParams.minDpTiers, terms.netDirectPrice);
   const maxTenor  = adminParams.maxTenorMonths || 60;
   const dpOptions    = DP_PCT_OPTIONS.filter(p => p >= minDpPct - DP_EPS);
   const tenorOptions = TENOR_OPTIONS.filter(t => t <= maxTenor);
@@ -102,7 +113,7 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
     <SectionCard
       accent="Step 3"
       title="Define your payment term"
-      subtitle="Choose how you'd like to pay. Customers can opt for full Direct Purchase (1-month tenor), or any tenor up to 60 months under our Rent-to-Own program."
+      subtitle="Choose how you'd like to pay. Customers can opt for an interest-free Direct Purchase, or any tenor from 1 to 60 months under our Rent-to-Own program."
       onReset={onReset}
     >
       {/* ──── 3A · Pre-installation Down Payment (v3-52 reorder) ────
@@ -142,13 +153,15 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
           />
           <SummaryTile
             label={`${(state.downPaymentPct * 100).toFixed(0)}% Down Payment Amount`}
-            value={fmt.peso(terms.dpAmount)}
+            value={fmt.peso(terms.dpTotalCharge)}
             emphasis
             fill
           />
         </div>
         <div style={styles.hint}>
-          A larger down payment lowers your monthly payment and increases your discount.
+          {terms.isDirectPurchase
+            ? 'A larger down payment reduces the balance due upon installation.'
+            : 'A larger down payment lowers your interest charges and monthly payment.'}
         </div>
       </Subsection>
 
@@ -158,20 +171,29 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
           schedule (the pre-install DP is paid before installation, the
           balance is spread over this tenor after). */}
       <Subsection title="3B · Post-installation Payment Tenor">
+        {/* v3-82 — at a 100% down payment there is no balance to spread, so the
+            tenor is meaningless. Rather than leave a live dropdown that changes
+            nothing, say so plainly. The Select stays mounted but disabled so the
+            layout doesn't jump. */}
         <div style={styles.driverRow}>
           <Select
             value={state.tenor}
             onChange={v => updateState({ tenor: Number(v) })}
-            width={160}
+            width={235}
             xlarge
+            disabled={terms.isFullyPaid}
             options={tenorOptions.map(t => ({
               value: t,
-              label: t === 1 ? '1 month' : `${t} months`,
+              label: t === 0 ? 'Direct Purchase'
+                   : t === 1 ? '1 month'
+                   : `${t} months`,
             }))}
           />
         </div>
         <div style={styles.hint}>
-          1 month = direct purchase; up to 60 months for Rent-to-Own
+          {terms.isFullyPaid
+            ? 'Paid in full at signing — nothing is financed, so no tenor applies.'
+            : 'Direct Purchase settles the balance in full upon installation, interest-free; or spread it over 1–60 months with Rent-to-Own.'}
         </div>
       </Subsection>
 
@@ -195,18 +217,22 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
         ) : (
           <>
             <div className="summary-tile-grid" style={styles.dpSummaryGrid}>
-              {/* v3-67: the "Post-installation balance" tile was removed —
-                  since v3-60, finalPostInstallBalance === netBalanceOverTenor
-                  (the CC surcharge that once made them differ is gone), so the
-                  two tiles always showed the same number. Per user mockup, the
-                  "Net balance over N months" tile is the one kept; the Total
-                  Amount Due bar below still uses finalPostInstallBalance. */}
+              {/* v3-80: `netBalanceOverTenor` no longer exists. The tile now
+                  shows AMOUNT FOR FINANCING (AH11) — the principal AssetCo
+                  lends, i.e. Net Price − Down Payment. That is the number the
+                  monthly payment is actually derived from, and it makes the
+                  arithmetic on this panel checkable end-to-end. */}
               <SummaryTile
-                label={`Net balance over ${state.tenor} month${state.tenor !== 1 ? 's' : ''}`}
-                value={fmt.peso(terms.netBalanceOverTenor)}
+                label={`Amount for financing (${((1 - state.downPaymentPct) * 100).toFixed(0)}%)`}
+                value={fmt.peso(terms.amountForFinancing)}
               />
+              {/* v3-100 — Direct Purchase: the "monthly" IS the whole balance,
+                  due once upon installation (Excel AG15's "Post-Installation
+                  Direct Purchase Balance" branch). */}
               <SummaryTile
-                label={`Monthly Payment for ${state.tenor} month${state.tenor !== 1 ? 's' : ''}`}
+                label={terms.isDirectPurchase
+                  ? 'Direct Purchase Balance (due upon installation)'
+                  : `Monthly Payment for ${state.tenor} month${state.tenor !== 1 ? 's' : ''}`}
                 value={fmt.peso(terms.customerMonthlyPmt)}
                 tint="brand"
               />
@@ -243,14 +269,19 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
           callout already explains what to adjust to resurface this row. */}
       {!terms.negativeBalance && (
         <div style={styles.totalDue}>
+          {/* v3-100 — DST-INCLUSIVE (summaryTotalDue = SUMMARY!H20), per user:
+              every customer-facing "TOTAL AMOUNT DUE" prints the same number.
+              This deliberately deviates from CALCULATOR!AG29 (which excludes
+              DST) — the workbook shows two different totals under one label. */}
           <div>
             <div style={styles.totalDueLabel}>YOUR TOTAL AMOUNT DUE</div>
             <div style={styles.totalDueSub}>
               DP {fmt.peso(terms.dpTotalCharge)} + Balance {fmt.peso(terms.finalPostInstallBalance)}
+              {terms.dst > 0 && <> + DST {fmt.peso(terms.dst)}</>}
             </div>
           </div>
           <div style={styles.totalDueAmount}>
-            {fmt.peso(terms.dpTotalCharge + terms.finalPostInstallBalance)}
+            {fmt.peso(terms.summaryTotalDue)}
           </div>
         </div>
       )}

@@ -17,6 +17,7 @@
 // is re-exported as `adminStyles` for tab pages that need to extend it.
 // =============================================================================
 
+import { directFromCogs } from '../lib/calculations.js';
 import React from 'react';
 import { COLORS, fmt, NumberInput } from './ui.jsx';
 
@@ -37,7 +38,12 @@ export function Section({ title, canEdit, anyEditRole, children }) {
 }
 
 // ─── Param row ─────────────────────────────────────────────────────────────
-export function Param({ label, value, onChange, canEdit, isPct, isPeso, suffix, step, hint, min, max }) {
+// v3-83 — `derived` renders a read-only computed value to the RIGHT of the
+// editor, with an arrow between. Used for the COGS → Direct Purchase Price rows:
+// Engineering types the COGS, the price appears live beside it and cannot be
+// edited (it isn't stored anywhere — it's computed from COGS + the two Product
+// margin levers).
+export function Param({ label, value, onChange, canEdit, isPct, isPeso, suffix, step, hint, min, max, derived }) {
   const displayValue = isPct ? Number((value * 100).toFixed(4)) : value;
   const displayStep = isPct ? (step * 100) : step;
   let editorValue;
@@ -81,10 +87,143 @@ export function Param({ label, value, onChange, canEdit, isPct, isPeso, suffix, 
              `${fmt.num(value)}${suffix ? ' ' + suffix : ''}`}
           </div>
         )}
+        {/* v3-107 — a derived value marks this as a COGS → price row; caption
+            tells the admin WHICH number they're entering (user-directed: the
+            tables carry "COGS (pre-VAT)" column headers, Param rows carried
+            nothing). Editable rows get the imperative; read-only roles just
+            get the noun. */}
+        {derived != null && (
+          <div style={adminStyles.cogsCaption}>
+            {canEdit ? 'COGS (pre-VAT) — enter here' : 'COGS (pre-VAT)'}
+          </div>
+        )}
+      </div>
+      {derived != null && (
+        <div style={adminStyles.derivedCol}>
+          <span style={adminStyles.derivedArrow} aria-hidden="true">→</span>
+          <div style={{ textAlign: 'right' }}>
+            <span style={adminStyles.derivedValue} title="Direct Purchase Price — derived from COGS. Not editable.">
+              {fmt.peso(Math.round(derived))}
+            </span>
+            <div style={adminStyles.derivedCaption}>Direct Purchase Price (derived)</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// v3-94 — a margin anchor and its capacity breakpoint on ONE row, side by side,
+// so the pairing is unambiguous (was two stacked Param rows). Left: the anchor
+// label + hint. Right: the margin % input, "at", then the kWp input.
+export function MarginAnchorRow({ label, hint, marginValue, onMargin, kwpValue, onKwp, canEdit }) {
+  const setM = (v) => { if (canEdit && v != null) onMargin(Math.max(0, Math.min(99, v)) / 100); };
+  const setK = (v) => { if (canEdit && v != null) onKwp(Math.max(0, v)); };
+  return (
+    <div style={adminStyles.paramRow}>
+      <div style={adminStyles.paramLabelCol}>
+        <div style={adminStyles.paramLabel}>{label}</div>
+        {hint && <div style={adminStyles.paramHint}>{hint}</div>}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {canEdit ? (
+          <NumberInput value={Number((marginValue * 100).toFixed(4))} onChange={setM}
+                       step={0.5} min={0} max={99} suffix="%" width={96} />
+        ) : (
+          <div style={{ ...adminStyles.paramValueRO, width: 96 }}>{(marginValue * 100).toFixed(2)}%</div>
+        )}
+        <span style={{ fontSize: 12, color: COLORS.textMuted, whiteSpace: 'nowrap' }}>at</span>
+        {canEdit ? (
+          <NumberInput value={kwpValue} onChange={setK}
+                       step={1} min={0} suffix="kWp" width={104} />
+        ) : (
+          <div style={{ ...adminStyles.paramValueRO, width: 104 }}>{fmt.num(kwpValue)} kWp</div>
+        )}
       </div>
     </div>
   );
 }
+
+// ─── WeightSlider ──────────────────────────────────────────────────────────
+// v3-96 — replaces the bare "Tenor weight" NumberInput on the Product tab's
+// Interest Rates section. One slider splits the rate-surface blend between the
+// DOWN PAYMENT axis and the TENOR axis; the two weights always sum to 100%.
+//
+// The stored param `rateTenorWeight` (w) is the TENOR weight; the down-payment
+// weight is 1 − w (the surface uses `u = w·uT + (1−w)·uDP`). The slider value
+// IS the tenor weight in whole percent, so sliding right raises tenor / lowers
+// DP. Step 5% keeps the split whole — the rate itself snaps to ⅛-point anyway,
+// so finer weight granularity would be meaningless. Writes onChange(fraction)
+// exactly as the old NumberInput did — no param key, math, or default change
+// (the shipped 0.25 seeds the slider at DP 75% / Tenor 25%).
+export function WeightSlider({ tenorWeight, onChange, canEdit }) {
+  const tenorPct = Math.max(0, Math.min(100, Math.round((tenorWeight ?? 0) * 100)));
+  const dpPct = 100 - tenorPct;
+  const setPct = (v) => {
+    if (!canEdit) return;
+    const p = Math.max(0, Math.min(100, v));
+    onChange(Number((p / 100).toFixed(2)));
+  };
+  return (
+    <div style={adminStyles.paramRow}>
+      <div style={adminStyles.paramLabelCol}>
+        <div style={adminStyles.paramLabel}>Interest rate weighting</div>
+        <div style={adminStyles.paramHint}>
+          How much each factor moves the rate. The three anchor rates above are never affected.
+        </div>
+      </div>
+      <div style={weightSliderStyles.control}>
+        <div style={weightSliderStyles.readouts}>
+          <span>
+            <span style={weightSliderStyles.dpNum}>{dpPct}%</span>
+            <span style={weightSliderStyles.sideLbl}> Down payment</span>
+          </span>
+          <span>
+            <span style={weightSliderStyles.sideLbl}>Tenor </span>
+            <span style={weightSliderStyles.tenorNum}>{tenorPct}%</span>
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={tenorPct}
+          disabled={!canEdit}
+          onChange={(e) => setPct(parseInt(e.target.value, 10))}
+          aria-label="Tenor weight percentage"
+          style={{
+            ...weightSliderStyles.range,
+            ...(canEdit ? null : weightSliderStyles.rangeDisabled),
+          }}
+        />
+        <div style={weightSliderStyles.endLbls}>
+          <span>← down-payment driven</span>
+          <span>tenor driven →</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const weightSliderStyles = {
+  control: { width: 300 },
+  readouts: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+    marginBottom: 6,
+  },
+  dpNum: { fontSize: 17, fontWeight: 700, color: COLORS.brandGreen,
+           fontVariantNumeric: 'tabular-nums' },
+  tenorNum: { fontSize: 17, fontWeight: 700, color: '#E87722',
+              fontVariantNumeric: 'tabular-nums' },
+  sideLbl: { fontSize: 12, color: COLORS.textMuted },
+  range: { width: '100%', accentColor: COLORS.brandGreen, cursor: 'pointer' },
+  rangeDisabled: { opacity: 0.45, cursor: 'not-allowed' },
+  endLbls: {
+    display: 'flex', justifyContent: 'space-between', marginTop: 3,
+    fontSize: 10, color: COLORS.textMuted,
+  },
+};
 
 // ─── ContactGatePasswordToggle ─────────────────────────────────────────────
 // Maintenance Mode checkbox. v3-54: rendered ABOVE the admin tab bar, not
@@ -239,7 +378,7 @@ export function CablingTierTable({ tiers, canEdit, onChange }) {
 //   laborWithSolarInstall / standaloneLabor
 // × Delete on each card (confirmed); disabled when only 1 pack remains.
 // + Add Battery Package below (seeds from pack #1 template, new UUID).
-export function BatteryPackagesEditor({ packages, canEdit, onChange }) {
+export function BatteryPackagesEditor({ packages, canEdit, onChange, adminParams }) {
   const updatePkg = (idx, patch) => {
     onChange(packages.map((p, i) => i === idx ? { ...p, ...patch } : p));
   };
@@ -270,6 +409,7 @@ export function BatteryPackagesEditor({ packages, canEdit, onChange }) {
         <BatteryPackageCard
           key={pkg.id || idx}
           pkg={pkg}
+          adminParams={adminParams}
           canEdit={canEdit}
           onUpdate={(patch) => updatePkg(idx, patch)}
           onDelete={() => deletePkg(idx)}
@@ -286,7 +426,7 @@ export function BatteryPackagesEditor({ packages, canEdit, onChange }) {
   );
 }
 
-function BatteryPackageCard({ pkg, canEdit, onUpdate, onDelete, deleteDisabled, index }) {
+function BatteryPackageCard({ pkg, adminParams, canEdit, onUpdate, onDelete, deleteDisabled, index }) {
   const labelInputStyle = {
     width: 200, padding: '6px 10px',
     border: `1px solid ${COLORS.inputBorder}`, borderRadius: 4,
@@ -294,7 +434,9 @@ function BatteryPackageCard({ pkg, canEdit, onUpdate, onDelete, deleteDisabled, 
     fontWeight: 600,
   };
   return (
-    <div style={pkgCardStyles.card}>
+    <div style={pkg.available !== false
+      ? pkgCardStyles.card
+      : { ...pkgCardStyles.card, opacity: 0.65 }}>
       <div style={pkgCardStyles.cardHeader}>
         <div style={pkgCardStyles.cardHeaderLeft}>
           <span style={pkgCardStyles.pkgBadge}>Package {index + 1}</span>
@@ -305,6 +447,25 @@ function BatteryPackageCard({ pkg, canEdit, onUpdate, onDelete, deleteDisabled, 
               onChange={e => onUpdate({ label: e.target.value })} />
           ) : (
             <span style={pkgCardStyles.labelRO}>{pkg.label || '—'}</span>
+          )}
+          {/* v3-106 — per-package stock flag. Unchecked ⇒ excluded from the
+              optimizer, the Step 2 dropdown, and all fallbacks, without
+              losing the package (no delete-and-recreate). */}
+          {canEdit ? (
+            <label style={pkgCardStyles.stockToggle}
+                   title={pkg.available !== false
+                     ? 'In stock — offered on quotes'
+                     : 'OUT OF STOCK — hidden from quotes'}>
+              <input type="checkbox" checked={pkg.available !== false}
+                     onChange={e => onUpdate({ available: e.target.checked })}
+                     style={pkgCardStyles.stockCheckbox} />
+              In stock
+            </label>
+          ) : (
+            <span style={pkg.available !== false
+              ? pkgCardStyles.stockBadgeIn : pkgCardStyles.stockBadgeOut}>
+              {pkg.available !== false ? 'In stock' : 'Out of stock'}
+            </span>
           )}
         </div>
         {canEdit && (
@@ -320,36 +481,42 @@ function BatteryPackageCard({ pkg, canEdit, onUpdate, onDelete, deleteDisabled, 
                value={pkg.batteryUnitKwh}
                onChange={v => onUpdate({ batteryUnitKwh: v })}
                canEdit={canEdit} min={1} max={1000} />
-        <Param label="Battery Unit Price (incl. cables & lugs)" isPeso step={1000}
-               value={pkg.batteryUnitPrice}
-               onChange={v => onUpdate({ batteryUnitPrice: v })}
+        <Param label="Battery Unit (incl. cables & lugs)" isPeso step={1000}
+               value={pkg.batteryUnitCogs}
+               derived={directFromCogs(pkg.batteryUnitCogs, adminParams)}
+               onChange={v => onUpdate({ batteryUnitCogs: v })}
                canEdit={canEdit} />
         <Param label="Battery Rack Capacity" suffix="units per rack" step={1}
                value={pkg.batteryRackCapacity}
                onChange={v => onUpdate({ batteryRackCapacity: v })}
                canEdit={canEdit} min={1} max={20} />
-        <Param label="Battery Rack Price" isPeso step={500}
-               value={pkg.batteryRackPrice}
-               onChange={v => onUpdate({ batteryRackPrice: v })}
+        <Param label="Battery Rack" isPeso step={500}
+               value={pkg.batteryRackCogs}
+               derived={directFromCogs(pkg.batteryRackCogs, adminParams)}
+               onChange={v => onUpdate({ batteryRackCogs: v })}
                canEdit={canEdit} />
         <Param label="Automatic Transfer Switch (ATS)" isPeso step={500}
-               value={pkg.atsPrice}
-               onChange={v => onUpdate({ atsPrice: v })}
+               value={pkg.atsCogs}
+               derived={directFromCogs(pkg.atsCogs, adminParams)}
+               onChange={v => onUpdate({ atsCogs: v })}
                canEdit={canEdit} />
         <Param label="Materials for Critical Loads" isPeso step={100}
                hint="Materials for critical-loads sub-panel"
-               value={pkg.criticalLoadsMaterials}
-               onChange={v => onUpdate({ criticalLoadsMaterials: v })}
+               value={pkg.criticalLoadsMaterialsCogs}
+               derived={directFromCogs(pkg.criticalLoadsMaterialsCogs, adminParams)}
+               onChange={v => onUpdate({ criticalLoadsMaterialsCogs: v })}
                canEdit={canEdit} />
         <Param label="Battery Labor & Installation w/ Solar Package Installation" isPeso step={500}
                hint="Charged when battery is installed alongside the solar package"
-               value={pkg.laborWithSolarInstall}
-               onChange={v => onUpdate({ laborWithSolarInstall: v })}
+               value={pkg.laborWithSolarInstallCogs}
+               derived={directFromCogs(pkg.laborWithSolarInstallCogs, adminParams)}
+               onChange={v => onUpdate({ laborWithSolarInstallCogs: v })}
                canEdit={canEdit} />
         <Param label="Battery Standalone Labor & Installation" isPeso step={1000}
                hint="Charged when battery is added without a concurrent solar install"
-               value={pkg.standaloneLabor}
-               onChange={v => onUpdate({ standaloneLabor: v })}
+               value={pkg.standaloneLaborCogs}
+               derived={directFromCogs(pkg.standaloneLaborCogs, adminParams)}
+               onChange={v => onUpdate({ standaloneLaborCogs: v })}
                canEdit={canEdit} />
       </div>
     </div>
@@ -377,6 +544,15 @@ const pkgCardStyles = {
     padding: '2px 8px', backgroundColor: '#FFFFFF',
   },
   labelRO: { fontSize: 14, fontWeight: 600, color: COLORS.textBody },
+  // v3-106 — stock-flag UI
+  stockToggle: { display: 'inline-flex', alignItems: 'center', gap: 6,
+    fontSize: 12, fontWeight: 600, color: COLORS.textMuted,
+    cursor: 'pointer', userSelect: 'none' },
+  stockCheckbox: { width: 15, height: 15, cursor: 'pointer', accentColor: '#15803D' },
+  stockBadgeIn: { fontSize: 11, fontWeight: 600, color: '#15803D',
+    backgroundColor: '#DCFCE7', padding: '2px 8px', borderRadius: 8 },
+  stockBadgeOut: { fontSize: 11, fontWeight: 600, color: '#B91C1C',
+    backgroundColor: '#FEE2E2', padding: '2px 8px', borderRadius: 8 },
   deleteBtn: {
     background: 'transparent', border: `1px solid ${COLORS.divider}`,
     color: '#B91C1C', fontSize: 16, fontWeight: 700,
@@ -581,15 +757,15 @@ export function MinDpTiersTable({ tiers, canEdit, onChange }) {
                 <td style={{ ...tableStyles.td, textAlign: 'right' }}>
                   {canEdit && i > 0 ? (
                     <>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                        <span style={{ color: COLORS.textMuted, fontSize: 12 }}>₱</span>
-                        <input type="number" style={pesoInputStyle(!!err)}
-                          value={t.fromNetPrice ?? 0}
-                          step={50000} min={0}
-                          onChange={e => updateRow(i, {
-                            fromNetPrice: Math.max(0, Math.round(parseFloat(e.target.value) || 0)),
-                          })} />
-                      </span>
+                      {/* v3-142 — NumberInput for peso comma formatting on the
+                          Net-Price thresholds; whole-peso rounding unchanged.
+                          Red border on validation error via the error prop. */}
+                      <NumberInput compact width={130} prefix="₱" step={50000} min={0}
+                        error={!!err}
+                        value={t.fromNetPrice ?? 0}
+                        onChange={v => updateRow(i, {
+                          fromNetPrice: Math.max(0, Math.round(v || 0)),
+                        })} />
                       {err && <div style={errStyle}>{err}</div>}
                     </>
                   ) : (
@@ -668,7 +844,302 @@ const tableStyles = {
   },
 };
 
+
+
+// ─── v3-116: Delivery Locations editor (Location / Delivery Charges) ─────────
+// Dynamic fixed+per-panel locations (Cebu/Siargao seeds + admin additions).
+// Inventory-tab idiom: the In-Stock toggle keeps a row priced/editable but
+// hides it from the Step 2E dropdown; ✕ deletes (confirm). Luzon main island
+// and "Other" are structural and never appear here. Cap 10 rows; EMPTY is a
+// valid saved state (dropdown = Luzon + Other only). COGS entered pre-VAT;
+// Direct Purchase derived per the standard COGS pipeline (display uses the
+// boot/reference margin like every other derived cell on this tab).
+export function DeliveryLocationsTable({ locations, canEdit, onChange, adminParams }) {
+  const rows = Array.isArray(locations) ? locations : [];
+  const update = (idx, patch) => {
+    onChange(rows.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  };
+  const deleteRow = (idx) => {
+    if (!window.confirm(
+      `Delete delivery location "${rows[idx]?.label || ''}"? Quotes holding it will fall back to Luzon main island.`
+    )) return;
+    onChange(rows.filter((_, i) => i !== idx));
+  };
+  const addRow = () => {
+    const id = 'loc' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    onChange([...rows, { id, label: '', fixedFeeCogs: 0, perPanelCogs: 0,
+                         fixedFee: 0, perPanel: 0, available: true }]);
+  };
+  const labelError = (idx) => {
+    const lbl = String(rows[idx]?.label || '').trim();
+    if (lbl === '') return 'Label required';
+    const dup = rows.some((r, i) => i !== idx
+      && String(r.label || '').trim().toLowerCase() === lbl.toLowerCase());
+    return dup ? 'Duplicate label' : null;
+  };
+  const cogsInputStyle = (bad) => ({
+    width: 110, padding: '4px 6px', fontSize: 13, textAlign: 'right',
+    background: COLORS.inputTint,
+    border: `1px solid ${bad ? '#B91C1C' : COLORS.inputBorder}`, borderRadius: 4,
+  });
+  const errStyle = { color: '#B91C1C', fontSize: 11, marginTop: 2 };
+  return (
+    <div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr>
+            <th style={tableStyles.th}>Location</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Fixed Fee — COGS (pre-VAT)</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Per Panel — COGS (pre-VAT)</th>
+            <th style={tableStyles.th}>Derived Direct Purchase</th>
+            <th style={{ ...tableStyles.th, textAlign: 'center' }}>In Stock</th>
+            {canEdit && <th style={tableStyles.th} aria-label="actions" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr><td colSpan={canEdit ? 6 : 5} style={{ ...tableStyles.td, color: COLORS.textMuted }}>
+              No dynamic locations — the Step 2 dropdown offers Luzon main island and Other only.
+            </td></tr>
+          )}
+          {rows.map((r, i) => {
+            const err = labelError(i);
+            return (
+              <tr key={r.id || i} style={r.available === false ? { opacity: 0.55 } : undefined}>
+                <td style={tableStyles.td}>
+                  {canEdit ? (
+                    <>
+                      <input type="text" value={r.label || ''} placeholder="e.g. Bohol"
+                        style={{ ...cogsInputStyle(!!err), width: 130, textAlign: 'left' }}
+                        onChange={e => update(i, { label: e.target.value })} />
+                      {err && <div style={errStyle}>{err}</div>}
+                    </>
+                  ) : (
+                    <span>{r.label || '—'}</span>
+                  )}
+                </td>
+                <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                  {canEdit ? (
+                    /* v3-142 — NumberInput for peso comma formatting; whole-peso
+                       rounding unchanged. */
+                    <NumberInput compact width={110} prefix="₱" step={500} min={0}
+                      value={r.fixedFeeCogs ?? 0}
+                      onChange={v => update(i, {
+                        fixedFeeCogs: Math.max(0, Math.round(v || 0)),
+                      })} />
+                  ) : (
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>₱{fmt.num(r.fixedFeeCogs || 0, 0)}</span>
+                  )}
+                </td>
+                <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                  {canEdit ? (
+                    /* v3-142 — NumberInput for peso comma formatting; whole-peso
+                       rounding unchanged. */
+                    <NumberInput compact width={110} prefix="₱" step={50} min={0}
+                      value={r.perPanelCogs ?? 0}
+                      onChange={v => update(i, {
+                        perPanelCogs: Math.max(0, Math.round(v || 0)),
+                      })} />
+                  ) : (
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>₱{fmt.num(r.perPanelCogs || 0, 0)}</span>
+                  )}
+                </td>
+                <td style={{ ...tableStyles.td, color: COLORS.textMuted, fontSize: 12 }}>
+                  ₱{fmt.num(directFromCogs(r.fixedFeeCogs || 0, adminParams), 0)}
+                  {' + ₱'}{fmt.num(directFromCogs(r.perPanelCogs || 0, adminParams), 0)}/panel
+                </td>
+                <td style={{ ...tableStyles.td, textAlign: 'center' }}>
+                  <input type="checkbox" checked={r.available !== false} disabled={!canEdit}
+                    onChange={e => update(i, { available: e.target.checked })}
+                    aria-label={`${r.label || 'location'} in stock`} />
+                </td>
+                {canEdit && (
+                  <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                    <button onClick={() => deleteRow(i)} style={tableStyles.deleteBtn}
+                            title="Delete this location">×</button>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {canEdit && rows.length < 10 && (
+        <div style={{ marginTop: 12 }}>
+          <button onClick={addRow} style={tableStyles.addBtn}>+ Add location</button>
+        </div>
+      )}
+      {canEdit && rows.length >= 10 && (
+        <div style={{ ...tableStyles.emptyHint, marginTop: 8 }}>Up to 10 delivery locations.</div>
+      )}
+      <div style={{ ...tableStyles.emptyHint, marginTop: 8 }}>
+        Luzon main island (per-km, above) and "Other" are fixed options. Out-of-stock rows
+        stay priced and editable but leave the Step 2 dropdown; quotes holding a hidden or
+        deleted location fall back to Luzon main island.
+      </div>
+    </div>
+  );
+}
+
+// ─── v3-138: Misc Materials / Labor / Services catalog editor ────────────────
+// Same idiom as DeliveryLocationsTable above: label + COGS + derived price +
+// In-Stock toggle + ✕ delete + Add. Two deliberate differences:
+//
+//   1. COGS accepts CENTAVOS (step 0.01, 2dp). Anjon's BOM Q3 sheet carries
+//      ₱4,089.12 on four breakers; the integer coercion used for delivery
+//      locations would silently drift those to ₱4,089. directFromCogs()
+//      CEILINGs to whole pesos anyway, so keeping 2dp costs nothing downstream
+//      and keeps the cell reconcilable against the sheet.
+//   2. The derived column is labelled "at reference margin" — unlike delivery
+//      locations, this number is what the REP sees in the Step 2F dropdown,
+//      and it moves with the quote's capacity margin (v3-92). The admin view
+//      shows the reference-margin price; a small-system quote will price the
+//      same item lower. Spelled out in the footnote so nobody reports it as a
+//      mismatch.
+export function MiscCatalogTable({ items, canEdit, onChange, adminParams }) {
+  const rows = Array.isArray(items) ? items : [];
+  const update = (idx, patch) => {
+    onChange(rows.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  };
+  const deleteRow = (idx) => {
+    if (!window.confirm(
+      `Delete catalog item "${rows[idx]?.label || ''}"? Quotes holding it will price that line at ₱0 until the rep picks another item.`
+    )) return;
+    onChange(rows.filter((_, i) => i !== idx));
+  };
+  const addRow = () => {
+    const id = 'mc' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    onChange([...rows, { id, label: '', cogs: 0, price: 0, available: true }]);
+  };
+  const labelError = (idx) => {
+    const lbl = String(rows[idx]?.label || '').trim();
+    if (lbl === '') return 'Description required';
+    const dup = rows.some((r, i) => i !== idx
+      && String(r.label || '').trim().toLowerCase() === lbl.toLowerCase());
+    return dup ? 'Duplicate description' : null;
+  };
+  const cellInput = (bad, w) => ({
+    width: w, padding: '4px 6px', fontSize: 13, textAlign: 'right',
+    background: COLORS.inputTint,
+    border: `1px solid ${bad ? '#B91C1C' : COLORS.inputBorder}`, borderRadius: 4,
+  });
+  const errStyle = { color: '#B91C1C', fontSize: 11, marginTop: 2 };
+  return (
+    <div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr>
+            <th style={tableStyles.th}>Description</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Cost — COGS (VAT exc)</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right', color: COLORS.textMuted }}>
+              Direct Purchase Price
+            </th>
+            <th style={{ ...tableStyles.th, textAlign: 'center' }}>In Stock</th>
+            {canEdit && <th style={tableStyles.th} aria-label="actions" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr><td colSpan={canEdit ? 5 : 4} style={{ ...tableStyles.td, color: COLORS.textMuted }}>
+              No catalog items — Step 2F offers "Other (please specify)" only.
+            </td></tr>
+          )}
+          {rows.map((r, i) => {
+            const err = labelError(i);
+            return (
+              <tr key={r.id || i} style={r.available === false ? { opacity: 0.55 } : undefined}>
+                <td style={tableStyles.td}>
+                  {canEdit ? (
+                    <>
+                      <input type="text" value={r.label || ''} placeholder="e.g. AC Breaker, 60AT, 2-pole"
+                        style={{ ...cellInput(!!err, '100%'), textAlign: 'left' }}
+                        onChange={e => update(i, { label: e.target.value })} />
+                      {err && <div style={errStyle}>{err}</div>}
+                    </>
+                  ) : (
+                    <span>{r.label || '—'}</span>
+                  )}
+                </td>
+                <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                  {canEdit ? (
+                    /* v3-142 — NumberInput (prefix ₱) instead of a raw
+                       type="number": pesos comma-format at rest like every
+                       other money field on the tab. Centavos preserved —
+                       2dp round on change, as before. */
+                    <NumberInput compact width={120} prefix="₱" step={0.01} min={0}
+                      value={r.cogs ?? 0}
+                      onChange={v => update(i, {
+                        cogs: Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : 0,
+                      })} />
+                  ) : (
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>₱{fmt.num(r.cogs || 0, 2)}</span>
+                  )}
+                </td>
+                <td style={{ ...tableStyles.td, textAlign: 'right', color: COLORS.textMuted, fontSize: 12 }}>
+                  ₱{fmt.num(directFromCogs(r.cogs || 0, adminParams), 0)}
+                </td>
+                <td style={{ ...tableStyles.td, textAlign: 'center' }}>
+                  <input type="checkbox" checked={r.available !== false} disabled={!canEdit}
+                    onChange={e => update(i, { available: e.target.checked })}
+                    aria-label={`${r.label || 'item'} in stock`} />
+                </td>
+                {canEdit && (
+                  <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                    <button onClick={() => deleteRow(i)} style={tableStyles.deleteBtn}
+                            title="Delete this catalog item">×</button>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {canEdit && rows.length < MISC_CATALOG_MAX && (
+        <div style={{ marginTop: 12 }}>
+          <button onClick={addRow} style={tableStyles.addBtn}>+ Add catalog item</button>
+        </div>
+      )}
+      {canEdit && rows.length >= MISC_CATALOG_MAX && (
+        <div style={{ ...tableStyles.emptyHint, marginTop: 8 }}>
+          Up to {MISC_CATALOG_MAX} catalog items.
+        </div>
+      )}
+      <div style={{ ...tableStyles.emptyHint, marginTop: 8 }}>
+        Direct Purchase Price is shown at the <strong>reference margin</strong>. On a live quote each
+        item is re-priced at that system's capacity margin, so a small system prices lower than the
+        figure above. Out-of-stock rows stay priced and editable but leave the Step 2F dropdown;
+        quotes holding a hidden or deleted item price that line at ₱0 and flag it to the rep.
+      </div>
+    </div>
+  );
+}
+
+export const MISC_CATALOG_MAX = 40;
+
 export const adminStyles = {
+  // v3-83 — the derived Direct Purchase Price shown beside a COGS input.
+  derivedCol: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    minWidth: 150, justifyContent: 'flex-end',
+  },
+  derivedArrow: { color: '#9CA3AF', fontSize: 14 },
+  derivedValue: {
+    minWidth: 110, textAlign: 'right', padding: '7px 10px',
+    borderRadius: 6, border: '1px solid #E5E7EB', backgroundColor: '#F9FAFB',
+    color: '#4B5563', fontSize: 14, fontVariantNumeric: 'tabular-nums',
+    display: 'inline-block',
+  },
+  // v3-107 — captions under the COGS input / derived price (user-directed:
+  // Param rows now say which number the admin enters, matching the tables'
+  // "COGS (pre-VAT)" column headers).
+  cogsCaption: {
+    fontSize: 10.5, color: COLORS.textMuted, marginTop: 3,
+    textAlign: 'right', letterSpacing: 0.3, whiteSpace: 'nowrap',
+  },
+  derivedCaption: {
+    fontSize: 10.5, color: COLORS.textMuted, marginTop: 3,
+    textAlign: 'right', letterSpacing: 0.3, whiteSpace: 'nowrap',
+  },
   container: {
     backgroundColor: '#FFFFFF', borderRadius: 12,
     border: `1px solid ${COLORS.divider}`, padding: '32px 36px',

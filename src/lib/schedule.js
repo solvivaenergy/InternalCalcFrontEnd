@@ -18,7 +18,13 @@
 //   - Cash flow table (Y6..AC38) drives IRR, LCOE, and DU savings.
 // =============================================================================
 
-import { PV, NPER, IRR, NPV } from './calculations.js';
+import { PV, NPER, IRR, NPV,
+         buildPackageLineItems, recommendInverters, availableInverters } from './calculations.js';
+// v3-110 — optimizeSystem needs the panel spec (watts, max DC/AC ratio), the
+// full inverter tables (cap fallback when every inverter is out of stock),
+// and the in-stock battery package list to build its search ladder.
+import { PANEL_SETTINGS, INVERTERS_SINGLE_PHASE, INVERTERS_THREE_PHASE } from '../data/inventory.js';
+import { availableBatteryPackages, optimizeBatteryPackage } from '../data/adminParams.js';   // optimizeBatteryPackage: v3-130 mode-'panels' store-all-excess sizing
 
 // ─── Payment due-date helper (Excel ANNEX H column) ──────────────────────────
 // Excel formula:
@@ -29,18 +35,30 @@ import { PV, NPER, IRR, NPV } from './calculations.js';
 // back-derive install date from a minimum-days-to-first-payment floor set by
 // the Engineering Admin (ADMIN_PARAMS.minDaysToFirstPostInstallPayment).
 export function dueDateForMonth(installationDate, n) {
-  const d = new Date(installationDate);
-  d.setMonth(d.getMonth() + n);
-  const day = d.getDate();
-  const result = new Date(d);
-  if (day <= 15) {
-    result.setDate(15);
-  } else if (result.getMonth() === 1) { // February
-    result.setMonth(2, 0);  // last day of February
-  } else {
-    result.setDate(30);
-  }
-  return result;
+  // v3-90 — BUG FIX. The old body did:
+  //     d.setMonth(d.getMonth() + n);
+  // which SILENTLY ROLLS OVER. Install on 30 Jul, ask for payment 7, and JS is
+  // asked for "30 Feb" — it hands back 2 MARCH. `day` is then 2, so the `day<=15`
+  // branch fired and the payment landed on 15 MARCH: out of order (payment 8 was
+  // 30 Mar), 15 days from its neighbour, and February skipped entirely. The
+  // February special-case below could never fire because by then the month WAS
+  // March. Any install on the 29th-31st hit this.
+  //
+  // Excel's EDATE does not roll over — it CLAMPS to the target month's last day.
+  // So build the target month arithmetically and clamp, exactly as EDATE does:
+  //     IF(DAY(EDATE(installDate,n)) <= 15, DATE(y,m,15),
+  //                                         IF(m=Feb, EOMONTH, DATE(y,m,30)))
+  const src = new Date(installationDate);
+  const monthIndex = src.getMonth() + n;
+  const year  = src.getFullYear() + Math.floor(monthIndex / 12);
+  const month = ((monthIndex % 12) + 12) % 12;
+
+  // Day 0 of the NEXT month === last day of THIS month. Handles Feb 28/29.
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const day = Math.min(src.getDate(), lastDay);   // EDATE's clamp
+
+  if (day <= 15) return new Date(year, month, 15);
+  return new Date(year, month, Math.min(30, lastDay));   // 30th, or EOM in Feb
 }
 
 // Convenience: first post-installation payment due date (n=1).
@@ -334,54 +352,57 @@ export function roundBatteryKwhToPackage(dailyExcess, pkg) {
 }
 
 // ─── Cash flow & investment metrics (Schedule!X8:AC38) ────────────────────────
-// Year 0: -dpTotalCharge (the down payment is paid up front)
-// Year n (n≥1):
-//   InvPayments = -monthlyAmount * 12 if year is within tenor, else 0
-//                  (with prorated handling for the last partial year)
-//   MaintCost   = -(C127 + C126 * panelCount) * (1 + C124)^(n-1)   inflation
-//   TotalCost   = InvPayments + MaintCost
-//   DuSavings   = (monthlyPesoSavingsBatt * 12) * (1 - C122)^(n-1)  degradation
-//   NetCF       = TotalCost + DuSavings
+// v3-99 — cash-flow table re-aligned to Solviva_Calc_v_B_5_1.xlsm (Schedule rows
+// 8–37, 30 policy years). YEAR 1 (row 8) now bundles: the down payment + the
+// first MIN(tenor,12) monthly payments + documentary stamp tax, AND year-1
+// maintenance AND year-1 savings — the pre-v5.0 model isolated the down payment
+// in a leading "year 0" (no maintenance, no savings) and pushed every payment a
+// year later. A Direct Purchase (tenor 0, v3-100) is a single upfront outflow
+// (−netDirectPrice) with all later years zero.
+//   Year 1  (Y8): DirectPurch → −netDirectPrice; financed → −(DP + first
+//                 MIN(tenor,12)·monthly + DST)
+//   Year n≥2(Y9): financed → −(remaining months this year · monthly); 0 for DirectPurch
+//   MaintCost   = −(perVisit + perPanel·panelCount)·(1 + inflation)^(n−1)
+//   DuSavings   = (monthlyPesoSavingsBatt·12)·(1 − degradation)^(n−1)
+//   NetCF       = InvPayments + MaintCost + DuSavings
 
 export function computeCashFlows(state, adminParams, schedule, terms, recommended, irrYears) {
   const tenor = state.tenor;
   const customerMonthlyPmt = terms.customerMonthlyPmt;
   const dpTotalCharge = terms.dpTotalCharge;
+  const netDirectPrice = terms.netDirectPrice;
+  const dst = terms.dst || 0;
   const panelCount = state.panelCount;
   const monthlyDuSavings = schedule.monthlyPesoSavingsBatt;
 
-  const maxYears = 31; // Schedule rows 8–38 = 31 rows (year 0 + years 1–30)
+  const NUM_YEARS = 30; // Schedule rows 8–37 (v5.1) — was 31 (rows 8–38, +year 0) pre-v5.0
+  // v3-100 — Direct Purchase is tenor 0 (tenor 1 is a real financed month:
+  // its year 1 = DP + 1 monthly + DST via the general branch below).
+  const isDirectPurchase = tenor < 1;
+  const baseMaint = adminParams.preventiveMaintenancePerVisit
+                  + adminParams.preventiveMaintenancePerPanel * panelCount;
+  const baseSavings = monthlyDuSavings * 12;
   const cashflows = [];
 
-  // Year 0
-  cashflows.push({
-    year: 0,
-    invPmts: -dpTotalCharge,
-    maintCost: 0,
-    totalCost: -dpTotalCharge,
-    duSavings: 0,
-    netCf: -dpTotalCharge,
-  });
-
-  for (let y = 1; y <= maxYears; y++) {
-    // InvPayments — same logic as Excel Y9 etc.:
-    // = -IF(y*12 <= tenor, monthly*12, MAX(0, (tenor - (y-1)*12)) * monthly)
+  for (let i = 0; i < NUM_YEARS; i++) {
+    // Investment outflow (Y column). Row i (0-based) = policy year i+1.
+    const monthsThisYear = Math.min(12, Math.max(0, tenor - 12 * i));
     let invPmts;
-    if (y * 12 <= tenor) {
-      invPmts = -customerMonthlyPmt * 12;
+    if (isDirectPurchase) {
+      invPmts = i === 0 ? -netDirectPrice : 0;                 // Y8 = −AH5, later years 0
     } else {
-      const remainingMonths = Math.max(0, tenor - (y - 1) * 12);
-      invPmts = -remainingMonths * customerMonthlyPmt;
+      invPmts = -monthsThisYear * customerMonthlyPmt;          // Y9+ spread
+      if (i === 0) invPmts -= dpTotalCharge + dst;             // Y8 also carries DP + DST
     }
-    // Maintenance: Z9 = -(C127 + C126 * panelCount); Z10 = Z9 * (1 + C124); ...
-    const maintCost = -(adminParams.preventiveMaintenancePerVisit
-                       + adminParams.preventiveMaintenancePerPanel * panelCount)
-                      * Math.pow(1 + adminParams.maintenanceInflationRate, y - 1);
+    // Maintenance (Z): base in year 1, inflating thereafter.
+    const maintCost = -baseMaint
+                    * Math.pow(1 + adminParams.maintenanceInflationRate, i);
+    // DU savings (AB): base in year 1, degrading thereafter.
+    const duSavings = baseSavings
+                    * Math.pow(1 - adminParams.panelAnnualDegradation, i);
     const totalCost = invPmts + maintCost;
-    // DU savings: AB9 = J45 * 12; AB10 = AB9 * (1 - C122); ...
-    const duSavings = monthlyDuSavings * 12 * Math.pow(1 - adminParams.panelAnnualDegradation, y - 1);
     const netCf = totalCost + duSavings;
-    cashflows.push({ year: y, invPmts, maintCost, totalCost, duSavings, netCf });
+    cashflows.push({ year: i + 1, invPmts, maintCost, totalCost, duSavings, netCf });
   }
 
   // ─── Simple Payback Period (CALCULATOR AH52) ─────────────────────────────
@@ -450,8 +471,11 @@ export function computeCashFlows(state, adminParams, schedule, terms, recommende
 
   const lcoe = energyPv > 0 ? totalCostNpv / energyPv : 0;
 
-  // ─── Total DU Savings over period (Schedule!Z47) ─────────────────────────
-  const totalDuSavings = cashflows.slice(1, 1 + irrYears).reduce((s, cf) => s + cf.duSavings, 0);
+  // ─── Total DU Savings over period (Schedule!Z46, v5.1) ───────────────────
+  // v3-99 — v5.1 sums AB8:AB{7+period} (savings begin in YEAR 1 / row 8 = index
+  // 0), where pre-v5.0 began at AB9 (index 1). Now that year-1 savings live in
+  // cashflows[0], the sum starts at index 0.
+  const totalDuSavings = cashflows.slice(0, irrYears).reduce((s, cf) => s + cf.duSavings, 0);
 
   return {
     cashflows,
@@ -483,7 +507,9 @@ export function buildAnnex(state, adminParams, terms, installationDate) {
   // v3-60: the "pay balance via credit card" option (which collapsed the
   // schedule to a single post-install lump payment) was removed, so the
   // effective tenor is always the chosen tenor.
-  const effectiveTenor = tenor;
+  // v3-82 — at a 100% down payment there is no loan, so there are no monthly
+  // rows. Without this the ANNEX prints `tenor` rows of ₱0 into the PDF.
+  const effectiveTenor = terms.isFullyPaid ? 0 : tenor;
 
   // v3-60: credit-card description suffixes removed along with the CC options.
   const dpDescription = 'Upfront Down Payment';
@@ -500,15 +526,44 @@ export function buildAnnex(state, adminParams, terms, installationDate) {
   // payments minDue[n+1..60], discounted at monthlyEpd per month from each
   // future payment's offset.
   const rows = [];
-  // ANNEX row 11 = Down Payment (special — no payoff math)
+  // v3-100 — mirrors ANNEX rows 11–12 of Solviva_Calc_v_B_5_1.xlsm exactly
+  // (replaces v3-99's combined "DP & DST" signing row, which the workbook does
+  // not have):
+  //   Row 11 — "Upon Contract Signing": the down payment ALONE (H11 = AH9).
+  //   Row 12 — "Upon Installation": for a financed term, the Documentary
+  //            Stamp Tax (H12 = AH13); for a Direct Purchase (tenor 0), the
+  //            full balance (H12 = AH15-fallback = AH10, D12 = "Direct
+  //            Purchase Balance"). Suppressed when the quote is fully paid
+  //            (100% DP: no balance, and DST rounds to ₱0).
+  const dst = terms.dst || 0;
+  const isDirectPurchase = tenor < 1;
   rows.push({
-    payment: 'Down Payment',
+    payment: 'DP',
     dueDate: 'Upon Contract Signing',
     description: dpDescription,
     minDue: terms.dpTotalCharge,
     earlyPayoff: null,
     savings: null,
   });
+  if (isDirectPurchase && !terms.isFullyPaid) {
+    rows.push({
+      payment: '—',
+      dueDate: 'Upon Installation',
+      description: directPurchaseDescription,
+      minDue: terms.finalPostInstallBalance,
+      earlyPayoff: null,
+      savings: null,
+    });
+  } else if (dst > 0) {
+    rows.push({
+      payment: '—',
+      dueDate: 'Upon Installation',
+      description: 'Documentary Stamp Tax',
+      minDue: dst,
+      earlyPayoff: null,
+      savings: null,
+    });
+  }
 
   // Compute due date via the module-level helper (exported for use by App.jsx
   // when back-deriving install date from the admin-tunable
@@ -516,9 +571,12 @@ export function buildAnnex(state, adminParams, terms, installationDate) {
   const dueDateForMonthLocal = (n) => dueDateForMonth(installationDate, n);
 
   for (let n = 1; n <= 60; n++) {
+    // v3-100 — the tenor-1 "Direct Purchase Balance" special case is gone:
+    // tenor 1 is a real 1-month loan (its single payment is the "Final RTO
+    // Payment", ANNEX!D13's =F8 branch); the Direct Purchase balance is the
+    // "Upon Installation" row above, and tenor 0 produces no numbered rows.
     let description = '';
-    if (effectiveTenor === 1 && n === 1) description = directPurchaseDescription;
-    else if (n < effectiveTenor) description = 'RTO Monthly Payment';
+    if (n < effectiveTenor) description = 'RTO Monthly Payment';
     else if (n === effectiveTenor) description = 'Final RTO Payment';
     else description = '';
 
@@ -555,5 +613,341 @@ export function buildAnnex(state, adminParams, terms, installationDate) {
 
   return {
     rows,
+  };
+}
+
+// ─── v3-110: Optimization-objective sweep (modes 'battery' | 'cost') ─────────
+//
+// The Step 2A "Optimize my system for" selector offers three objectives. Mode
+// 'panels' (the default) is NOT handled here — it remains the Excel W7 mirror
+// (computeRecommendedPanels) plus the v3-71 battery auto-optimizer, preserving
+// workbook parity bit-for-bit. This function serves the two NEW modes, which
+// have NO workbook counterpart (deferred Excel-sync list):
+//
+//   'panels'  — v3-130/v3-131: minimum panel count the hourly sim certifies
+//               as meeting the target, with the battery chosen STRICT
+//               within the ENGINEERING-SET SPILL TOLERANCE (v3-132,
+//               `maxDailySpillKwh`, seed 1.0; 0 = the v3-131 strict policy):
+//               the cheapest target-meeting rung leaving at most that much
+//               raw daily excess unabsorbed — near-zero waste at an honest
+//               price, a real comparison basis against 'cost'.
+//               Absorb-all is savings-maximal at any array, so min panels
+//               under it is the GLOBAL minimum → panels(M1) ≤ panels(M2),
+//               panels(M3) holds by construction (smoke-asserted). W7 still
+//               feeds Step-1 visuals and floors only.
+//   'battery' — lexicographic: minimize battery kWh subject to reaching the
+//               target savings, then minimize total direct cost.
+//   'cost'    — minimize total direct cost subject to reaching the target,
+//               tie-break by fewer panels, then fewer battery units.
+//
+// DESIGN (user-approved scope, v3-110):
+//   • Feasibility oracle = buildHourlyCurve — the same Schedule-sheet mirror
+//     that measures savings everywhere else, so the search is workbook-parity
+//     AT THE MEASUREMENT LEVEL; only the argmin loop is new logic.
+//   • Feasibility is tested on a kWh basis (dailyKwhSavings >= target% ×
+//     dailyTotalLoad), deliberately NOT the peso figure (which rounds to the
+//     nearest ₱100 and would make feasibility twitch on utility-rate edits).
+//     With net metering ON the NM-inclusive savings measure is used — the
+//     same figure the UI presents.
+//   • Cost = buildPackageLineItems(...).totalDirect at the candidate config
+//     with AUTO inverters (recommendInverters) — the honest customer-facing
+//     Direct Purchase total, margin curve, cabling tiers, roof/location/RSD
+//     surcharges and all.
+//   • Panel ceiling (locked decision #5): 3 inverter slots × largest IN-STOCK
+//     inverter × maxDcAcRatio. If EVERY inverter is out of stock (a valid
+//     v3-106 state — panels-only orders exist), the cap falls back to the
+//     largest inverter in the FULL table so the sweep still functions rather
+//     than zeroing the array.
+//   • Savings are monotonic non-decreasing in panel count for a fixed battery
+//     (more solar → solarUsed and excess both non-decreasing → afterBatt /
+//     afterCredits non-increasing), so the minimum feasible panel count per
+//     battery rung is found by binary search.
+//   • Battery rungs: a no-battery rung plus, per in-stock package, unit
+//     counts 1..ceil(excessAtPanelCap / unitKwh) — a battery bigger than the
+//     largest possible daily excess can never fully charge, so larger rungs
+//     are dominated and skipped. Hard guard at 60 units.
+//   • INFEASIBLE TARGET (locked decision A): when no config inside the cap
+//     reaches the target, the constraint is dropped and the sweep returns the
+//     savings-MAXIMIZING config (tie-broken by the mode's own objective) with
+//     feasible:false and achievedPct for the amber notice + PDF caveat.
+//
+// opts:
+//   fixedPanelCount  — pin the array (rep panel override); the sweep only
+//                      chooses the battery. Mirrors how the v3-71 pipeline's
+//                      excess probe follows an overridden array.
+//   restrictPackageId — confine the ladder to one package (rep package pick);
+//                      yields the "recommended value on the active ladder"
+//                      (activeRecBatteryKwh semantics).
+export function optimizeSystem(mode, inputs, adminParams, recommended, opts = {}) {
+  const phase = inputs.phase === 'three' ? 'three' : 'single';
+  const ps = phase === 'three' ? PANEL_SETTINGS.threePhase : PANEL_SETTINGS.singlePhase;
+  const panelWatts = ps.panelWatts;
+  const nm = !!inputs.netMeteringEnabled;
+
+  // v3-136 — CORNER-DAY CERTIFICATION ("Size panels for peaks and batteries
+  // for valleys"). buildHourlyCurve weights every device by daysPerWeek/7 —
+  // an AVERAGE-week day. For profiles with sub-7-day devices that average day
+  // never actually occurs, and certifying against it makes two claims false:
+  // a savings target is missed on the days the appliances run (at a 100%
+  // target this is structural — the daily cap means light-day surplus can
+  // never offset appliance-day shortfall), and Mode 1's absorb-all battery
+  // spills past maxDailySpillKwh on the days they don't. With
+  // opts.conservative, certification moves to the honest corner days, built
+  // from the SAME 24-hour engine with modified day-weights:
+  //   • PEAK day  (all devices at 7/7)          → savings/target feasibility.
+  //     Meeting the target on the max-load day implies meeting it on every
+  //     lighter day (production and storage are unchanged while the load
+  //     shrinks), so "meets N%" becomes true for the whole week.
+  //   • VALLEY day (sub-7-day devices at 0)     → raw-excess measurement for
+  //     Mode 1's absorb-all pool and the ladder ceiling. Zeroing night-only
+  //     devices is a no-op on excess (excess is hourly solar − load during
+  //     daylight), so one uniform rule covers daytime and night devices.
+  // Without the flag — or with no sub-7-day device, where the corners equal
+  // the average day — both curves are the average day and the path is
+  // BIT-IDENTICAL to v3-135.
+  // v3-137 (user-reported via screenshot): "sub-7-day" means daysPerWeek
+  // 1–6, NOT null/0. An unset or 0-day row contributes ZERO load to the real
+  // week (dwFrac 0 in buildHourlyCurve), so it must neither activate the
+  // corners nor be promoted to 7/7 on the peak day — the old `< 7` predicate
+  // did both, sizing against a device that never runs.
+  const rowsIn = inputs.deviceRows || [];
+  const isSub7Row = r =>
+    r && r.deviceName && r.count && r.onTime != null && r.offTime != null
+      && (r.daysPerWeek || 0) >= 1 && (r.daysPerWeek || 0) < 7;
+  const sub7Active = !!opts.conservative && rowsIn.some(isSub7Row);
+  const peakRows = sub7Active
+    ? rowsIn.map(r => isSub7Row(r) ? { ...r, daysPerWeek: 7 } : r)
+    : rowsIn;
+  const valleyRows = sub7Active
+    ? rowsIn.map(r => isSub7Row(r) ? { ...r, daysPerWeek: 0 } : r)
+    : rowsIn;
+
+  const simulate = (panelCount, batteryKwh) => {
+    const rec = { ...recommended,
+                  systemKwp: panelCount * panelWatts / 1000,
+                  recommendedPanelCount: panelCount };
+    const curve = buildHourlyCurve(
+      { ...inputs, deviceRows: peakRows, batteryKwh, netMeteringEnabled: nm },
+      adminParams, rec);
+    const t = curve.totals;
+    // Raw excess is measured on the VALLEY day under conservative sizing —
+    // the maximum-excess day the battery must absorb. One extra cheap sim
+    // per call, only when the flag is live.
+    let excess = t.excessSolar;
+    if (sub7Active) {
+      const vCurve = buildHourlyCurve(
+        { ...inputs, deviceRows: valleyRows, batteryKwh, netMeteringEnabled: nm },
+        adminParams, rec);
+      excess = vCurve.totals.excessSolar;
+    }
+    return {
+      savings: nm ? (t.totalLoad - t.afterCredits) : (t.totalLoad - t.afterBatt),
+      totalLoad: t.totalLoad,
+      excess,
+    };
+  };
+
+  // ── Panel ceiling ──────────────────────────────────────────────────────────
+  const inStockInverters = availableInverters(phase);
+  const fullTable = phase === 'three' ? INVERTERS_THREE_PHASE : INVERTERS_SINGLE_PHASE;
+  const largestKw = inStockInverters.length > 0
+    ? inStockInverters[0].ratedKw
+    : Math.max(0, ...fullTable.map(i => i.ratedKw || 0));
+  const panelCap = Math.max(1, Math.floor(3 * largestKw * ps.maxDcAcRatio * 1000 / panelWatts));
+  const fixed = opts.fixedPanelCount != null ? Math.max(0, opts.fixedPanelCount) : null;
+  // Quote-Limits floor (v3-68) applies to recommendations; a fixed override
+  // bypasses it exactly as the live pipeline does (panelCount === 0 exempt).
+  const floor = Math.min(panelCap, Math.max(1, recommended.minPanelsFloor || 0));
+
+  // ── Target ─────────────────────────────────────────────────────────────────
+  const probe = simulate(fixed != null ? fixed : floor, 0);
+  const totalLoad = probe.totalLoad;
+  const targetKwh = (inputs.desiredSavingsPct || 0) * totalLoad;
+  if (targetKwh <= 1e-9) {
+    // Degenerate: nothing to save. Fewest of everything that's legal.
+    const panels = fixed != null ? fixed : (recommended.minPanelsFloor > 0 ? floor : 0);
+    return { mode, feasible: true, panelCount: panels, batteryPackage: null,
+             batteryUnits: 0, batteryKwh: 0,
+             cost: costOf(panels, { pkg: null, units: 0, kwh: 0 }),
+             achievedSavingsKwhPerDay: 0, achievedPct: 0,
+             targetPct: inputs.desiredSavingsPct || 0, panelCap };
+  }
+
+  // ── Battery ladder ─────────────────────────────────────────────────────────
+  const inStockPkgs = availableBatteryPackages(adminParams);
+  const packages = opts.restrictPackageId
+    ? inStockPkgs.filter(p => p.id === opts.restrictPackageId)
+    : inStockPkgs;
+  const excessAtMax = simulate(fixed != null ? fixed : panelCap, 0).excess;
+  const rungs = [{ pkg: null, units: 0, kwh: 0 }];
+  for (const pkg of packages) {
+    const unit = pkg.batteryUnitKwh || 1;
+    const maxUnits = Math.min(60, Math.max(0, Math.ceil(excessAtMax / unit)));
+    for (let u = 1; u <= maxUnits; u++) rungs.push({ pkg, units: u, kwh: u * unit });
+  }
+
+  // ── Cost function ──────────────────────────────────────────────────────────
+  function costOf(panelCount, rung) {
+    const kwp = panelCount * panelWatts / 1000;
+    const st = { ...inputs,
+                 panelCount,
+                 selectedInverters: recommendInverters(kwp, phase),
+                 batteryKwh: rung.kwh,
+                 batteryPackageId: rung.pkg ? rung.pkg.id : null };
+    return buildPackageLineItems(st, adminParams, null).totalDirect;
+  }
+
+  // ── Mode 'panels' (v3-130, corrected): GLOBAL-minimum sim-certified array ──
+  // Feasibility per candidate array = the LARGEST ladder rung (battery savings
+  // are monotone in capacity), giving the true global panel minimum — so
+  // panels(M1) <= panels(M2), panels(M3) holds by construction. The battery at
+  // the chosen array starts from the v3-71 PIPELINE recommendation
+  // (batteryDailyExcess → optimizer → package rounding — preserving today's
+  // outputs everywhere it suffices) and steps UP the ladder only when the
+  // workbook's excess rounding leaves that rec short of target at a package
+  // boundary (raw 10.03 → rounded 10 → 9.5 usable < 10.03; caught by the
+  // smoke's re-verification assert). Among sufficient rungs: min cost, then
+  // min kWh.
+  if (mode === 'panels') {
+    // v3-132 — SPILL TOLERANCE (user reversal of v3-131's strict absorb-all):
+    // the battery must leave at most `maxDailySpillKwh` of RAW daily excess
+    // unabsorbed (kwh × batteryEfficiency + tolerance >= raw). 0 = strict.
+    // Seeded 1.0 → the default quote's 0.69 kWh/day spill is tolerated and
+    // the flagship default stays 1×5 / Std ₱537,168.04 (v3-131's +₱85,564
+    // step-up reverted before any customer saw it).
+    const rawExcessAt = (panelCount) => simulate(panelCount, 0).excess;
+    const spillTol = Math.max(0, Number(adminParams.maxDailySpillKwh) || 0);
+    // Certify under the largest rung — the absorb-all battery is savings-
+    // maximal at any array (extra capacity beyond the excess adds nothing),
+    // so max-rung feasibility == absorb-all feasibility and the search still
+    // returns the GLOBAL panel minimum (theorem preserved).
+    const maxKwh = rungs.reduce((mx, r) => Math.max(mx, r.kwh), 0);
+    const feasAt = (panelCount) =>
+      simulate(panelCount, maxKwh).savings + 1e-9 >= targetKwh;
+    const eff = adminParams.batteryEfficiency || 1;
+    const pickBattery = (panelCount, requireTarget) => {
+      const raw = rawExcessAt(panelCount);
+      // Rungs whose spill (raw − usable) is inside the tolerance; if the
+      // ladder can't reach even at max, fall back to the max-absorption
+      // rung(s). Among tolerated rungs, ones MEETING THE TARGET take
+      // priority (a large tolerance must not let "cheapest" collapse to a
+      // no-battery config the certification never blessed); then min cost,
+      // tie min kWh.
+      const tolerated = rungs.filter(r => r.kwh * eff + spillTol + 1e-9 >= raw);
+      const pool0 = tolerated.length > 0
+        ? tolerated
+        : (() => {
+            const mx = rungs.reduce((m, r) => Math.max(m, r.kwh), 0);
+            return rungs.filter(r => r.kwh === mx);
+          })();
+      const cands = pool0.map(r => ({ r, savings: simulate(panelCount, r.kwh).savings }));
+      const meeting = cands.filter(c => c.savings + 1e-9 >= targetKwh);
+      if (requireTarget && meeting.length === 0) return null;
+      let pool = meeting.length > 0 ? meeting : (() => {
+        const mx = Math.max(...cands.map(c => c.savings));
+        return cands.filter(c => c.savings >= mx - 1e-9);
+      })();
+      pool = pool.map(c => ({ ...c, cost: costOf(panelCount, c.r) }));
+      let b = pool[0];
+      for (const c of pool.slice(1)) {
+        if (c.cost < b.cost || (c.cost === b.cost && c.r.kwh < b.r.kwh)) b = c;
+      }
+      return b;
+    };
+    const result = (panelCount, feasibleFlag) => {
+      const b = pickBattery(panelCount, false);
+      return { mode, feasible: feasibleFlag,
+               panelCount,
+               batteryPackage: b.r.kwh > 0 ? b.r.pkg : null,
+               batteryUnits: b.r.units,
+               batteryKwh: b.r.kwh,
+               cost: b.cost,
+               achievedSavingsKwhPerDay: b.savings,
+               achievedPct: totalLoad > 0 ? b.savings / totalLoad : 0,
+               targetPct: inputs.desiredSavingsPct || 0,
+               panelCap };
+    };
+    if (fixed != null) {
+      const b = pickBattery(fixed, true);
+      return result(fixed, b != null);
+    }
+    if (!feasAt(panelCap)) {
+      // Infeasible inside the cap → best-achievable at the cap (decision A);
+      // this also RESOLVES the v3-110 disclosed asymmetry — mode 'panels' can
+      // now fire the amber notice like the other modes.
+      return result(panelCap, false);
+    }
+    let lo = floor, hi = panelCap;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (feasAt(mid)) hi = mid;
+      else lo = mid + 1;
+    }
+    return result(lo, true);
+  }
+
+  // ── Per-rung search ────────────────────────────────────────────────────────
+  const feasibleCands = [];
+  const infeasibleCands = [];
+  for (const rung of rungs) {
+    if (fixed != null) {
+      const s = simulate(fixed, rung.kwh);
+      (s.savings + 1e-9 >= targetKwh ? feasibleCands : infeasibleCands)
+        .push({ rung, panels: fixed, savings: s.savings });
+      continue;
+    }
+    const atCap = simulate(panelCap, rung.kwh);
+    if (atCap.savings + 1e-9 < targetKwh) {
+      infeasibleCands.push({ rung, panels: panelCap, savings: atCap.savings });
+      continue;
+    }
+    let lo = floor, hi = panelCap;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (simulate(mid, rung.kwh).savings + 1e-9 >= targetKwh) hi = mid;
+      else lo = mid + 1;
+    }
+    feasibleCands.push({ rung, panels: lo, savings: simulate(lo, rung.kwh).savings });
+  }
+
+  // ── Selection ──────────────────────────────────────────────────────────────
+  let pool, feasible;
+  if (feasibleCands.length > 0) {
+    pool = feasibleCands;
+    feasible = true;
+  } else {
+    const maxS = Math.max(...infeasibleCands.map(c => c.savings));
+    pool = infeasibleCands.filter(c => c.savings >= maxS - 1e-9);
+    feasible = false;
+  }
+  pool = pool.map(c => ({ ...c, cost: costOf(c.panels, c.rung) }));
+
+  const better = (a, b) => {
+    if (mode === 'battery') {
+      if (a.rung.kwh !== b.rung.kwh) return a.rung.kwh < b.rung.kwh;
+      if (a.cost !== b.cost) return a.cost < b.cost;
+    } else {
+      if (a.cost !== b.cost) return a.cost < b.cost;
+      if (a.panels !== b.panels) return a.panels < b.panels;
+      if (a.rung.units !== b.rung.units) return a.rung.units < b.rung.units;
+    }
+    if (a.panels !== b.panels) return a.panels < b.panels;      // stability
+    if (a.rung.units !== b.rung.units) return a.rung.units < b.rung.units;
+    return false;
+  };
+  let best = pool[0];
+  for (let i = 1; i < pool.length; i++) if (better(pool[i], best)) best = pool[i];
+
+  return {
+    mode, feasible,
+    panelCount: best.panels,
+    batteryPackage: best.rung.pkg,
+    batteryUnits: best.rung.units,
+    batteryKwh: best.rung.kwh,
+    cost: best.cost,
+    achievedSavingsKwhPerDay: best.savings,
+    achievedPct: totalLoad > 0 ? best.savings / totalLoad : 0,
+    targetPct: inputs.desiredSavingsPct || 0,
+    panelCap,
   };
 }

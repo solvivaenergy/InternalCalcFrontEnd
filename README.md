@@ -33,12 +33,6 @@ npm install
 npm run dev                       # serves on localhost:5173
 ```
 
-For backend-connected parameter load/save and quote APIs, set:
-
-```bash
-VITE_API_BASE_URL=https://<your-render-backend-domain>
-```
-
 ## Deployment to Netlify
 
 The site is configured to deploy via Netlify's "Deploy manually" flow.

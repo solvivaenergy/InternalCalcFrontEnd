@@ -1,14 +1,14 @@
 // =============================================================================
 // ENGINEERING TAB — second of three admin tabs (v3-54)
 // -----------------------------------------------------------------------------
-// Section order (per spec):
+// Section order (per spec; Variable Charges moved to the Inventory tab in
+// v3-106 to sit beside the cabling tier tables + the RSD stock toggle):
 //   1. Device Library       (moved here from Inventory tab, at the top)
-//   2. Variable Charges
-//   3. Roof Material (per kWp)
-//   4. Location / Delivery Charges
-//   5. Standalone Retrofit Charges
-//   6. Fixed Overhead
-//   7. Schedule Constants
+//   2. Roof Material (per kWp)
+//   3. Location / Delivery Charges
+//   4. Standalone Retrofit Charges
+//   5. Fixed Overhead
+//   6. Schedule Constants
 //
 // All edits flow through props from AdminShell. Edit gating per section is
 // read from permissions.js — Engineering + Super Admin can edit; Product +
@@ -17,7 +17,9 @@
 
 import React from 'react';
 import { COLORS, fmt } from './ui.jsx';
-import { Section, Param, adminStyles } from './AdminShared.jsx';
+import { Section, Param, DeliveryLocationsTable, MiscCatalogTable,
+         adminStyles } from './AdminShared.jsx';
+import { directFromCogs } from '../lib/calculations.js';
 import {
   canEditAdminSection, canEditInventory, hasAnyEditAccess,
 } from '../lib/permissions.js';
@@ -103,74 +105,72 @@ export default function EngineeringTab({
         </table>
       </Section>
 
-      {/* ─── Variable Charges ────────────────────────────────────────── */}
-      <Section title="Variable Charges"
-               canEdit={canEditSection('variableCharges')}
-               anyEditRole={anyEdit}>
-        <Param label="Additional DC Cable (per meter)" isPeso step={10}
-               value={params.additionalDcCablePerMeter}
-               onChange={v => updateParam('variableCharges', 'additionalDcCablePerMeter', v)}
-               canEdit={canEditSection('variableCharges')} />
-        <Param label="Additional AC Cable (per meter)" isPeso step={10}
-               value={params.additionalAcCablePerMeter}
-               onChange={v => updateParam('variableCharges', 'additionalAcCablePerMeter', v)}
-               canEdit={canEditSection('variableCharges')} />
-        <Param label="Labor & Installation (per kWp)" isPeso step={500}
-               value={params.laborInstallationPerKwp}
-               onChange={v => updateParam('variableCharges', 'laborInstallationPerKwp', v)}
-               canEdit={canEditSection('variableCharges')} />
-        <Param label="RSD — Variable Charge (per panel)" isPeso step={100}
-               value={params.rsdVariablePerPanel}
-               onChange={v => updateParam('variableCharges', 'rsdVariablePerPanel', v)}
-               canEdit={canEditSection('variableCharges')} />
-        <Param label="RSD — Fixed Transmitter" isPeso step={500}
-               value={params.rsdFixedTransmitter}
-               onChange={v => updateParam('variableCharges', 'rsdFixedTransmitter', v)}
-               canEdit={canEditSection('variableCharges')} />
-      </Section>
+      {/* ─── Variable Charges — MOVED to the Inventory tab in v3-106 ───
+           (cable / labor / RSD charges sit better beside the cabling tier
+           tables and the new RSD stock toggle). Same 'variableCharges'
+           section key and edit gate — pure relocation, no permission or
+           server change. ─────────────────────────────────────────────── */}
 
       {/* ─── Roof Material ───────────────────────────────────────────── */}
       <Section title="Roof Material (per kWp)"
                canEdit={canEditSection('roofMaterial')}
                anyEditRole={anyEdit}>
         <Param label="Asphalt / Shingles / Tiled — per kWp surcharge" isPeso step={500}
-               value={params.roofAsphaltPerKwp}
-               onChange={v => updateParam('roofMaterial', 'roofAsphaltPerKwp', v)}
+               value={params.roofAsphaltPerKwpCogs}
+               derived={directFromCogs(params.roofAsphaltPerKwpCogs, params)}
+               onChange={v => updateParam('roofMaterial', 'roofAsphaltPerKwpCogs', v)}
                canEdit={canEditSection('roofMaterial')} />
         <Param label="Concrete — per kWp surcharge" isPeso step={500}
-               value={params.roofConcretePerKwp}
-               onChange={v => updateParam('roofMaterial', 'roofConcretePerKwp', v)}
+               value={params.roofConcretePerKwpCogs}
+               derived={directFromCogs(params.roofConcretePerKwpCogs, params)}
+               onChange={v => updateParam('roofMaterial', 'roofConcretePerKwpCogs', v)}
                canEdit={canEditSection('roofMaterial')} />
+      </Section>
+
+      {/* ─── Misc Materials / Labor / Services catalog (v3-138) ──────── */}
+      <Section title="Miscellaneous Materials, Labor &amp; Other Services Catalog"
+               canEdit={canEditSection('miscCatalog')}
+               anyEditRole={anyEdit}>
+        <p style={{ fontSize: 13, color: COLORS.textMuted, margin: '0 0 10px' }}>
+          The standing list a rep picks from in <strong>Step 2F</strong> of the calculator.
+          Enter <strong>pre-VAT cost</strong> (the BOM sheet's "Cost (VAT Exc)" column) —
+          the customer price is derived, same as every other cost on this tab. A rep who
+          needs something not listed here uses <em>Other (please specify)</em> and prices
+          it by hand.
+        </p>
+        <MiscCatalogTable
+          items={params.miscCatalog}
+          canEdit={canEditSection('miscCatalog')}
+          onChange={rows => updateParam('miscCatalog', 'miscCatalog', rows)}
+          adminParams={params}
+        />
       </Section>
 
       {/* ─── Location / Delivery Charges ────────────────────────────── */}
       <Section title="Location / Delivery Charges"
                canEdit={canEditSection('location')}
                anyEditRole={anyEdit}>
-        <Param label="Cebu — Fixed Fee" isPeso step={500}
-               value={params.cebuFixedFee}
-               onChange={v => updateParam('location', 'cebuFixedFee', v)}
-               canEdit={canEditSection('location')} />
-        <Param label="Cebu — Per Panel" isPeso step={50}
-               value={params.cebuPerPanel}
-               onChange={v => updateParam('location', 'cebuPerPanel', v)}
-               canEdit={canEditSection('location')} />
-        <Param label="Siargao — Fixed Fee" isPeso step={500}
-               value={params.siargaoFixedFee}
-               onChange={v => updateParam('location', 'siargaoFixedFee', v)}
-               canEdit={canEditSection('location')} />
-        <Param label="Siargao — Per Panel" isPeso step={50}
-               value={params.siargaoPerPanel}
-               onChange={v => updateParam('location', 'siargaoPerPanel', v)}
-               canEdit={canEditSection('location')} />
+        {/* v3-116 — the four Cebu/Siargao scalars became the dynamic
+            deliveryLocations table below the Luzon pair. Luzon main island
+            stays structural (per-km excess formula, AA38). */}
         <Param label="Luzon Over-30km — Fixed Fee" isPeso step={500}
-               value={params.luzonOver30FixedFee}
-               onChange={v => updateParam('location', 'luzonOver30FixedFee', v)}
+               value={params.luzonOver30FixedFeeCogs}
+               derived={directFromCogs(params.luzonOver30FixedFeeCogs, params)}
+               onChange={v => updateParam('location', 'luzonOver30FixedFeeCogs', v)}
                canEdit={canEditSection('location')} />
         <Param label="Luzon Over-30km — Per Km" isPeso step={10}
-               value={params.luzonOver30PerKm}
-               onChange={v => updateParam('location', 'luzonOver30PerKm', v)}
+               value={params.luzonOver30PerKmCogs}
+               derived={directFromCogs(params.luzonOver30PerKmCogs, params)}
+               onChange={v => updateParam('location', 'luzonOver30PerKmCogs', v)}
                canEdit={canEditSection('location')} />
+        <div style={{ marginTop: 14 }}>
+          <DeliveryLocationsTable
+            locations={params.deliveryLocations}
+            canEdit={canEditSection('location')}
+            adminParams={params}
+            onChange={rows => updateParam('location', 'deliveryLocations', rows)}
+          />
+        </div>
       </Section>
 
       {/* ─── Standalone Retrofit Charges ─────────────────────────────── */}
@@ -179,21 +179,25 @@ export default function EngineeringTab({
                anyEditRole={anyEdit}>
         <Param label="RSD Standalone Labor (per panel)" isPeso step={100}
                hint="Charged on RSD-only retrofit orders without solar"
-               value={params.rsdStandaloneLaborPerPanel}
-               onChange={v => updateParam('standaloneCharges', 'rsdStandaloneLaborPerPanel', v)}
+               value={params.rsdStandaloneLaborPerPanelCogs}
+               derived={directFromCogs(params.rsdStandaloneLaborPerPanelCogs, params)}
+               onChange={v => updateParam('standaloneCharges', 'rsdStandaloneLaborPerPanelCogs', v)}
                canEdit={canEditSection('standaloneCharges')} />
         <Param label="RSD Standalone Labor Mobilization" isPeso step={500}
-               value={params.rsdStandaloneLaborMobilization}
-               onChange={v => updateParam('standaloneCharges', 'rsdStandaloneLaborMobilization', v)}
+               value={params.rsdStandaloneLaborMobilizationCogs}
+               derived={directFromCogs(params.rsdStandaloneLaborMobilizationCogs, params)}
+               onChange={v => updateParam('standaloneCharges', 'rsdStandaloneLaborMobilizationCogs', v)}
                canEdit={canEditSection('standaloneCharges')} />
         <Param label="Inverter Standalone Labor (per unit)" isPeso step={500}
                hint="Charged on inverter-only retrofit orders without solar"
-               value={params.inverterStandaloneLaborPerUnit}
-               onChange={v => updateParam('standaloneCharges', 'inverterStandaloneLaborPerUnit', v)}
+               value={params.inverterStandaloneLaborPerUnitCogs}
+               derived={directFromCogs(params.inverterStandaloneLaborPerUnitCogs, params)}
+               onChange={v => updateParam('standaloneCharges', 'inverterStandaloneLaborPerUnitCogs', v)}
                canEdit={canEditSection('standaloneCharges')} />
         <Param label="Inverter Standalone Mobilization" isPeso step={500}
-               value={params.inverterStandaloneMobilization}
-               onChange={v => updateParam('standaloneCharges', 'inverterStandaloneMobilization', v)}
+               value={params.inverterStandaloneMobilizationCogs}
+               derived={directFromCogs(params.inverterStandaloneMobilizationCogs, params)}
+               onChange={v => updateParam('standaloneCharges', 'inverterStandaloneMobilizationCogs', v)}
                canEdit={canEditSection('standaloneCharges')} />
       </Section>
 
@@ -202,24 +206,29 @@ export default function EngineeringTab({
                canEdit={canEditSection('fixedOverhead')}
                anyEditRole={anyEdit}>
         <Param label="Delivery & Logistics" isPeso step={100}
-               value={params.fixedOverheadDeliveryLogistics}
-               onChange={v => updateParam('fixedOverhead', 'fixedOverheadDeliveryLogistics', v)}
+               value={params.fixedOverheadDeliveryLogisticsCogs}
+               derived={directFromCogs(params.fixedOverheadDeliveryLogisticsCogs, params)}
+               onChange={v => updateParam('fixedOverhead', 'fixedOverheadDeliveryLogisticsCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
         <Param label="Warehouse" isPeso step={100}
-               value={params.fixedOverheadWarehouse}
-               onChange={v => updateParam('fixedOverhead', 'fixedOverheadWarehouse', v)}
+               value={params.fixedOverheadWarehouseCogs}
+               derived={directFromCogs(params.fixedOverheadWarehouseCogs, params)}
+               onChange={v => updateParam('fixedOverhead', 'fixedOverheadWarehouseCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
         <Param label="Customs" isPeso step={100}
-               value={params.fixedOverheadCustoms}
-               onChange={v => updateParam('fixedOverhead', 'fixedOverheadCustoms', v)}
+               value={params.fixedOverheadCustomsCogs}
+               derived={directFromCogs(params.fixedOverheadCustomsCogs, params)}
+               onChange={v => updateParam('fixedOverhead', 'fixedOverheadCustomsCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
         <Param label="Safety, Supervision & Testing" isPeso step={500}
-               value={params.fixedOverheadSafetySupervision}
-               onChange={v => updateParam('fixedOverhead', 'fixedOverheadSafetySupervision', v)}
+               value={params.fixedOverheadSafetySupervisionCogs}
+               derived={directFromCogs(params.fixedOverheadSafetySupervisionCogs, params)}
+               onChange={v => updateParam('fixedOverhead', 'fixedOverheadSafetySupervisionCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
         <Param label="Testing & Commissioning" isPeso step={500}
-               value={params.fixedOverheadTesting}
-               onChange={v => updateParam('fixedOverhead', 'fixedOverheadTesting', v)}
+               value={params.fixedOverheadTestingCogs}
+               derived={directFromCogs(params.fixedOverheadTestingCogs, params)}
+               onChange={v => updateParam('fixedOverhead', 'fixedOverheadTestingCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
       </Section>
 
@@ -235,6 +244,11 @@ export default function EngineeringTab({
                value={params.batteryEfficiency}
                onChange={v => updateParam('scheduleConstants', 'batteryEfficiency', v)}
                canEdit={canEditSection('scheduleConstants')} />
+        <Param label="Max Unabsorbed Excess Solar — kWh/day" step={0.1} min={0} max={24}
+               value={params.maxDailySpillKwh}
+               onChange={v => updateParam('scheduleConstants', 'maxDailySpillKwh', v)}
+               canEdit={canEditSection('scheduleConstants')}
+               hint="Fewest-panels mode: largest daily solar spill the recommended battery may leave unstored. 0 = absorb everything." />
         <Param label="Battery Depth of Discharge" isPct step={0.01}
                value={params.batteryDepthOfDischarge}
                onChange={v => updateParam('scheduleConstants', 'batteryDepthOfDischarge', v)}
@@ -256,12 +270,14 @@ export default function EngineeringTab({
                onChange={v => updateParam('scheduleConstants', 'netMeteringEfficiency', v)}
                canEdit={canEditSection('scheduleConstants')} />
         <Param label="Preventive Maintenance (per panel)" isPeso step={50}
-               value={params.preventiveMaintenancePerPanel}
-               onChange={v => updateParam('scheduleConstants', 'preventiveMaintenancePerPanel', v)}
+               value={params.preventiveMaintenancePerPanelCogs}
+               derived={directFromCogs(params.preventiveMaintenancePerPanelCogs, params)}
+               onChange={v => updateParam('scheduleConstants', 'preventiveMaintenancePerPanelCogs', v)}
                canEdit={canEditSection('scheduleConstants')} />
         <Param label="Preventive Maintenance (per visit)" isPeso step={500}
-               value={params.preventiveMaintenancePerVisit}
-               onChange={v => updateParam('scheduleConstants', 'preventiveMaintenancePerVisit', v)}
+               value={params.preventiveMaintenancePerVisitCogs}
+               derived={directFromCogs(params.preventiveMaintenancePerVisitCogs, params)}
+               onChange={v => updateParam('scheduleConstants', 'preventiveMaintenancePerVisitCogs', v)}
                canEdit={canEditSection('scheduleConstants')} />
         <Param label="Min. Days to First Post-Install Payment" suffix="days" step={1}
                value={params.minDaysToFirstPostInstallPayment}

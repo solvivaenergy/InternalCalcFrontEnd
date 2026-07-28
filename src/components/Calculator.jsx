@@ -50,6 +50,7 @@ export default function Calculator({
   adminParams, disclaimers,
   mode = 'rep',
   resetStep1, resetStep2, resetStep3,
+  onContactRep,
 }) {
   return (
     <div>
@@ -63,6 +64,7 @@ export default function Calculator({
         adminParams={adminParams}
         mode={mode}
         onReset={resetStep2}
+        onContactRep={onContactRep}
         afterSection2A={
           <EnergyVisuals
             state={state} updateState={updateState} model={model}
@@ -71,7 +73,7 @@ export default function Calculator({
         }
       />
       <div className="step34-grid" style={styles.step34Grid}>
-        <div className="step34-col-left">
+        <div className="step34-col-left" id="step3-pricing">   {/* v3-123 — LiveTotalBar jump target */}
           <Step3PaymentTerms
             state={state} updateState={updateState} model={model}
             adminParams={adminParams}

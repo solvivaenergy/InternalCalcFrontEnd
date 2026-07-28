@@ -93,16 +93,307 @@ export function NPV(rate, cashflows) {
   return cashflows.reduce((acc, cf, i) => acc + cf / Math.pow(1 + rate, i + 1), 0);
 }
 
-// ─── Effective RTO interest rate (Admin C25) ─────────────────────────────────
-// Admin C25 = baseRate + (panelCount < threshold ? premium : 0)
-// Used as the discount rate for converting between 60-Mo RTO totals and
-// equivalent direct-purchase prices throughout the calculator.
+// ═══ COGS → DIRECT PURCHASE PRICE (v3-83) ════════════════════════════════════
+// Engineering (Anjon) now enters COGS (pre-VAT). Every direct purchase price in
+// the app is DERIVED from it. Product owns the two levers.
+//
+//     DP Price = CEILING( COGS × (1+VAT) / (1 − GM) / ((1+VAT)(1 − MDR) − VAT) )
+//
+// WHY PRE-VAT COGS IS THE RIGHT BASE: under Philippine VAT, input VAT paid to
+// suppliers is CREDITABLE against output VAT collected on sales — it is
+// recovered, not spent, so it is not a cost. Marking up a VAT-inclusive cost
+// would mark up money you get refunded, and then charge output VAT on top of it.
+//
+// WHY THE DENOMINATOR IS NOT SIMPLY (1 − MDR): the acquirer takes its cut of the
+// VAT-INCLUSIVE amount the customer is charged, while the full output VAT is
+// still remitted to the BIR. So per ₱1 of ex-VAT price, Solviva actually keeps
+//     (1+VAT)(1 − MDR) − VAT  =  1.12 × 0.85 − 0.12  =  0.832
+// not 0.85. Anjon's original sheet divided by 0.85, which quietly realised a
+// 24.4% margin against a 26% target. This form realises the margin you set.
+// (Not tax advice — confirmed with the user, who chose this over the sheet's.)
+const VAT_RATE = 0.12;   // Philippine VAT. A constant, not a param, by instruction.
 
-export function effectiveRtoRate(panelCount, adminParams) {
-  const premium = panelCount < adminParams.smallPackagePanelThreshold
-    ? adminParams.smallPackageRiskPremiumBps / 10000   // C24/10000
-    : 0;
-  return adminParams.baseRtoInterestRate + premium;
+export function directFromCogs(cogs, adminParams, marginOverride) {
+  // v3-84 — defensive. A missing adminParams used to throw, which took the ENTIRE
+  // admin screen down (blank page) rather than showing one wrong number. A price
+  // of ₱0 in an admin cell is visible and harmless; a ReferenceError is not.
+  const ap  = adminParams || {};
+  // v3-92 — gross margin is now CAPACITY-DERIVED (a GENLINV curve over kWp).
+  // Callers pricing a quote pass the resolved margin explicitly; with no override
+  // the price is the ADMIN/REFERENCE price — grossMarginReference (v3-95: set
+  // directly, default = the max anchor / ceiling), falling back to grossMarginMax.
+  const gm  = marginOverride ?? ap.grossMarginReference ?? ap.grossMarginMax ?? ap.grossMargin ?? 0;
+  const mdr = ap.merchantDiscountRate ?? 0;
+  const c = Number(cogs);
+  if (!Number.isFinite(c) || c <= 0) return 0;
+  // Net retained per 1.00 of ex-VAT price, after the acquirer's cut and the VAT
+  // remittance. Guarded: the server and client both refuse to save margins that
+  // would drive this to zero or below, but a hand-edited blob must not divide by
+  // zero and blank out every price in the app.
+  const retained = (1 + VAT_RATE) * (1 - mdr) - VAT_RATE;
+  if (!(retained > 0) || !((1 - gm) > 0)) return 0;
+  return Math.ceil(c * (1 + VAT_RATE) / (1 - gm) / retained);
+}
+
+// The exact inverse of directFromCogs(). Used ONLY to rescue a SKU that an admin
+// added to a pre-v3-83 blob and that therefore has a stored price but no COGS,
+// and no matching entry in the code defaults to copy one from. Back-solving keeps
+// its price where it was instead of zeroing it out.
+export function cogsFromDirect(directPrice, adminParams, marginOverride) {
+  const ap  = adminParams || {};
+  const gm  = marginOverride ?? ap.grossMarginReference ?? ap.grossMarginMax ?? ap.grossMargin ?? 0;
+  const mdr = ap.merchantDiscountRate ?? 0;
+  const px  = Number(directPrice);
+  if (!Number.isFinite(px) || px <= 0) return 0;
+  const retained = (1 + VAT_RATE) * (1 - mdr) - VAT_RATE;
+  if (!(retained > 0) || !((1 - gm) > 0)) return 0;
+  return Math.round(px * (1 - gm) * retained / (1 + VAT_RATE));
+}
+
+// Writes every derived price back onto the live objects. Called by paramsService
+// on boot AND after any admin save, so nothing downstream in calculations.js has
+// to know COGS exists — it still reads `mountingSupportFloorPrice`, `directPrice`,
+// `batteryUnitPrice` etc. exactly as before. That is the whole point of doing it
+// this way: the pricing engine is UNCHANGED.
+export function deriveDirectPrices(ap, panelSettings, invertersSP, invertersTP, margin) {
+  // v3-92 — `margin` is the basis to price at. Boot/admin pass the REFERENCE
+  // margin (grossMarginReference); a per-quote re-price passes
+  // the quote's capacity margin. Omitted → directFromCogs falls back to the
+  // grossMarginMax ceiling.
+  const d = (c) => directFromCogs(c, ap, margin);
+
+  if (panelSettings?.singlePhase) panelSettings.singlePhase.panelDirectPrice = d(panelSettings.singlePhase.panelCogs);
+  if (panelSettings?.threePhase)  panelSettings.threePhase.panelDirectPrice  = d(panelSettings.threePhase.panelCogs);
+  for (const inv of invertersSP || []) inv.directPrice = d(inv.cogs);
+  for (const inv of invertersTP || []) inv.directPrice = d(inv.cogs);
+
+  // adminParams scalars — key: derived price field, value: its COGS field.
+  const MAP = {
+    mountingSupportFloorPrice:      'mountingSupportFloorCogs',
+    additionalDcCablePerMeter:      'additionalDcCablePerMeterCogs',
+    additionalAcCablePerMeter:      'additionalAcCablePerMeterCogs',
+    laborInstallationPerKwp:        'laborInstallationPerKwpCogs',
+    rsdVariablePerPanel:            'rsdVariablePerPanelCogs',
+    rsdFixedTransmitter:            'rsdFixedTransmitterCogs',
+    roofAsphaltPerKwp:              'roofAsphaltPerKwpCogs',
+    roofConcretePerKwp:             'roofConcretePerKwpCogs',
+    luzonOver30FixedFee:            'luzonOver30FixedFeeCogs',
+    luzonOver30PerKm:               'luzonOver30PerKmCogs',
+    rsdStandaloneLaborPerPanel:     'rsdStandaloneLaborPerPanelCogs',
+    rsdStandaloneLaborMobilization: 'rsdStandaloneLaborMobilizationCogs',
+    inverterStandaloneLaborPerUnit: 'inverterStandaloneLaborPerUnitCogs',
+    inverterStandaloneMobilization: 'inverterStandaloneMobilizationCogs',
+    fixedOverheadDeliveryLogistics: 'fixedOverheadDeliveryLogisticsCogs',
+    fixedOverheadWarehouse:         'fixedOverheadWarehouseCogs',
+    fixedOverheadCustoms:           'fixedOverheadCustomsCogs',
+    fixedOverheadSafetySupervision: 'fixedOverheadSafetySupervisionCogs',
+    fixedOverheadTesting:           'fixedOverheadTestingCogs',
+    preventiveMaintenancePerPanel:  'preventiveMaintenancePerPanelCogs',
+    preventiveMaintenancePerVisit:  'preventiveMaintenancePerVisitCogs',
+  };
+  for (const [priceKey, cogsKey] of Object.entries(MAP)) {
+    if (cogsKey in ap) ap[priceKey] = d(ap[cogsKey]);
+  }
+
+  // Battery packages — six derived prices each.
+  const B = {
+    batteryUnitPrice:       'batteryUnitCogs',
+    batteryRackPrice:       'batteryRackCogs',
+    atsPrice:               'atsCogs',
+    criticalLoadsMaterials: 'criticalLoadsMaterialsCogs',
+    laborWithSolarInstall:  'laborWithSolarInstallCogs',
+    standaloneLabor:        'standaloneLaborCogs',
+  };
+  // v3-116 — delivery locations: two derived prices per row (was the four
+  // cebu/siargao scalars in the map above).
+  for (const loc of ap.deliveryLocations || []) {
+    loc.fixedFee = d(loc.fixedFeeCogs);
+    loc.perPanel = d(loc.perPanelCogs);
+  }
+  // v3-138 — misc catalog: one derived unit price per row. Written
+  // unconditionally (v3-85 rationale) so a row whose COGS was edited never
+  // keeps a stale price.
+  for (const m of ap.miscCatalog || []) {
+    m.price = d(m.cogs);
+  }
+  for (const pkg of ap.batteryPackages || []) {
+    for (const [priceKey, cogsKey] of Object.entries(B)) {
+      // v3-85: was `if (cogsKey in pkg)` — which meant a COGS-less package (a
+      // pre-v3-83 blob) silently KEPT its stale stored price while its COGS cell
+      // rendered blank. Write unconditionally; backfillCogs() guarantees the COGS
+      // is there by the time we get here.
+      pkg[priceKey] = d(pkg[cogsKey]);
+    }
+  }
+  return ap;
+}
+
+// ─── RTO INTEREST RATE SURFACE (v3-79) ───────────────────────────────────────
+// Replaces the flat `effectiveRtoRate(panelCount)` (base rate + a 400bps
+// small-package premium). The premium is GONE — panel count no longer affects
+// the rate at all.
+//
+// The rate is now a function of tenor and down payment, fitted through three
+// admin anchors using Myerson's generalized-lognormal quantile function — the
+// same curve SimTools' GENLINV(p, q1, q2, q3) implements:
+//
+//     b = (q3 - q2) / (q2 - q1)                     the skew ratio
+//     z = NORMSINV(p) / NORMSINV(0.75)
+//     rate(p) = q2 + (q3 - q2) * (b^z - 1) / (b - 1)
+//
+// which reproduces q1, q2, q3 exactly at p = 0.25, 0.50, 0.75. GENLINV is
+// one-dimensional, so the two axes are first collapsed into a single risk
+// index u in [0,1], then mapped onto p = 0.25 + 0.50*u. That places the two
+// corner anchors on the 25th and 75th percentiles and the mid anchor on the
+// 50th — so every grid cell interpolates BETWEEN the anchors and none of them
+// extrapolates into the distribution's tails.
+//
+//     uT  = ((T - 1) / (60 - 1)) ^ kT       1 at 60 mo,  0 at 1 mo
+//     uDP = ((0.5 - DP) / 0.5)  ^ kD        1 at 0% DP,  0 at 50% DP
+//     u   = w*uT + (1 - w)*uDP
+//
+// kT and kD are solved so the MID anchor's cell lands exactly on u = 0.5.
+// kD works out to 1 (25% is the midpoint of 0–50%); kT is a hair under 1
+// because 30 months is not quite the midpoint of 1–60.
+//
+// The weight w cannot disturb the anchors: at each of them uT and uDP agree,
+// so any blend of them returns the same value. It reshapes only the interior.
+
+// The 0-point of the surface's DP axis. NOTE (v3-82): the SELECTABLE down
+// payment now runs to 100%, but the RATE AXIS deliberately still ends here.
+// Down payments above 50% are CLAMPED to the 50% rate — i.e. 50% down already
+// earns the best rate on the card, and putting down more earns no further
+// discount. That is intentional: re-anchoring the axis to 0–100% would have
+// silently repriced every existing quote (50%/60mo would jump 12.750% → 13.750%).
+// It also barely matters — at 75% down you are financing a quarter of the
+// system, so the rate is doing very little work. Change this to 1.0 only if you
+// also intend to re-tune the anchors.
+const DP_AXIS_MAX  = 0.50;
+// v3-99 — restored to 1, matching Solviva_Calc_v_B_5_1.xlsm's rate surface,
+// whose tenor axis spans 1..60 (PRODUCT!D54=1, D55=60; normalization
+// (tenor−1)/59, kT=0.9759…). v3-97 had narrowed this to 2 while the app was on
+// the v4.8 curve; that skewed every interior interpolation vs v5.1.
+// v3-100 — Direct Purchase is now TENOR 0 (a distinct option, mirroring v5.1's
+// "Direct Purch" column via the AG12 sentinel); the numeric tenor 1 is a real
+// interest-bearing 1-month term priced by this axis's endpoint (the N-column).
+const TENOR_AXIS_MIN = 1;
+const TENOR_AXIS_MAX = 60;
+const ANCHOR_MID_TENOR = 30;
+const ANCHOR_MID_DP    = 0.25;
+
+// Acklam's inverse normal CDF. Accurate to ~1e-9 — far beyond what a rate card
+// snapped to 1/8 of a point could ever need.
+function normSInv(p) {
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687,
+             138.3577518672690, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866,
+             66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838,
+             -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996,
+             3.754408661907416];
+  const pLow = 0.02425;
+  let q, r;
+  if (p < pLow) {
+    q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
+           ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
+  }
+  if (p <= 1 - pLow) {
+    q = p - 0.5; r = q * q;
+    return (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5]) * q /
+           (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1);
+  }
+  q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
+          ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
+}
+
+const Z75 = normSInv(0.75);   // 0.6744897…
+
+// The rate a customer actually pays, given their tenor and down payment.
+// Tenor is clamped to [1,60] and DP to [0,0.5] so an out-of-range value can
+// never push the curve outside its anchors.
+export function rtoRate(tenor, downPaymentPct, adminParams) {
+  // v3-100 — DIRECT PURCHASE IS TENOR 0, NOT TENOR 1. v5.1's tenor axis is
+  // 60…2, 1, "Direct Purch": the numeric 1-month term is a REAL financed month
+  // priced by the curve's N-column (21.75% at 0% DP → 16.0% at 50%), while
+  // "Direct Purch" is its own distinct 0%-interest option. The app mirrors the
+  // AG12 sentinel with tenor 0. Returned before the surface so an interior
+  // curve rate can never leak onto a Direct Purchase; PMT is bypassed entirely
+  // for tenor 0 in computePaymentTerms (single balance payment, AH15's IFERROR
+  // fallback to AH10).
+  if (tenor < 1) return 0;
+
+  const q1 = adminParams.rateAnchorMin;
+  const q2 = adminParams.rateAnchorMid;
+  const q3 = adminParams.rateAnchorMax;
+  const w  = adminParams.rateTenorWeight;
+  const step = adminParams.rateStepPct;
+
+  const T  = Math.min(TENOR_AXIS_MAX, Math.max(TENOR_AXIS_MIN, tenor));
+  const DP = Math.min(DP_AXIS_MAX, Math.max(0, downPaymentPct));
+
+  const kT = Math.log(0.5) / Math.log(
+    (ANCHOR_MID_TENOR - TENOR_AXIS_MIN) / (TENOR_AXIS_MAX - TENOR_AXIS_MIN));
+  const kD = Math.log(0.5) / Math.log(
+    (DP_AXIS_MAX - ANCHOR_MID_DP) / DP_AXIS_MAX);
+
+  const uT = Math.pow((T - TENOR_AXIS_MIN) / (TENOR_AXIS_MAX - TENOR_AXIS_MIN), kT);
+  const uD = Math.pow((DP_AXIS_MAX - DP) / DP_AXIS_MAX, kD);
+  const p  = 0.25 + 0.5 * (w * uT + (1 - w) * uD);
+
+  const b = (q3 - q2) / (q2 - q1);
+  let raw;
+  if (Math.abs(b - 1) < 1e-9) {
+    // Symmetric anchors — the generalized-lognormal degenerates to a normal.
+    // Without this branch the (b - 1) denominator below divides by zero.
+    raw = q2 + (q3 - q1) / (2 * Z75) * normSInv(p);
+  } else {
+    raw = q2 + (q3 - q2) * (Math.pow(b, normSInv(p) / Z75) - 1) / (b - 1);
+  }
+  return step > 0 ? Math.round(raw / step) * step : raw;
+}
+
+// ─── GROSS MARGIN SURFACE (v3-92) ────────────────────────────────────────────
+// Gross margin is no longer a flat scalar — it rides a GENLINV curve over the
+// solar array's rated capacity (kWp), exactly like the RTO rate surface rides a
+// curve over tenor/DP. Same generalized-lognormal quantile function (SimTools'
+// GENLINV, native closed form). Three admin anchors, placed at the 25th / 50th /
+// 75th percentiles so the two ends act as the true min/max and nothing
+// extrapolates into the tails:
+//   grossMarginMin @ grossMarginMinKwp   — 25th pctile (small systems, floor)
+//   grossMarginMid @ grossMarginMidKwp   — 50th pctile (curvature)
+//   grossMarginMax @ grossMarginMaxKwp   — 75th pctile (large systems, ceiling)
+// kWp is clamped to [minKwp, maxKwp], so the output is bounded in [min, max].
+// Mirrors PRODUCT!D10:D22 of Solviva_Calc_v_B_4_8.xlsm to the digit.
+export function grossMarginCurve(systemKwp, adminParams) {
+  const ap = adminParams || {};
+  const x1 = ap.grossMarginMinKwp, x2 = ap.grossMarginMidKwp, x3 = ap.grossMarginMaxKwp;
+  const q1 = ap.grossMarginMin,    q2 = ap.grossMarginMid,    q3 = ap.grossMarginMax;
+  // Defensive: a hand-edited blob with a degenerate axis must not throw.
+  if (![x1, x2, x3, q1, q2, q3].every(Number.isFinite) || x3 <= x1 || x2 <= x1 || x2 >= x3) {
+    return Number.isFinite(q3) ? q3 : (Number.isFinite(ap.grossMargin) ? ap.grossMargin : 0);
+  }
+  const kwp = Number.isFinite(systemKwp) ? systemKwp : x3;   // bad kWp → max anchor → q3
+  const x  = Math.min(x3, Math.max(x1, kwp));
+  const kN = Math.log(0.5) / Math.log((x2 - x1) / (x3 - x1));
+  const u  = Math.pow((x - x1) / (x3 - x1), kN);
+  const p  = 0.25 + 0.5 * u;
+  const b  = (q3 - q2) / (q2 - q1);
+  const z  = normSInv(p) / Z75;
+  return Math.abs(b - 1) < 1e-9 ? q2 + (q3 - q2) * z
+                                : q2 + (q3 - q2) * (Math.pow(b, z) - 1) / (b - 1);
+}
+
+// The margin actually APPLIED to a quote. v4.6 rule (PRODUCT!D24):
+//   IF(panelCount > 0, curve(kWp), maxMargin)
+// An order with NO solar array — battery-only, RSD-only, inverter-only retrofit
+// — defaults to the MAXIMUM margin (the ceiling), not the curve's value at 0 kWp.
+export function grossMarginForCapacity(systemKwp, panelCount, adminParams) {
+  const ap = adminParams || {};
+  if (!(panelCount > 0)) return ap.grossMarginMax ?? ap.grossMargin ?? 0;
+  return grossMarginCurve(systemKwp, ap);
 }
 
 // ─── Day vs Night kWh allocation ─────────────────────────────────────────────
@@ -227,7 +518,18 @@ export function computeRecommendedPanels(inputs, adminParams) {
   // input, which clamps manual entries to the same floor (0 stays allowed for
   // standalone RSD/inverter retrofit orders).
   const minPanelsFloor = Math.ceil(((adminParams.minSystemKwp || 0) * 1000) / panelWatts);
-  const W7 = Math.max(Math.ceil(Q34), minPanelsFloor); // recommended panel count
+  // v3-106 — panel stock flag. When the active phase's panel is out of stock
+  // the recommendation is forced to ZERO panels (overriding the min-system
+  // floor too — you can't floor an order to panels that don't exist). The
+  // quote itself proceeds: batteries / inverters / RSD retrofits for existing
+  // installations are all still orderable (the standalone pricing paths).
+  // Absent flag = available, so pre-v3-106 blobs need no migration.
+  const panelsAvailable = (phase === 'three'
+    ? PANEL_SETTINGS.threePhase.available
+    : PANEL_SETTINGS.singlePhase.available) !== false;
+  const W7 = panelsAvailable
+    ? Math.max(Math.ceil(Q34), minPanelsFloor) // recommended panel count
+    : 0;
 
   // Validity warning: if Q27 < 0, user's device list claims more kWh than the
   // bill suggests — Excel shows "Something doesn't add up."
@@ -247,6 +549,7 @@ export function computeRecommendedPanels(inputs, adminParams) {
     recommendedPanelCount: W7,
     minPanelsFloor,
     panelWatts,
+    panelsAvailable,   // v3-106 — false ⇒ W7 forced to 0; UI shows out-of-stock notice
     inconsistent,
   };
 }
@@ -265,10 +568,14 @@ export function computeRecommendedPanels(inputs, adminParams) {
 
 export function availableInverters(phase) {
   const list = phase === 'three' ? INVERTERS_THREE_PHASE : INVERTERS_SINGLE_PHASE;
-  // Every entry in the list is implicitly available — admins maintain the
-  // list by adding/removing rows in the Inventory editor, not by toggling
-  // a flag. Sort largest-first to mirror the Excel VLOOKUP behavior.
-  return [...list].sort((a, b) => b.ratedKw - a.ratedKw);
+  // v3-106 — rows carry an `available` stock flag (absent = available, so
+  // pre-v3-106 blobs need no migration). Out-of-stock SKUs keep their row in
+  // the admin editor but are excluded HERE — the single chokepoint both the
+  // recommendation engine (recommendInverters) and the Step 2C dropdown read
+  // from, so one filter covers every consumer. Sort largest-first to mirror
+  // the Excel VLOOKUP behavior.
+  return list.filter(inv => inv.available !== false)
+             .sort((a, b) => b.ratedKw - a.ratedKw);
 }
 
 // ─── Recommended inverter split (CALCULATOR G19, G20, G21) ───────────────────
@@ -384,7 +691,7 @@ export function panelDirectPrice(phase) {
 // PACKAGE PRICING — produces every line item for the Summary sheet
 // -----------------------------------------------------------------------------
 // Returns a list of line items, each with:
-//   { description, directPrice, rto60Price, isShown }
+//   { description, directPrice, isShown }
 // "isShown" = whether this line is in the visible Summary FILTER (B<>0).
 // =============================================================================
 
@@ -401,50 +708,70 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     batteryKwh,
     roofMaterial,         // NEW v3: 'metal' | 'asphalt' | 'concrete'
     location,             // NEW v3: 'luzon' | 'cebu' | 'siargao'
-    locationKm,           // NEW v3: distance from Rizal Park (Luzon only)
+    locationKm,           // NEW v3: road-km from the Parañaque logistics hub (v3-114; was Rizal Park)
     miscMaterials, // [{ description, count, unitPrice }, ...]
   } = state;
 
-  const rtoRate = effectiveRtoRate(panelCount, adminParams);
-  const monthlyRate = rtoRate / 12;
-  const toRto = (direct) => direct ? PMT(monthlyRate, 60, -direct, 0, 1) * 60 : 0;
+  // v3-80 — the RTO catalogue is gone. There is no longer a "60-Mo RTO price"
+  // for a line item: OpCo sells at the Direct Purchase Price, and AssetCo
+  // finances whatever balance remains after the down payment. Line items carry
+  // a direct price and nothing else.
 
   const panelWatts = phase === 'three' ? PANEL_SETTINGS.threePhase.panelWatts
                                        : PANEL_SETTINGS.singlePhase.panelWatts;
   const systemKwp = panelCount * panelWatts / 1000;
-  const panelPriceEa = panelDirectPrice(phase);
+
+  // v3-92 — resolve THIS quote's gross margin from its array capacity, then
+  // re-price every COGS-derived line at that margin. deriveDirectPrices runs on a
+  // CLONE so the global objects stay at the boot/reference margin (admin display)
+  // and concurrent quotes can never corrupt each other. Panels and inverters are
+  // priced straight from COGS below; every other line reads the re-priced `ap`.
+  const quoteMargin = grossMarginForCapacity(systemKwp, panelCount, adminParams);
+  const ap = { ...adminParams, batteryPackages: (adminParams.batteryPackages || []).map(p => ({ ...p })) };
+  deriveDirectPrices(ap, null, null, null, quoteMargin);
+
+  const panelCogsEa = phase === 'three' ? PANEL_SETTINGS.threePhase.panelCogs
+                                        : PANEL_SETTINGS.singlePhase.panelCogs;
+  const panelPriceEa = directFromCogs(panelCogsEa, ap, quoteMargin);
+
+  // v3-134 — every line item also carries `cogs`: the SAME composition as its
+  // directPrice but on the ENTERED pre-VAT COGS keys (Anjon's numbers, exact —
+  // NOT reverse-derived from the ceilinged DP). Rep-entered misc lines have no
+  // COGS → null. Surfaced in the Summary's admin price-reveal beside DP.
 
   const items = [];
 
   // 1. Solar panels
   const panelsTotal = panelCount * panelPriceEa;
+  const panelsCogsTotal = panelCount * panelCogsEa;
   items.push({
     key: 'panels',
     description: `${panelCount} units ${panelWatts}W Solar Panels`,
     directPrice: panelsTotal,
-    rto60Price: toRto(panelsTotal),
+    cogs: panelsCogsTotal,
   });
 
   // 2. Mounting support — max(floor, 13% of panels) [skip if no panels]
   const mountingDirect = panelsTotal === 0
     ? 0
-    : Math.max(adminParams.mountingSupportFloorPrice, panelsTotal * adminParams.mountingSupportPctOfPanels);
+    : Math.max(ap.mountingSupportFloorPrice, panelsTotal * ap.mountingSupportPctOfPanels);
   items.push({
     key: 'mounting',
     description: 'Mounting Support',
     directPrice: mountingDirect,
-    rto60Price: toRto(mountingDirect),
+    cogs: panelsTotal === 0 ? 0
+      : Math.max(ap.mountingSupportFloorCogs, panelsCogsTotal * ap.mountingSupportPctOfPanels),
   });
 
   // 3. Cables, conduits, fittings, panel board & other devices
   // v3-62: phase-aware — 3-phase installs use cablingTiersThreePhase.
-  const cablingPct = cablingTotalPct(panelCount, adminParams, phase);
+  const cablingPct = cablingTotalPct(panelCount, ap, phase);
   const cablingDirect = panelsTotal === 0 ? 0 : cablingPct * panelsTotal;
   items.push({
     key: 'cabling',
     description: 'Cables, Conduits, Fittings, Panel Board & Other Devices',
     directPrice: cablingDirect,
-    rto60Price: toRto(cablingDirect),
+    cogs: panelsTotal === 0 ? 0 : cablingPct * panelsCogsTotal,
   });
 
   // 4. Additional DC cable — only meters beyond the included baseline are
@@ -454,38 +781,42 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // 30m included) the line item is ₱0 and no charge appears.
   const dcExtraMeters = Math.max(0, (dcCableMeters || 0) - INCLUDED_DC_CABLE_METERS);
   const dcExtraDirect = panelsTotal === 0 ? 0
-    : dcExtraMeters * adminParams.additionalDcCablePerMeter;
+    : dcExtraMeters * ap.additionalDcCablePerMeter;
   items.push({
     key: 'dcExtra',
     description: `${dcExtraMeters}m of Add'l. DC Cable`,
     directPrice: dcExtraDirect,
-    rto60Price: toRto(dcExtraDirect),
+    cogs: panelsTotal === 0 ? 0 : dcExtraMeters * ap.additionalDcCablePerMeterCogs,
   });
 
   // 5. Additional AC cable — same pattern as DC.
   const acExtraMeters = Math.max(0, (acCableMeters || 0) - INCLUDED_AC_CABLE_METERS);
   const acExtraDirect = panelsTotal === 0 ? 0
-    : acExtraMeters * adminParams.additionalAcCablePerMeter;
+    : acExtraMeters * ap.additionalAcCablePerMeter;
   items.push({
     key: 'acExtra',
     description: `${acExtraMeters}m of Add'l. AC Cable`,
     directPrice: acExtraDirect,
-    rto60Price: toRto(acExtraDirect),
+    cogs: panelsTotal === 0 ? 0 : acExtraMeters * ap.additionalAcCablePerMeterCogs,
   });
 
   // 6. Solar Labor & Installation (variable per kWp + fixed overhead bundle)
-  const fixedOverheadDirect = adminParams.fixedOverheadDeliveryLogistics
-                            + adminParams.fixedOverheadWarehouse
-                            + adminParams.fixedOverheadCustoms
-                            + adminParams.fixedOverheadSafetySupervision
-                            + adminParams.fixedOverheadTesting;
-  const laborDirect = systemKwp * adminParams.laborInstallationPerKwp
+  const fixedOverheadDirect = ap.fixedOverheadDeliveryLogistics
+                            + ap.fixedOverheadWarehouse
+                            + ap.fixedOverheadCustoms
+                            + ap.fixedOverheadSafetySupervision
+                            + ap.fixedOverheadTesting;
+  const laborDirect = systemKwp * ap.laborInstallationPerKwp
                     + (panelsTotal === 0 ? 0 : fixedOverheadDirect);
   items.push({
     key: 'labor',
     description: 'Solar Labor & Installation',
     directPrice: laborDirect,
-    rto60Price: toRto(laborDirect),
+    cogs: systemKwp * ap.laborInstallationPerKwpCogs
+      + (panelsTotal === 0 ? 0
+         : ap.fixedOverheadDeliveryLogisticsCogs + ap.fixedOverheadWarehouseCogs
+         + ap.fixedOverheadCustomsCogs + ap.fixedOverheadSafetySupervisionCogs
+         + ap.fixedOverheadTestingCogs),
   });
 
   // 7. RSD bundled with solar package
@@ -495,19 +826,19 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   //     RsdBundle direct = panelCount * D56 + D57
   let rsdDirect = 0;
   if (rsdEnabled && panelsTotal > 0) {
-    rsdDirect = panelCount * adminParams.rsdVariablePerPanel + adminParams.rsdFixedTransmitter;
+    rsdDirect = panelCount * ap.rsdVariablePerPanel + ap.rsdFixedTransmitter;
   }
   // 8. RSD as standalone (when no solar package is being purchased)
   let rsdStandaloneDirect = 0;
   if (rsdEnabled && panelsTotal === 0 && (rsdStandalonePanelCount || 0) > 0) {
-    rsdStandaloneDirect = rsdStandalonePanelCount * adminParams.rsdVariablePerPanel
-                        + adminParams.rsdFixedTransmitter;
+    rsdStandaloneDirect = rsdStandalonePanelCount * ap.rsdVariablePerPanel
+                        + ap.rsdFixedTransmitter;
   }
   // RSD Labor for standalone
   let rsdStandaloneLaborDirect = 0;
   if (rsdStandaloneDirect > 0) {
-    rsdStandaloneLaborDirect = rsdStandalonePanelCount * adminParams.rsdStandaloneLaborPerPanel
-                             + adminParams.rsdStandaloneLaborMobilization;
+    rsdStandaloneLaborDirect = rsdStandalonePanelCount * ap.rsdStandaloneLaborPerPanel
+                             + ap.rsdStandaloneLaborMobilization;
   }
   const rsdPanelsForLabel = Math.max(panelCount, rsdStandalonePanelCount || 0);
   const rsdAnyDirect = rsdDirect + rsdStandaloneDirect;
@@ -515,30 +846,35 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     key: 'rsd',
     description: `Rapid Shutdown Device (RSD) for ${rsdPanelsForLabel} Solar Panels`,
     directPrice: rsdAnyDirect,
-    rto60Price: toRto(rsdAnyDirect),
+    cogs: (rsdEnabled && panelsTotal > 0
+            ? panelCount * ap.rsdVariablePerPanelCogs + ap.rsdFixedTransmitterCogs : 0)
+        + (rsdEnabled && panelsTotal === 0 && (rsdStandalonePanelCount || 0) > 0
+            ? rsdStandalonePanelCount * ap.rsdVariablePerPanelCogs + ap.rsdFixedTransmitterCogs : 0),
   });
   items.push({
     key: 'rsdLabor',
     description: 'Labor & Installation for Standalone RSD order',
     directPrice: rsdStandaloneLaborDirect,
-    rto60Price: toRto(rsdStandaloneLaborDirect),
+    cogs: rsdStandaloneLaborDirect > 0
+      ? rsdStandalonePanelCount * ap.rsdStandaloneLaborPerPanelCogs + ap.rsdStandaloneLaborMobilizationCogs
+      : 0,
   });
 
   // 9. Inverters (each slot)
   selectedInverters.forEach((inv, i) => {
-    const invDirect = inv ? inv.directPrice : 0;
+    const invDirect = inv ? directFromCogs(inv.cogs, ap, quoteMargin) : 0;
     const desc = inv ? `${inv.ratedKw.toFixed(2)} kW Inverter` : 'None';
     items.push({
       key: `inverter${i}`,
       description: desc,
       directPrice: invDirect,
-      rto60Price: toRto(invDirect),
+      cogs: inv ? inv.cogs : 0,
     });
   });
 
   // 10. Battery package (v3-54 — package-driven)
   // The active battery package is resolved from state.batteryPackageId via
-  // adminParams.batteryPackages[]. Each package carries its own unit size,
+  // ap.batteryPackages[]. Each package carries its own unit size,
   // rack capacity, and pricing. For a default-state customer who hasn't
   // touched the package selector (no batteryPackageId in state), packages[0]
   // is used — which by design preserves v3-53's "5 kWh / 3-cap" defaults
@@ -559,7 +895,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // call time. The ceil() is defensive: any legacy session that captured
   // an off-grid value (e.g. 25 kWh under a 16 kWh pack) still produces a
   // sane cost — it rounds up to the next physical pack count.
-  const pkg = resolveBatteryPackage(adminParams, state.batteryPackageId);
+  const pkg = resolveBatteryPackage(ap, state.batteryPackageId);
   const batteryCount = (batteryKwh || 0) > 0
     ? Math.ceil((batteryKwh || 0) / pkg.batteryUnitKwh)
     : 0;
@@ -584,31 +920,33 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     key: 'battery',
     description: `${batteryCount} unit/s ${pkg.batteryUnitKwh}kWh Battery w/ Cables & Lugs`,
     directPrice: batteryDirect,
-    rto60Price: toRto(batteryDirect),
+    cogs: batteryCount * pkg.batteryUnitCogs,
   });
   items.push({
     key: 'rack',
     description: `${rackCount} unit/s Battery Rack`,
     directPrice: rackDirect,
-    rto60Price: toRto(rackDirect),
+    cogs: rackCount * pkg.batteryRackCogs,
   });
   items.push({
     key: 'ats',
     description: 'Automatic Transfer Switch (ATS)',
     directPrice: atsDirect,
-    rto60Price: toRto(atsDirect),
+    cogs: batteryKwh > 0 ? pkg.atsCogs : 0,
   });
   items.push({
     key: 'critLoads',
     description: 'Materials for Critical Loads',
     directPrice: critLoadDirect,
-    rto60Price: toRto(critLoadDirect),
+    cogs: batteryKwh > 0 ? pkg.criticalLoadsMaterialsCogs : 0,
   });
   items.push({
     key: 'batteryLabor',
     description: battLaborLabel,
     directPrice: battLaborDirect,
-    rto60Price: toRto(battLaborDirect),
+    cogs: batteryKwh > 0
+      ? (hasSolar ? pkg.laborWithSolarInstallCogs : pkg.standaloneLaborCogs)
+      : 0,
   });
 
   // 11. Standalone-inverter mobilization
@@ -616,14 +954,16 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   let invMobDirect = 0;
   const invCount = selectedInverters.filter(i => i).length;
   if (panelsTotal === 0 && invCount > 0) {
-    invMobDirect = adminParams.inverterStandaloneLaborPerUnit * invCount
-                 + adminParams.inverterStandaloneMobilization;
+    invMobDirect = ap.inverterStandaloneLaborPerUnit * invCount
+                 + ap.inverterStandaloneMobilization;
   }
   items.push({
     key: 'invMob',
     description: 'Mobilization for StandAlone Inverter Order',
     directPrice: invMobDirect,
-    rto60Price: toRto(invMobDirect),
+    cogs: invMobDirect > 0
+      ? ap.inverterStandaloneLaborPerUnitCogs * invCount + ap.inverterStandaloneMobilizationCogs
+      : 0,
   });
 
   // 12. Roof Material (v3 — Excel CALCULATOR AA34)
@@ -635,10 +975,10 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   let roofLabel = 'Roof Preparation (Metal — no prep needed)';
   if (panelsTotal > 0) {
     if (roofMaterial === 'asphalt') {
-      roofDirect = systemKwp * adminParams.roofAsphaltPerKwp;
+      roofDirect = systemKwp * ap.roofAsphaltPerKwp;
       roofLabel = 'Roof Preparation — Asphalt / Shingles / Tiled';
     } else if (roofMaterial === 'concrete') {
-      roofDirect = systemKwp * adminParams.roofConcretePerKwp;
+      roofDirect = systemKwp * ap.roofConcretePerKwp;
       roofLabel = 'Roof Preparation — Concrete';
     }
   }
@@ -646,59 +986,115 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     key: 'roof',
     description: roofLabel,
     directPrice: roofDirect,
-    rto60Price: toRto(roofDirect),
+    cogs: roofDirect === 0 ? 0
+      : systemKwp * (roofMaterial === 'asphalt' ? ap.roofAsphaltPerKwpCogs : ap.roofConcretePerKwpCogs),
   });
 
   // 13. Location / Delivery (v3 — Excel CALCULATOR AA38)
   //   luzon  + km≤30 → ₱0                                            ← DEFAULT
-  //   luzon  + km>30 → luzonOver30FixedFee + km × luzonOver30PerKm
-  //   cebu           → cebuFixedFee + panels × cebuPerPanel
-  //   siargao        → siargaoFixedFee + panels × siargaoPerPanel
+  //   luzon  + km>30 → luzonOver30FixedFee + MAX(0, km−30) × luzonOver30PerKm   (AA38, v3-115 fix)
+  //   dynamic row    → row.fixedFee + panels × row.perPanel   (v3-116)
   let locationDirect = 0;
   let locationLabel = 'Location / Delivery — Luzon (within 30km)';
   if (panelsTotal > 0) {
-    if (location === 'cebu') {
-      locationDirect = adminParams.cebuFixedFee + panelCount * adminParams.cebuPerPanel;
-      locationLabel = 'Location / Delivery — Cebu';
-    } else if (location === 'siargao') {
-      locationDirect = adminParams.siargaoFixedFee + panelCount * adminParams.siargaoPerPanel;
-      locationLabel = 'Location / Delivery — Siargao';
+    // v3-116 — dynamic delivery locations. Any non-luzon/non-other location
+    // id resolves against ap.deliveryLocations (derived per-row at quote
+    // margin above); a missing/deleted id defensively prices ₱0 here —
+    // App.jsx already falls a stale pick back to 'luzon' before pricing, so
+    // this branch is a belt-and-braces guard, not the enforcement point.
+    const dynamicLoc = location !== 'luzon' && location !== 'other'
+      ? (ap.deliveryLocations || []).find(l => l.id === location)
+      : null;
+    if (dynamicLoc) {
+      locationDirect = dynamicLoc.fixedFee + panelCount * dynamicLoc.perPanel;
+      locationLabel = `Location / Delivery — ${dynamicLoc.label}`;
     } else if (location === 'luzon' && (locationKm || 0) > 30) {
-      locationDirect = adminParams.luzonOver30FixedFee + (locationKm || 0) * adminParams.luzonOver30PerKm;
-      locationLabel = `Location / Delivery — Luzon (${locationKm} km from Rizal Park)`;
+      // v3-115 PARITY FIX — workbook AA38 is MAX(0, Y39-30) × D41 + D40: the
+      // per-km rate applies ONLY to the EXCESS beyond the 30 km free zone.
+      // The app had charged the FULL distance since Luzon location pricing was
+      // introduced, overbilling every billable Luzon quote by 30 × perKm and
+      // contradicting the proposal's own Logistics Add-On T&C ("any excess
+      // distance beyond the first 30 kilometers"). User-reported v3-114;
+      // verified against Solviva_Calc_v_B_5_1.xlsm CALCULATOR!AA38.
+      locationDirect = ap.luzonOver30FixedFee
+        + Math.max(0, (locationKm || 0) - 30) * ap.luzonOver30PerKm;
+      locationLabel = `Location / Delivery — Luzon (${locationKm} km from Parañaque hub)`;   // v3-114 origin rebase
+    }
+  }
+  // v3-134 — location COGS mirror: dynamic row → fixedFeeCogs + panels ×
+  // perPanelCogs; Luzon >30 km → luzonOver30FixedFeeCogs + excess-km ×
+  // luzonOver30PerKmCogs (same AA38 shape on Anjon's entered values).
+  let locationCogs = 0;
+  if (panelsTotal > 0) {
+    const dynRow = location !== 'luzon' && location !== 'other'
+      ? (ap.deliveryLocations || []).find(l => l.id === location) : null;
+    if (dynRow) {
+      locationCogs = (dynRow.fixedFeeCogs || 0) + panelCount * (dynRow.perPanelCogs || 0);
+    } else if (location === 'luzon' && (locationKm || 0) > 30) {
+      locationCogs = ap.luzonOver30FixedFeeCogs
+        + Math.max(0, (locationKm || 0) - 30) * ap.luzonOver30PerKmCogs;
     }
   }
   items.push({
     key: 'location',
     description: locationLabel,
     directPrice: locationDirect,
-    rto60Price: toRto(locationDirect),
+    cogs: locationCogs,
   });
 
-  // 12. Misc materials (V35:Y36 — up to 6 free-form lines, dynamic)
+  // 12. Misc materials (V35:Y36 — up to 12 lines, dynamic)
+  // v3-138 — two kinds of row now share this loop:
+  //
+  //   CATALOG row (catalogId resolves): price is read LIVE off `ap.miscCatalog`
+  //     — already re-derived above at THIS quote's capacity margin — not off
+  //     whatever unitPrice the session happens to be holding. An Anjon price
+  //     change therefore reprices open sessions, matching how batteries and
+  //     delivery locations already behave. The row carries a real COGS, so it
+  //     contributes to totalCogs in the admin price reveal (user-directed).
+  //     A catalogId that no longer resolves (deleted, or marked out of stock)
+  //     prices at ZERO rather than falling back to a stale stored number —
+  //     Step 2F flags it in amber so the rep can't miss it.
+  //
+  //   FREE-FORM row (no catalogId, or the 'other' sentinel — which is also
+  //     every row restored from a pre-v3-138 session): unchanged from v3-137.
+  //     Rep-entered description and price, cogs null, excluded from totalCogs.
   (miscMaterials || []).forEach((row, i) => {
-    if (!row.description || !row.count || !row.unitPrice) {
-      items.push({ key: `misc${i}`, description: '', directPrice: 0, rto60Price: 0 });
+    const empty = { key: `misc${i}`, description: '', directPrice: 0, cogs: null };
+    if (!row || !row.count) { items.push(empty); return; }
+
+    const catId = row.catalogId;
+    const isCatalog = catId && catId !== 'other';
+    if (isCatalog) {
+      const item = (ap.miscCatalog || []).find(m => m && m.id === catId);
+      if (!item || item.available === false) { items.push(empty); return; }
+      items.push({
+        key: `misc${i}`,
+        description: `${row.count} Unit/s ${item.label}`,
+        directPrice: row.count * (item.price || 0),
+        cogs: row.count * (Number(item.cogs) || 0),
+      });
       return;
     }
-    const dir = row.count * row.unitPrice;
+
+    if (!row.description || !row.unitPrice) { items.push(empty); return; }
     items.push({
       key: `misc${i}`,
       description: `${row.count} Unit/s ${row.description}`,
-      directPrice: dir,
-      rto60Price: toRto(dir),
+      directPrice: row.count * row.unitPrice,
+      cogs: null,   // rep-entered PRICE — no COGS basis (shown as — in the reveal)
     });
   });
 
   // Totals
   const totalDirect = items.reduce((s, i) => s + i.directPrice, 0);
-  const totalRto60 = items.reduce((s, i) => s + i.rto60Price, 0);
+  // v3-134 — total entered COGS across lines that HAVE a COGS basis (misc
+  // excluded via null). Admin price-reveal shows it under the COGS column.
+  const totalCogs = items.reduce((s, i) => s + (i.cogs ?? 0), 0);
 
   return {
     items,
     totalDirect,
-    totalRto60,
-    rtoRate,
+    totalCogs,
     systemKwp,
     panelPriceEa,
   };
@@ -715,7 +1111,9 @@ export function buildPackageLineItems(state, adminParams, schedule) {
 // ─── v3-75: tiered minimum-DP resolution ─────────────────────────────────────
 // Resolves the effective minimum down-payment fraction for a quote from the
 // Product-configured adminParams.minDpTiers table, keyed on the quote's
-// "Net Price (before DP Discount)" (AI9 = terms.totalPaymentsOverTenor).
+// Net Price (v3-80: terms.netDirectPrice — the Direct Purchase Price less any
+// promo. Tenor-INDEPENDENT, so a longer tenor can no longer cross a tier
+// boundary and silently raise the customer's minimum DP mid-quote).
 // The applicable tier is the LAST row whose fromNetPrice ≤ netPrice.
 // Pure function — no pricing impact; it only gates which Step 3A options the
 // UI offers. Defensive: sorts a copy (server enforces ascending order, but a
@@ -741,102 +1139,172 @@ export function resolveMinDpPct(minDpTiers, netPrice) {
 
 export function computePaymentTerms(state, adminParams, packageData) {
   const { tenor, downPaymentPct, promoCode } = state;
-  const { totalRto60, rtoRate } = packageData;
-  const monthlyRate = rtoRate / 12;
+  const { totalDirect } = packageData;
 
-  // Promo discount lookup
+  // ═══ v3-80 — OpCo / AssetCo LOAN MODEL ═══════════════════════════════════
+  // Solviva is separating OpCo (builds and sells the system) from AssetCo
+  // (finances it). The pricing model now mirrors that split exactly:
+  //
+  //   OpCo's revenue    = the Direct Purchase Price. Full stop.
+  //   AssetCo lends     = Net Price − Down Payment, and collects the monthly
+  //                       payments. Its revenue is the interest.
+  //
+  // That is a plain amortising loan, and it DELETES the entire Rent-to-Own
+  // apparatus that preceded it: the 60-Mo RTO catalogue, `catalogueRate`, the
+  // PV/PMT round-trip that recovered `directPurchasePrice`, the Early Payment
+  // Discount, "Additional Savings from your Down Payment", and
+  // `totalPaymentsOverTenor`. None of them have a referent any more.
+  //
+  // WHY THAT MATTERS BEYOND TIDINESS: under the old model the down payment was
+  // a percentage of an interest-inflated total, so "50% down" cost 86% of the
+  // system's cash price at 60 months and only 50% at 1 month — the same label
+  // meaning wildly different things, and at a 48% catalogue rate it broke
+  // outright (the DP exceeded the asset and the balance went negative). Here
+  // the DP is a percentage of the Net Price. 40% down means 40% down, at every
+  // tenor, and `amountForFinancing = Net × (1 − dp)` cannot go negative — so
+  // the v3-56 guard is now unreachable by construction.
+  //
+  // Mirrors CALCULATOR!AH5:AH15 and SUMMARY!G8:H19 of Solviva_Calc_v_B_4_2.
+
+  // AH5 → AH7. Promo is a straight percentage off the direct price.
   const promo = adminParams.promoCodes.find(p => p.code === (promoCode || '').trim().toUpperCase());
   const promoDiscount = promo ? promo.discount : 0;
-  const discountAmount = -promoDiscount * totalRto60;
-  const stepTwoTotalLessDiscount = totalRto60 + discountAmount;  // M7
+  const discountAmount = -promoDiscount * totalDirect;      // AH6 (≤ 0)
+  const netDirectPrice = totalDirect + discountAmount;      // AH7
 
-  // M8 — direct purchase price equivalent of the (discounted) RTO total
-  const directPurchasePrice = PV(monthlyRate, 60, -stepTwoTotalLessDiscount / 60, 0, 1);
-  // M9 — monthly payment if customer pays direct purchase over `tenor` months
-  const monthlyForFullPv = PMT(monthlyRate, tenor, -directPurchasePrice, 0, 1);
+  // The rate comes from the tenor × DP surface (Admin!C22 in the workbook is an
+  // XLOOKUP into the Rate Grid sheet; `rtoRate` IS that grid, in closed form).
+  const rate = rtoRate(tenor, downPaymentPct, adminParams);
+  const monthlyRate = rate / 12;
 
-  // M12 — DP as 1-month FV: AI12 * (1 + monthlyRate)
-  // AI12 = downPaymentPct * stepTwoTotalLessDiscount(60Mo) — wait, Excel uses AI9
+  // AH9 → AH11
+  const dpTotalCharge      = downPaymentPct * netDirectPrice;   // AH9
+  const amountForFinancing = netDirectPrice - dpTotalCharge;    // AH11
+
+  // AH14 — ANNUITY-DUE (type 1): payments fall at month START, matching the
+  // workbook's PMT(Admin!C22/12, tenor, -AH11, , 1) (v4.7). This is a real
+  // change to every monthly payment vs the v3-80→v3-95 ordinary-annuity (type
+  // 0) model, not a rounding difference — the whole payment ladder shifts DOWN.
+  // WHY: paying at the start of each period means the FIRST payment retires
+  // principal before any interest accrues, so at tenor 1 the single payment
+  // equals the financed amount EXACTLY (zero interest) — a Direct Purchase is
+  // now genuinely interest-free, which is the alignment this change is for. The
+  // diminishing-balance IRR of the customer's own cash flows is still exactly
+  // rtoRate/12 per month (an annuity-due is an ordinary annuity shifted one
+  // period earlier; its IRR is unchanged), so the RA 3765 effective-rate
+  // disclosure still holds — only the finance-charge figures re-baseline.
   //
-  // Re-reading: AI9 = M9 * AH7 (i.e. the total of monthly payments).
-  // AI12 = AH11 * AI9 = downPaymentPct * (total payments over chosen tenor)
-  // AH14 = AI12   (DP charge total)
-  // v3-60: the credit-card surcharge (AI13) was removed — surcharging card
-  // payments is not permitted — so the DP total charge is now simply the DP
-  // amount. The DP-via-credit-card option and its fee no longer exist.
-  const totalPaymentsOverTenor = monthlyForFullPv * tenor;       // AI9
-  const dpAmount = downPaymentPct * totalPaymentsOverTenor;       // AI12
-  const dpTotalCharge = dpAmount;                                  // AH14
+  // v3-99 — PMT reverts to ORDINARY ANNUITY (type 0), matching
+  // Solviva_Calc_v_B_5_1.xlsm AH15 `=PMT(PRODUCT!C2/12, AG12, -AH10)` (no type
+  // arg). This UNDOES the v3-96 annuity-due (type 1) switch: v5.0/v5.1 collect
+  // each payment at month END. Every financed monthly rises by a factor of
+  // (1 + rate/12) vs type 1, lifting the total due and finance charge.
+  //
+  // v3-100 — DIRECT PURCHASE (tenor 0). v5.1's AH15 is
+  // IFERROR(PMT(rate/12, AG12, -AH10), AH10): with AG12 = "Direct Purch" the
+  // PMT errors and falls back to AH10 — the WHOLE balance, due in one payment
+  // upon installation, at 0% interest. Mirrored here without the IFERROR
+  // theatrics. The numeric tenor 1 now goes through PMT like any other term
+  // and bears one month of interest at the curve's N-column rate.
+  const isDirectPurchase = tenor < 1;
+  const customerMonthlyPmt = isDirectPurchase
+    ? amountForFinancing
+    : PMT(monthlyRate, tenor, -amountForFinancing);
 
-  // Now post-DP balance, and the "additional savings from down payment"
-  // Excel: M14 = M8 - M12  (PV after DP, in direct-purchase terms)
-  //   where M12 = AI12 * (1 + monthlyRate) — this lifts AI12 to 1-month FV
-  //   so the PV at month 0 of "money paid at month 1" is removed.
-  const dpFvOneMonth = dpAmount * (1 + monthlyRate);   // M12
-  const postDpPv = directPurchasePrice - dpFvOneMonth; // M14
-  // M15 = monthly payment for postDpPv over `tenor` months
-  const monthlyAfterDp = PMT(monthlyRate, tenor, -postDpPv, 0, 1);
+  // AH16 = IF("Direct Purch", AH10, AH15·AG12) — the balance itself for a
+  // Direct Purchase, monthly × tenor otherwise.
+  const finalPostInstallBalance = isDirectPurchase
+    ? amountForFinancing
+    : customerMonthlyPmt * tenor;                                        // AH16
+  const totalAmountDue = dpTotalCharge + finalPostInstallBalance;        // AG29
 
-  // AI16 = AI9 - AI12 — RTO post-installation balance before any CC
-  const postInstallBalance = totalPaymentsOverTenor - dpAmount;     // AI16
-  // AI18 = M15 * tenor — total payments using the after-DP monthly
-  const netBalanceOverTenor = monthlyAfterDp * tenor;               // AI18
-  // AI17 = AI18 - AI16 — savings from making the down payment
-  const savingsFromDp = netBalanceOverTenor - postInstallBalance;   // AI17 (negative — savings)
+  // v3-99 — DOCUMENTARY STAMP TAX (CALCULATOR!AH13). ₱1.50 per ₱200 (or part)
+  // of the financed amount, prorated by the loan's fraction of a year and
+  // capped at 1. Zero for a Direct Purchase (tenor 0, v3-100) — no loan, no
+  // DST. The numeric 1-month term IS a loan now and pays DST at 1/12 proration.
+  //   AH13 = IF(Direct Purch, 0,
+  //             ROUNDUP(AH10/200,0) · PRODUCT!D3 · MIN(1, loanDays/365))
+  // The workbook prorates on the ACTUAL last-payment due date; here we use
+  // MIN(1, tenor/12), which is exact for tenor ≥ 12 (proration = 1) and for
+  // Direct Purchase (0), and differs only by a rounding for 1–11 month financed
+  // deals — a negligible amount on a small tax line. `documentaryStampTaxRate`
+  // (0.0075, Product-editable as of v3-100) × 200 = the ₱1.50 per-₱200 charge.
+  const dstPerTwoHundred = 200 * (adminParams.documentaryStampTaxRate ?? 0);
+  const dst = isDirectPurchase
+    ? 0
+    : Math.ceil(amountForFinancing / 200) * dstPerTwoHundred * Math.min(1, tenor / 12);
 
-  // v3-60: the post-installation balance is always paid via PDCs over the
-  // chosen tenor. The "pay balance via credit card" option, its 5% surcharge,
-  // and the CC-eligible-tenor gating (which collapsed the schedule to a single
-  // lump payment) were all removed because surcharging card payments is not
-  // permitted. The monthly payment and final balance therefore carry no fee.
-  const customerMonthlyPmt = monthlyAfterDp;                       // AI22
-  const finalPostInstallBalance = netBalanceOverTenor;             // AH21
-  // AH35 = AH21 + AH14 — total amount due
-  const totalAmountDue = finalPostInstallBalance + dpTotalCharge;
+  // v3-100 — the DST-INCLUSIVE grand total: SUMMARY!H20 = H18 + H14 + H11
+  // (balance + DST + DP) = ANNEX!E8. Deliberately a NEW field: totalAmountDue
+  // keeps its AG29 (DST-exclusive) definition so the pinned goldens and the
+  // tenor-comparison tables (Excel AH20:AH27, which also exclude DST) are
+  // untouched. Everything customer-facing that says "TOTAL AMOUNT DUE" prints
+  // THIS number (per user decision — one label, one value; the workbook itself
+  // shows two different totals under the same label, AG29 vs H20).
+  const summaryTotalDue = totalAmountDue + dst;
+  // AssetCo's revenue. Internal — the workbook's SUMMARY does not show it and
+  // neither do we.
+  const totalInterest = totalAmountDue - netDirectPrice;                 // AH19
+
+  // v3-82 — a 100% down payment leaves nothing to finance. PMT() returns a clean
+  // 0 here (no NaN), but the TENOR then means nothing: without this flag the
+  // ANNEX would print up to 60 rows of ₱0 into the customer's PDF, and Step 3B
+  // would offer a term for a loan that doesn't exist. Consumers use this to
+  // collapse to a pure cash purchase.
+  const isFullyPaid = amountForFinancing < 0.005;
+
+  // ─── v3-86 — RA 3765 (Truth in Lending Act) DISCLOSURE FIGURES ────────────
+  // The statute requires the creditor to disclose, before the credit transaction
+  // is consummated: the cash price, the down payment, the AMOUNT FINANCED, the
+  // FINANCE CHARGE, the total payable, and the effective interest rate.
+  //
+  // WE ALREADY CHARGE THE EFFECTIVE RATE. `customerMonthlyPmt` is PMT() on the
+  // DIMINISHING BALANCE, so the IRR of the customer's own cash flows comes back
+  // to exactly rtoRate/12 per month — verified in smoke. The rate disclosure that
+  // RA 3765 exists to force is aimed at ADD-ON lenders, who compute interest on
+  // the ORIGINAL principal for the whole term: at a headline 14.375% over 36
+  // months that would charge ₱18,900/mo instead of ₱16,335 and a true rate near
+  // 25%. PMT on a declining balance structurally cannot do that. So the rate we
+  // print IS the effective rate, and the correct phrasing — the term of art that
+  // distinguishes us from add-on lenders — is "per annum on the diminishing
+  // balance". No second "effective" number is disclosed: one rate, one convention.
+  //
+  // The one thing that was genuinely missing is the FINANCE CHARGE. v3-80 kept
+  // `totalInterest` out of the customer view (matching the workbook's SUMMARY).
+  // The statute puts it back. It is the same number, now surfaced.
+  const disclosure = {
+    cashPrice: netDirectPrice,
+    downPayment: dpTotalCharge,
+    amountFinanced: amountForFinancing,
+    financeCharge: totalInterest,        // <- REQUIRED. Was hidden pre-v3-86.
+    totalPayable: totalAmountDue,
+    nominalAnnualRate: rate,             // disclosed as "% p.a., diminishing balance"
+    monthlyRate,
+    monthlyPayment: customerMonthlyPmt,
+    tenor,
+  };
 
   return {
-    rtoRate,
+    rtoRate: rate,
     promo,
-    promoDiscountAmount: discountAmount,
-    stepTwoTotalLessDiscount,
-    directPurchasePrice,
-    monthlyForFullPv,
-    // AI9 — "Net Price (before DP Discount & Credit Card Fees)" in the
-    // SUMMARY sheet. This is `monthlyForFullPv × tenor` — the total of
-    // monthly payments over the chosen tenor. At tenor=60 it equals
-    // stepTwoTotalLessDiscount; at lower tenors it's smaller (because the
-    // monthly is sized to amortise directPurchasePrice in fewer months,
-    // saving the customer the back-end finance cost). v3-19's Summary
-    // mistakenly displayed `directPurchasePrice` for this row, which is a
-    // different number entirely (the present value, not the total
-    // payments). Fixed in v3-20.
-    totalPaymentsOverTenor,
-    // AI8 — "<tenor>-Month RTO Early Payment Discount". Excel formula:
-    //   AI8 = AI9 - SUM(AI5:AI6) = totalPaymentsOverTenor - stepTwoTotalLessDiscount
-    // This is negative (or zero at tenor=60). The SUMMARY shows it as
-    // "Less: <pct>% Early Payment Discount (EPD)" — the value is negative,
-    // and the "Less:" prefix + the negative value together produce the
-    // visual subtraction.
-    epdAmount: totalPaymentsOverTenor - stepTwoTotalLessDiscount,
-    dpAmount,
+    promoDiscount,
+    discountAmount,
+    netDirectPrice,
     dpTotalCharge,
-    postDpPv,
-    monthlyAfterDp,
+    amountForFinancing,
     customerMonthlyPmt,
-    postInstallBalance,
-    netBalanceOverTenor,
-    savingsFromDp,
     finalPostInstallBalance,
     totalAmountDue,
-    // v3-56 — true when the discount from a large DP at a long tenor exceeds
-    // the post-installation balance, producing a negative `netBalanceOverTenor`
-    // (the customer would be paying negative monthlies, which is nonsensical
-    // to display). Step 3 shows a yellow callout in 3C suggesting the customer
-    // either lower the DP or shorten the tenor; the Summary and Schedule of
-    // Payments tabs are hidden until the inputs are resolved, and the PDF
-    // button is disabled. Math is otherwise unchanged — all downstream
-    // consumers still see the raw (negative) numbers; they just don't render.
-    negativeBalance: netBalanceOverTenor < 0,
+    summaryTotalDue,
+    totalInterest,
+    dst,
+    isDirectPurchase,
+    isFullyPaid,
+    disclosure,
+    // v3-80 — the DP is now a share of a price that cannot be exceeded, so this
+    // can never be true. Kept (always false) so App.jsx's v3-56 tab-gating and
+    // PDF-disabling logic stays intact rather than being surgically removed.
+    negativeBalance: false,
   };
 }
 
@@ -849,15 +1317,80 @@ export function computePaymentTerms(state, adminParams, packageData) {
 // terms at each tenor.
 // =============================================================================
 
+// v3-102 — PROPOSAL_BASE_TENORS / proposalTenorSet / proposalTenorRows deleted:
+// their only consumer (the PDF payment-options milestone matrix) was replaced
+// by the popularTenorsTable below, so the PDF and the Summary now share one
+// comparison with one set of (DST-inclusive) totals.
+// v3-118 — Monthly Add-On Rate for the Compare-your-payment-terms table
+// (Summary + PDF share this; smoke-asserted). User-CORRECTED formula
+// (supersedes the v3-117 TAD-vs-baseline version, which folded DST into the
+// rate):
+//   ((Monthly_Payment × Tenor − Amount_for_Financing) / Tenor) / Amount_for_Financing
+// Monthly_Payment × Tenor = total installments; minus the financed amount =
+// pure interest; per month, over the financed principal — the classic
+// add-on-rate definition on the LOAN itself. Amount_for_Financing is
+// tenor-invariant, so one base serves every row. Direct Purchase (tenor 0)
+// is ZERO (user decision C); the guard also covers a 100%-DP quote where
+// nothing is financed.
+// v3-135 — per-line Direct-Purchase waterfall for the Summary price reveal
+// (user-directed five-column view): COGS + Gross Margin + MDR allowance +
+// VAT = Direct Purchase Price, EXACTLY. Definitions per the pricing formula:
+//   net revenue = DP × (1.12 × (1 − MDR) − 0.12) / 1.12
+//   GM ₱        = net revenue − COGS      MDR ₱ = MDR × DP      VAT ₱ = DP × 12/112
+// (algebraic identity: the four sum to DP). Display values are rounded to
+// whole pesos with the RESIDUAL absorbed by the GM cell, so the printed
+// columns also sum exactly. cogs == null (misc lines, rep-entered prices with
+// no COGS basis) books the entire net revenue as margin — flagged by
+// `cogsKnown: false` so the UI can dash the COGS cell.
+export function decomposeDirectPrice(directPrice, cogs, merchantDiscountRate) {
+  const dp = Number(directPrice) || 0;
+  const m = Number(merchantDiscountRate) || 0;
+  const vat = Math.round(dp * VAT_RATE / (1 + VAT_RATE));
+  const mdrAmt = Math.round(dp * m);
+  const cogsR = Math.round(cogs ?? 0);
+  const dpR = Math.round(dp);
+  const gm = dpR - cogsR - mdrAmt - vat;   // residual → exact identity
+  return { cogs: cogsR, gm, mdrAmt, vat, dp: dpR, cogsKnown: cogs != null };
+}
+
+export function monthlyAddOnRate(monthlyPmt, amountForFinancing, tenor) {
+  if (!tenor || tenor <= 0) return 0;
+  const amt = Number(amountForFinancing);
+  if (!Number.isFinite(amt) || amt <= 0) return 0;
+  return ((monthlyPmt * tenor - amt) / tenor) / amt;
+}
+
 export function popularTenorsTable(state, adminParams, packageData) {
-  const tenors = [1, 6, 12, 24, 36, 48, 60];
+  // v3-80 — mirrors the Excel data table at CALCULATOR!AE20:AH26. For the
+  // customer's CHOSEN down payment, recompute the loan at each tenor.
+  //
+  // Was {tenor, dpAmount, monthlyPmt}. The dpAmount column is dropped: under the
+  // loan model the down payment is a share of the Net Price, so it is IDENTICAL
+  // at every tenor — a constant column earns no space. `rate` replaces it, and
+  // is the more useful number anyway: it is *why* the total climbs with tenor.
+  //
+  // v3-101 — three user-directed changes vs the workbook's data table:
+  //   1. The 1-month row is OUT and Direct Purchase (tenor 0) is IN — the
+  //      interest-free option is the comparison that matters, not the oddball
+  //      1-month loan.
+  //   2. The customer's SELECTED tenor is spliced in (sorted) when it isn't a
+  //      base row, so the highlighted "your selection" row always exists.
+  //   3. `totalDue` is DST-INCLUSIVE (summaryTotalDue) — the selected row's
+  //      total must equal the Summary's TOTAL AMOUNT DUE printed just above
+  //      this table (one label, one number). Deliberate deviation from Excel's
+  //      AH20:AH27, which exclude DST. DST prorates by tenor, so each row
+  //      carries its own figure.
+  const tenors = [0, 6, 12, 24, 36, 48, 60];
+  const sel = state.tenor ?? 0;
+  if (!tenors.includes(sel)) tenors.push(sel);
+  tenors.sort((a, b) => a - b);
   return tenors.map(t => {
-    const altState = { ...state, tenor: t };
-    const terms = computePaymentTerms(altState, adminParams, packageData);
+    const terms = computePaymentTerms({ ...state, tenor: t }, adminParams, packageData);
     return {
       tenor: t,
-      dpAmount: terms.dpTotalCharge,
+      rate: terms.rtoRate,
       monthlyPmt: terms.customerMonthlyPmt,
+      totalDue: terms.summaryTotalDue,
     };
   });
 }

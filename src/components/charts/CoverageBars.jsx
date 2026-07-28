@@ -1,24 +1,26 @@
 // =============================================================================
-// COVERAGE BARS — Energy Use Coverage stacked bar chart
+// COVERAGE BARS — "how much of your bill comes from each source"
 // -----------------------------------------------------------------------------
-// Replicates Excel chart3 (Schedule!G57:J61):
-//   4 horizontal bars, each 100% wide, showing how energy use is split:
-//     1. No Solar              [grid 100%]
-//     2. Solar Only            [grid + solar]
-//     3. Solar w/ Batteries    [grid + solar + battery]
-//     4. Solar w/ Batt. & NM   [grid + solar + battery + net-metering]
+// Rows: No Solar · Solar Only · Solar w/ Batteries · (Solar w/ Batt. & Net
+// Met. — only when showNm). Each row is a stacked horizontal bar of Grid /
+// Solar / Battery / Net-Metering proportions (0-1 → %).
 //
-// v3-38: in customer mode the 4th bar AND the Net Metering segment are
-// suppressed — the recommended battery is sized to absorb daily excess solar
-// so net metering doesn't add value at the recommended config, and exposing
-// it just adds confusion. Customer view sees rows 1-3 only.
+// v3-127 — REWRITTEN from Recharts SVG to plain divs. Reason: the PDF's
+// "Visualizing your system" page is an html2canvas snapshot of this chart,
+// and html2canvas mis-renders the Recharts stacked-<rect> SVG with per-layer
+// horizontal offsets (user-reported: segments drift apart / bars misalign in
+// the generated PDF). Plain flex divs with %-width segments capture
+// pixel-faithfully. Visual parity kept: 170px right-aligned label column,
+// 0/25/50/75/100% tick row, square legend chips, same palette. The Recharts
+// hover tooltip is replaced by a native title= per segment (shows
+// "Source — NN.N%" on hover).
+//
+// With NM off the 4th bar is dropped entirely — it's structurally identical
+// to bar 3 when no net-metering credits are calculated (pre-v3-127 behavior,
+// unchanged).
 // =============================================================================
 
 import React from 'react';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
-  Cell,
-} from 'recharts';
 import { fmt, COLORS } from '../ui.jsx';
 
 const COLOR_GRID = '#DC2626';     // red
@@ -26,55 +28,104 @@ const COLOR_SOLAR = '#F59E0B';    // amber
 const COLOR_BATT = '#10B981';     // emerald
 const COLOR_NM = '#3B82C4';       // blue
 
-export default function CoverageBars({ bars, mode = 'rep' }) {
-  const isCustomer = mode === 'customer';
+const SERIES = [
+  { key: 'grid',        label: 'Grid',         color: COLOR_GRID },
+  { key: 'solar',       label: 'Solar',        color: COLOR_SOLAR },
+  { key: 'battery',     label: 'Battery',      color: COLOR_BATT },
+  { key: 'netMetering', label: 'Net Metering', color: COLOR_NM },
+];
 
-  // Convert decimal proportions (0-1) to percentage (0-100) for display.
-  // In customer mode, drop the 4th bar (Solar w/ Batt. & Net Met.) entirely
-  // — it's structurally identical to bar 3 (Solar w/ Batteries) at the
-  // recommended battery size, since excess solar is fully absorbed by the
-  // battery and there's nothing left to net-meter.
-  const sourceBars = isCustomer ? bars.slice(0, 3) : bars;
-  const data = sourceBars.map(b => ({
-    name: b.name,
-    Grid: b.grid * 100,
-    Solar: b.solar * 100,
-    Battery: b.battery * 100,
-    // Customer mode: omit the field entirely (Recharts auto-omits the legend
-    // chip for any dataKey not present in the data). Rep mode: include it.
-    ...(isCustomer ? {} : { 'Net Metering': b.netMetering * 100 }),
-  }));
+export default function CoverageBars({ bars, showNm = false }) {
+  const sourceBars = showNm ? bars : bars.slice(0, 3);
+  const series = showNm ? SERIES : SERIES.slice(0, 3);
 
   return (
     <div>
-      <ResponsiveContainer width="100%" height={260}>
-        <BarChart data={data} layout="vertical"
-                  margin={{ top: 16, right: 24, left: 32, bottom: 8 }}>
-          <XAxis type="number" domain={[0, 100]}
-                 ticks={[0, 25, 50, 75, 100]}
-                 tick={{ fontSize: 11, fill: COLORS.textMuted }}
-                 tickFormatter={(v) => `${Math.round(v)}%`} stroke="#CCCCCC" />
-          <YAxis type="category" dataKey="name"
-                 tick={{ fontSize: 12, fill: COLORS.textBody }}
-                 width={170} stroke="#CCCCCC" />
-          <Tooltip contentStyle={tooltipStyle}
-                   formatter={(v, n) => [`${fmt.num(Number(v), 1)}%`, n]} />
-          <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="square" />
-
-          <Bar dataKey="Grid" stackId="a" fill={COLOR_GRID} />
-          <Bar dataKey="Solar" stackId="a" fill={COLOR_SOLAR} />
-          <Bar dataKey="Battery" stackId="a" fill={COLOR_BATT} />
-          {!isCustomer && (
-            <Bar dataKey="Net Metering" stackId="a" fill={COLOR_NM} />
-          )}
-        </BarChart>
-      </ResponsiveContainer>
+      <div style={styles.chart}>
+        {sourceBars.map(b => (
+          <div key={b.name} style={styles.row}>
+            <div style={styles.label}>{b.name}</div>
+            <div style={styles.track}>
+              {series.map(s => {
+                const pct = (b[s.key] || 0) * 100;
+                if (pct <= 0) return null;
+                return (
+                  <div
+                    key={s.key}
+                    title={`${s.label} — ${fmt.num(pct, 1)}%`}
+                    style={{ ...styles.segment, width: `${pct}%`,
+                             backgroundColor: s.color }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        {/* Tick row — aligned to the track via the same fixed label offset. */}
+        <div style={styles.row}>
+          <div style={styles.label} aria-hidden="true" />
+          <div style={styles.tickRow}>
+            {[0, 25, 50, 75, 100].map(t => (
+              <span key={t} style={{ ...styles.tick, left: `${t}%` }}>{t}%</span>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={styles.legend}>
+        {series.map(s => (
+          <span key={s.key} style={styles.legendItem}>
+            <span style={{ ...styles.legendChip, backgroundColor: s.color }} />
+            {s.label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
 
-const tooltipStyle = {
-  backgroundColor: 'rgba(255,255,255,0.97)',
-  border: `1px solid ${COLORS.divider}`,
-  borderRadius: 6, padding: '8px 12px', fontSize: 12,
+const styles = {
+  chart: { padding: '16px 24px 0 0' },
+  row: {
+    display: 'flex',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  label: {
+    width: 170,
+    flex: '0 0 170px',
+    paddingRight: 12,
+    textAlign: 'right',
+    fontSize: 12,
+    color: COLORS.textBody,
+  },
+  track: {
+    flex: 1,
+    display: 'flex',
+    height: 22,
+    borderLeft: '1px solid #CCCCCC',
+  },
+  segment: { height: '100%' },
+  tickRow: {
+    flex: 1,
+    position: 'relative',
+    height: 16,
+    borderTop: '1px solid #CCCCCC',
+  },
+  tick: {
+    position: 'absolute',
+    top: 2,
+    transform: 'translateX(-50%)',
+    fontSize: 11,
+    color: COLORS.textMuted,
+  },
+  legend: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: 18,
+    paddingTop: 8,
+    fontSize: 12,
+    color: COLORS.textBody,
+  },
+  legendItem: { display: 'inline-flex', alignItems: 'center', gap: 5 },
+  legendChip: { width: 10, height: 10, display: 'inline-block' },
 };

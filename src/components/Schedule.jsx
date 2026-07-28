@@ -14,7 +14,7 @@ export default function Schedule({ model, state, contact, generatedDate }) {
   const { annex, terms } = model;
 
   // Schedule-strip numbers (sourced to match the Summary tab exactly):
-  //   Gross Price = `Net 60-Mo. RTO Price` from Summary = terms.stepTwoTotalLessDiscount
+  //   Gross Price = Net Direct Price from Summary = terms.netDirectPrice
   //                 (the 60-month RTO total after any promo code, before DP).
   //   Net Price   = `Total Amount Due` from Summary = terms.totalAmountDue
   //                 (the sum of all payments the customer actually makes:
@@ -22,15 +22,15 @@ export default function Schedule({ model, state, contact, generatedDate }) {
   //   Discount    = Gross − Net (the implicit savings from making a DP and/or
   //                 paying on a shorter tenor).
   //   X%          = Discount / Gross, expressed as a percent.
-  const grossPrice = terms.stepTwoTotalLessDiscount;
-  const netPrice = terms.totalAmountDue;
-  const discountAmt = Math.max(0, grossPrice - netPrice);
-  const discountPct = grossPrice > 0 ? discountAmt / grossPrice : 0;
-
-  // v3-60: the "(via Credit Card Pmt Plan)" tenor-label variant was removed
-  // along with the credit-card balance option. The tenor tile label is static.
-  const tenorLabel = 'Tenor';
-
+  // v3-90 — the four-tile strip (Gross / Discount / Net / Tenor) is GONE.
+  // It was also actively WRONG: `netPrice` was assigned terms.totalAmountDue, so
+  // the tile labelled "NET PRICE" printed the TOTAL AMOUNT DUE (₱854,432) while
+  // the tile labelled "GROSS PRICE" printed the actual Net Price (₱813,770) —
+  // inverted, and the "discount" between them was really the INTEREST. Under a
+  // loan there is no gross-vs-net discount to show at all.
+  //
+  // Replaced with the three figures that describe the schedule below it: what is
+  // paid up front, what is paid each month, and for how long.
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -40,25 +40,28 @@ export default function Schedule({ model, state, contact, generatedDate }) {
         </p>
       </div>
 
-      {/* ─── Top-line totals: Gross / Discount / Net / Tenor ─── */}
+      {/* ─── v3-90 — three tiles that describe the schedule below ─── */}
       <div style={styles.totalsGrid}>
         <SummaryCard
-          label="Gross Price"
-          value={fmt.peso(grossPrice)}
+          label={`Pre-Installation ${fmt.pct(state.downPaymentPct, 0)} Downpayment`}
+          value={fmt.peso(terms.dpTotalCharge)}
+          accent
         />
+        {/* v3-100 — Direct Purchase (tenor 0): the middle tile is the full
+            balance due upon installation (Excel AG15), and the tenor tile
+            names the option instead of a month count. */}
         <SummaryCard
-          label={`${fmt.pct(discountPct, 1)} Discount`}
-          value={fmt.peso(discountAmt)}
+          label={terms.isDirectPurchase
+            ? 'Post-Installation Direct Purchase Balance'
+            : 'Post-Installation Monthly Payment'}
+          value={fmt.peso(terms.customerMonthlyPmt)}
           color={COLORS.brandGreen}
         />
         <SummaryCard
-          label="Net Price"
-          value={fmt.peso(netPrice)}
-          accent
-        />
-        <SummaryCard
-          label={tenorLabel}
-          value={`${state.tenor} Month${state.tenor === 1 ? '' : 's'}`}
+          label="Post-Installation Payment Tenor"
+          value={terms.isDirectPurchase
+            ? 'Direct Purchase'
+            : `${state.tenor} Month${state.tenor === 1 ? '' : 's'}`}
         />
       </div>
 

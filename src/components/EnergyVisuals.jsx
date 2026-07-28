@@ -197,7 +197,11 @@ export default function EnergyVisuals({ state, updateState, model, disclaimers, 
         <p style={styles.chartSubtitle}>
           How much of your monthly bill comes from each source under different configurations.
         </p>
-        <CoverageBars bars={schedule.coverageBars} mode={mode} />
+        {/* v3-77: the 4th bar (Solar w/ Batt. & Net Met.) only renders when net
+            metering is actually enabled. With NM off it duplicates bar 3 with an
+            empty blue segment — noise. `nmEnabledEffective` is already forced
+            false in customer mode, so the customer view is unchanged. */}
+        <CoverageBars bars={schedule.coverageBars} showNm={nmEnabledEffective} />
 
         {/* Net-metering toggle sits directly under the Coverage Bars chart so the
             visual effect of toggling it (the 4th bar growing green) is obvious.

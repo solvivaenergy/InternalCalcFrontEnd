@@ -167,11 +167,13 @@ export function RecommendationPill({ children, onClick, active }) {
 // increment.
 export function NumberInput({
   value, onChange, min, max, step = 1, suffix, prefix, width = 120,
-  large, amber,
+  large, amber, compact, error,
 }) {
   const dynamic = {
     ...(large ? inputStyles.inputLarge : null),
     ...(amber ? inputStyles.inputAmber : null),
+    ...(compact ? inputStyles.inputCompact : null),
+    ...(error ? inputStyles.inputError : null),
   };
 
   // Peso fields auto-format on blur. We tie this to prefix==='₱' rather
@@ -437,15 +439,20 @@ const passwordInputStyles = {
   },
 };
 
-export function Select({ value, onChange, options, width, large, xlarge, amber }) {
+// v3-82 — `disabled` added for Step 3B, which greys out at a 100% down payment
+// (nothing financed => no tenor). Greyed rather than unmounted so the panel's
+// layout doesn't jump when the customer crosses 100%.
+export function Select({ value, onChange, options, width, large, xlarge, amber, disabled }) {
   const dynamic = {
     ...(large  ? inputStyles.inputLarge  : null),
     ...(xlarge ? inputStyles.inputXLarge : null),
     ...(amber  ? inputStyles.inputAmber  : null),
+    ...(disabled ? { opacity: 0.45, cursor: 'not-allowed', backgroundColor: '#F3F4F6' } : null),
   };
   return (
     <select
       value={value ?? ''}
+      disabled={disabled}
       onChange={e => {
         const v = e.target.value;
         // If options have numeric values, coerce
@@ -878,11 +885,17 @@ const infoStyles = {
 
 // ═══ RSD info content ══════════════════════════════════════════════════════
 // Customer-mode tooltip for the Rapid Shutdown Device checkbox in Step 2B.
-// Goal: explain RSD as a safety enhancement without overstating its legal
-// status. RSD is NOT currently mandated by Philippine code, but it's a US
-// NEC standard (NEC 690.12) and increasingly an industry best practice for
-// rooftop solar. Tone is informative — not alarmist — and ends by deferring
-// to the customer's choice while flagging Solviva's recommendation.
+// Goal: explain RSD as a safety enhancement, accurately stating its legal
+// status. The Philippine Electrical Code (PEC 2017, §6.90.2.6, effective
+// 2019-01-01) DOES require a rapid-shutdown FUNCTION for rooftop PV — the
+// same intent as the US NEC 690.12 standard. For many residential installs
+// with short DC runs the function can be met by the system layout and
+// inverter, so a separate module-level DEVICE is not always mandatory; that
+// depends on the configuration and the local inspector/AHJ. Tone is
+// informative — not alarmist — and ends by deferring to the customer's
+// choice while flagging Solviva's recommendation. (Verified v3-96 against
+// PEC-citing PH engineering sources — the pre-v3-96 "not required" copy was
+// factually wrong and is corrected below.)
 export const RSD_INFO = (
   <div>
     <div style={{ marginBottom: 10, color: '#444441' }}>
@@ -913,10 +926,63 @@ export const RSD_INFO = (
       paddingTop: 8,
       borderTop: '0.5px dashed #D3D1C7',
     }}>
-      Not currently required by Philippine electrical code, but it's the standard in the US
-      (NEC 690.12) and an emerging best practice here. Solviva recommends RSD on every install,
-      especially for residences with children or in dense neighborhoods. Your Solviva agent can
-      walk you through the cost during follow-up.
+      A rapid-shutdown function is required by the Philippine Electrical Code (PEC 2017, §6.90.2.6),
+      and is the US standard too (NEC 690.12). On many homes with short cable runs that function is
+      already met by the system layout and inverter, so a separate module-level device isn't always
+      mandatory — it depends on your configuration and your local inspector. Solviva recommends RSD
+      on every install, especially for homes with children or in dense neighborhoods. Your agent can
+      confirm what your home needs and walk you through the cost during follow-up.
+    </div>
+  </div>
+);
+
+// ═══ DC/AC ratio info content (v3-138) ═════════════════════════════════════
+// Anchored on the "DC/AC ratio:" label in Step 2C's summary row, NOT on the
+// Subsection header — the header already carries the "BNEF Tier-1" hint, and
+// the ratio row is the precise referent. 2C has been PUBLIC since v3-121, so
+// this copy is customer-facing: it explains why the ratio is deliberately
+// above 1.0 (nameplate is a lab figure) and why there is a cap (clipping),
+// without asking the reader to know what "clipping" means first.
+// The cap numbers are stated literally (1.3 / 1.6) rather than read from
+// PANEL_SETTINGS: ui.jsx holds no imports beyond React by design, and both
+// values are already visible in the row this tooltip sits in.
+export const DC_AC_RATIO_INFO = (
+  <div>
+    <div style={{ marginBottom: 10, color: '#444441' }}>
+      Your panels are rated in <span style={{ fontWeight: 500, color: '#25543A' }}>DC</span> kilowatts
+      (kWp); your inverter is rated in <span style={{ fontWeight: 500, color: '#25543A' }}>AC</span> kilowatts.
+      The DC/AC ratio is simply the first divided by the second.
+    </div>
+    <div style={{ marginBottom: 10 }}>
+      <span style={{ fontWeight: 500, color: '#25543A' }}>Why it's above 1.0:</span>{' '}
+      <span style={{ color: '#444441' }}>
+        panels almost never hit their rated output — that figure is measured in a lab. Under real
+        Philippine conditions a typical array peaks at roughly 75–85% of nameplate, so pairing it
+        with a slightly smaller inverter costs less and gives up almost nothing.
+      </span>
+    </div>
+    <div style={{ marginBottom: 10 }}>
+      <span style={{ fontWeight: 500, color: '#25543A' }}>Why there's a maximum:</span>{' '}
+      <span style={{ color: '#444441' }}>
+        past the cap the inverter would sit at its ceiling for much of the day and start clipping —
+        discarding energy your panels already produced. Solviva caps the ratio so your system isn't
+        throwing away production you paid for.
+      </span>
+    </div>
+    <div style={{
+      fontStyle: 'italic',
+      color: '#5F5E5A',
+      fontSize: 11,
+      paddingTop: 8,
+      borderTop: '0.5px dashed #D3D1C7',
+    }}>
+      {/* v3-141 — no literal cap values here: the caps are per-phase admin
+          parameters (Panel Settings → Max DC/AC Ratio) and hardcoded numbers
+          drift the moment they're edited. The live cap already prints beside
+          the ratio via sizing.maxRatio. */}
+      The exact cap for your setup is shown beside the ratio — Solviva sets it conservatively
+      below the inverter manufacturer's own allowable maximum. If your selection goes over,
+      add a larger inverter or a second unit — the warning above will clear.
     </div>
   </div>
 );
@@ -1555,6 +1621,16 @@ const inputStyles = {
     width: '100%',
     boxSizing: 'border-box',
   },
+  // v3-142 — `compact` variant for inputs embedded in admin table cells
+  // (misc catalog, delivery locations): tighter padding + smaller font so
+  // rows keep their density while gaining NumberInput's peso comma
+  // formatting.
+  inputCompact: {
+    fontSize: 13,
+    padding: '4px 6px',
+    borderRadius: 4,
+    textAlign: 'right',
+  },
   // `large` variant for inputs that live inside tile bodies (Section 2A
   // Selected row). Bigger font + vertical padding so the input visually
   // pairs with the supersized read-only values in the Recommended row
@@ -1590,6 +1666,12 @@ const inputStyles = {
     backgroundColor: '#FEF3C7',
     border: '1px solid #FCD34D',
     color: '#854F0B',
+  },
+  // v3-142 — red error variant, matching the ad-hoc error styling the admin
+  // tables used on their raw inputs (COLORS.error border, faint red fill).
+  inputError: {
+    backgroundColor: '#FEF2F2',
+    border: `1px solid ${COLORS.error}`,
   },
   prefix: {
     position: 'absolute',

@@ -96,8 +96,11 @@ export default function AuthDialog({
   return (
     <div style={overlayStyle} role="dialog" aria-modal="true">
       <div style={styles.card}>
-        <h2 style={styles.title}>{title}</h2>
-        <p style={styles.subtitle}>{subtitle}</p>
+        {/* v3-122 — empty-string title/subtitle render NOTHING (the Summary
+            price-reveal gate passes '' so the dialog shows only the password
+            field — user-directed: don't explain what the control is for). */}
+        {title !== '' && <h2 style={styles.title}>{title}</h2>}
+        {subtitle !== '' && <p style={styles.subtitle}>{subtitle}</p>}
         <PasswordInput
           value={pw}
           onChange={e => { setPw(e.target.value); setError(null); }}
