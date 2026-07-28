@@ -1781,17 +1781,15 @@ function drawPaymentOptionsPage(mgr) {
       ],
       [
         "Total payments",
-        ...tenors.map((t) => peso(rowsByTenor[t]?.totalPayment || 0)),
+        // UPDATED: Computed as Down Payment + (Monthly Payment * Tenor)
+        ...tenors.map((t) =>
+          peso(
+            (rowsByTenor[t]?.dpAmount || 0) +
+              (rowsByTenor[t]?.monthlyPmt || 0) * t,
+          ),
+        ),
       ],
-      [
-        "Shorter tenor savings",
-        "-",
-        ...tenors.slice(1).map((t) => {
-          const base = rowsByTenor[60]?.totalPayment || 0;
-          const val = Math.max(0, base - (rowsByTenor[t]?.totalPayment || 0));
-          return peso(val);
-        }),
-      ],
+      // REMOVED: Shorter tenor savings array block
     ],
     margin: { left: MARGIN, right: MARGIN },
     tableWidth: CONTENT_W,
@@ -1804,11 +1802,7 @@ function drawPaymentOptionsPage(mgr) {
     },
     headStyles: lightHead,
     alternateRowStyles: { fillColor: [246, 246, 246] },
-    didParseCell: (data) => {
-      if (data.section === "body" && data.row.index === 3) {
-        data.cell.styles.textColor = [90, 150, 30];
-      }
-    },
+    // REMOVED: didParseCell (since row index 3 no longer exists, it would style the wrong element)
     columnStyles: {
       0: { cellWidth: 48 },
       1: { halign: "right" },
@@ -2209,7 +2203,7 @@ function drawVisualizingPage(mgr) {
       sx += w;
     };
     seg(b.grid, CL_DEV, null);
-    seg(b.solar, CL_EXCESS, CL_EXCESS_BD);
+    seg(b.solar, CL_EXCESS, null);
     seg(b.battery, CL_BASE, null);
     by += barH + barGap;
   });
@@ -2223,7 +2217,7 @@ function drawVisualizingPage(mgr) {
   // bar legend (Grid / Solar / Battery)
   const barLegend = [
     { fill: CL_DEV, tc: CL_DEV_TX, title: "Grid" },
-    { fill: CL_EXCESS, border: CL_EXCESS_BD, tc: CL_EXCESS_TX, title: "Solar" },
+    { fill: CL_EXCESS, tc: CL_EXCESS_TX, title: "Solar" },
     { fill: CL_BASE, tc: CL_BASE_TX, title: "Battery" },
   ];
   let bly = mgr.y + 1;
