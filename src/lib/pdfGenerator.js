@@ -2062,7 +2062,6 @@ function drawVisualizingPage(mgr) {
     },
     {
       fill: CL_EXCESS,
-      border: CL_EXCESS_BD,
       tc: CL_EXCESS_TX,
       title: "Excess solar",
       desc: "Extra energy you can store in batteries (~90-98% efficiency)",
