@@ -1996,7 +1996,7 @@ function drawVisualizingPage(mgr) {
   // stacked areas: baseload → major devices → excess solar
   fillBand(base, zeros, CL_BASE);
   fillBand(tot, base, CL_DEV);
-  fillBand(topSolar, tot, CL_EXCESS, CL_EXCESS_BD);
+  fillBand(topSolar, tot, CL_EXCESS);
 
   // solar coverage line (tracks solar used directly each hour)
   if (rows.length > 0) {
