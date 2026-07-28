@@ -565,7 +565,10 @@ function drawCoverPage1(mgr) {
     const valueW = colW - labelW - 56;
     rows.forEach((r, i) => {
       const y = contentTop + i * pitch;
-      T(r[0], colXpx, y, textSize, { style: "bold" });
+
+      // UPDATED: Changed style to "normal" and color to GRAY to match Figma
+      T(r[0], colXpx, y, textSize, { style: "normal", c: GRAY });
+
       if (wrapValues) {
         const valLines = d.splitTextToSize(String(r[1] ?? "-"), fxmm(valueW));
         valLines
@@ -1522,7 +1525,8 @@ function drawStep1Page(mgr) {
   drawSystemRow(mgr, false);
 }
 function drawPackageDetailPage(mgr) {
-  const { model, proposalContent } = mgr.ctx;
+  // Extract state alongside model and proposalContent
+  const { model, proposalContent, state } = mgr.ctx;
   const items = model.pkg?.items || [];
   const terms = model.terms || {};
 
@@ -1534,18 +1538,37 @@ function drawPackageDetailPage(mgr) {
   mgr.doc.text("System package in detail", MARGIN, mgr.y + 4);
   mgr.y += 8;
 
+  // Filter out items with no description, "None", or a price of 0
   const body = items
-    .filter((i) => i && i.description)
+    .filter(
+      (i) =>
+        i && i.description && i.description !== "None" && i.directPrice > 0,
+    )
     .map((i) => [i.description, peso(i.directPrice || 0)]);
+
+  // Only render the Discounts row if there is an actual discount amount
+  const discountVal = Math.abs(
+    terms.promoDiscountAmount || terms.discountAmount || 0,
+  );
+  if (discountVal > 0) {
+    body.push(["Less: Discounts", peso(discountVal)]);
+  }
+
+  // Add DST if the tenor is NOT direct purchase (0) and DST is greater than 0
+  if (state.tenor !== 0 && terms.dst > 0) {
+    body.push(["DST (Documentary Stamp Tax)", peso(terms.dst)]);
+  }
+
+  // UPDATED: Use summaryTotalDue which is DST-inclusive
   body.push([
-    "Less: Discounts",
-    peso(Math.abs(terms.promoDiscountAmount || 0)),
+    "Total",
+    peso(terms.summaryTotalDue ?? terms.totalAmountDue ?? 0),
   ]);
-  body.push(["Total", peso(terms.totalAmountDue || 0)]);
 
   autoTable(mgr.doc, {
     startY: mgr.y,
     head: [["Equipment, Materials, and Labor", "Amount"]],
+    // ... rest of the table config
     body,
     margin: { left: MARGIN, right: MARGIN },
     tableWidth: CONTENT_W,
@@ -1709,6 +1732,9 @@ function drawPaymentOptionsPage(mgr) {
   const terms = model.terms || {};
   const popular = model.popularTenors || [];
 
+  // The DP is a constant amount across all RTO tenors
+  const dpConstant = terms.dpTotalCharge || 0;
+
   drawTopHeaderFigma(mgr);
   mgr.y += 2;
 
@@ -1742,9 +1768,9 @@ function drawPaymentOptionsPage(mgr) {
       [
         "Upon installation",
         `${Math.max(0, 100 - Math.round((state.downPaymentPct || 0) * 100))}%`,
-        peso(terms.finalPostInstallBalance || 0),
+        peso((terms.netDirectPrice || 0) - (terms.dpTotalCharge || 0)),
       ],
-      ["Total", "100%", peso(terms.totalAmountDue || 0)],
+      ["Total", "100%", peso(terms.netDirectPrice || 0)],
     ],
     margin: { left: MARGIN, right: MARGIN },
     tableWidth: CONTENT_W,
@@ -1766,30 +1792,40 @@ function drawPaymentOptionsPage(mgr) {
 
   const tenors = [60, 48, 36, 24, 12];
   const rowsByTenor = Object.fromEntries(popular.map((p) => [p.tenor, p]));
+
   drawTableTitleBar(mgr, "Rent-to-Own");
   autoTable(mgr.doc, {
     startY: mgr.y,
     head: [["Milestone", ...tenors.map((t) => `${t} months`)]],
     body: [
-      [
-        "Down payment",
-        ...tenors.map((t) => peso(rowsByTenor[t]?.dpAmount || 0)),
-      ],
+      ["Down payment", ...tenors.map((t) => peso(dpConstant))],
       [
         "Monthly payment",
         ...tenors.map((t) => peso(rowsByTenor[t]?.monthlyPmt || 0)),
       ],
       [
-        "Total payments",
-        // UPDATED: Computed as Down Payment + (Monthly Payment * Tenor)
-        ...tenors.map((t) =>
-          peso(
-            (rowsByTenor[t]?.dpAmount || 0) +
-              (rowsByTenor[t]?.monthlyPmt || 0) * t,
-          ),
-        ),
+        "DST (Documentary Stamp Tax)",
+        ...tenors.map((t) => {
+          const row = rowsByTenor[t];
+          if (!row) return peso(0);
+
+          // Derived DST: Total Due - DP - (Monthly * Tenor)
+          const dstAmt = Math.round(
+            row.totalDue - dpConstant - row.monthlyPmt * t,
+          );
+          return peso(Math.max(0, dstAmt));
+        }),
       ],
-      // REMOVED: Shorter tenor savings array block
+      [
+        "Total payments",
+        ...tenors.map((t) => {
+          const row = rowsByTenor[t];
+          if (!row) return peso(0);
+
+          // totalDue already represents DP + (Monthly * Tenor) + DST
+          return peso(row.totalDue);
+        }),
+      ],
     ],
     margin: { left: MARGIN, right: MARGIN },
     tableWidth: CONTENT_W,
@@ -1802,7 +1838,6 @@ function drawPaymentOptionsPage(mgr) {
     },
     headStyles: lightHead,
     alternateRowStyles: { fillColor: [246, 246, 246] },
-    // REMOVED: didParseCell (since row index 3 no longer exists, it would style the wrong element)
     columnStyles: {
       0: { cellWidth: 48 },
       1: { halign: "right" },
@@ -1814,16 +1849,16 @@ function drawPaymentOptionsPage(mgr) {
   });
   mgr.y = mgr.doc.lastAutoTable.finalY + 5;
 
-  drawTableTitleBar(mgr, "Rent-to-Own");
+  drawTableTitleBar(mgr, "Selected Rent-to-Own Plan");
   autoTable(mgr.doc, {
     startY: mgr.y,
-    head: [["Milestone", "Tenor", "Down payment", "Total", "Monthly charge"]],
+    head: [["Tenor", "Down payment", "DST", "Total", "Monthly charge"]],
     body: [
       [
-        "Down payment",
         `${state.tenor || 60} months`,
         peso(terms.dpTotalCharge || 0),
-        peso(terms.totalAmountDue || 0),
+        peso(terms.dst || 0),
+        peso(terms.summaryTotalDue ?? terms.totalAmountDue ?? 0),
         peso(terms.customerMonthlyPmt || 0),
       ],
     ],
@@ -1838,6 +1873,7 @@ function drawPaymentOptionsPage(mgr) {
     },
     headStyles: lightHead,
     columnStyles: {
+      1: { halign: "right" },
       2: { halign: "right" },
       3: { halign: "right" },
       4: { halign: "right" },
@@ -1870,7 +1906,6 @@ function drawPaymentOptionsPage(mgr) {
     mgr.doc.text(ln, MARGIN + 2, noteY + 4 + i * 2.9),
   );
 }
-
 // ─── Snapshot page ──────────────────────────────────────────────────────────
 
 // ─── Page 5: Understanding your system's potential — vector Figma layout ─────
@@ -2109,7 +2144,7 @@ function drawVisualizingPage(mgr) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(...FOOT);
-  doc.text("*Before batteries and net-metering", PAGE_W / 2, mgr.y + 9, {
+  doc.text("*Before batteries", PAGE_W / 2, mgr.y + 9, {
     align: "center",
   });
   mgr.y += 13;
@@ -2336,58 +2371,20 @@ function drawSnapshotPage(mgr, pngDataUrl, opts = {}) {
 
 function drawSchedulePage(mgr) {
   const { ctx } = mgr;
-  const { state, model, contact, quoteRef } = ctx;
+  const { model } = ctx;
   const annex = model.annex || { rows: [] };
 
   drawTopHeaderFigma(mgr);
   mgr.y += 2;
 
-  drawSectionHeader(mgr, "SCHEDULE OF PAYMENTS", "Month-by-month breakdown");
-  mgr.y += 1;
+  // Match the image's blue header
+  mgr.doc.setFont("helvetica", "bold");
+  mgr.doc.setFontSize(14);
+  mgr.doc.setTextColor(0, 106, 198);
+  mgr.doc.text("Schedule of payments", MARGIN, mgr.y + 4);
 
-  // Top totals strip
-  const grossPrice = model.pkg?.totalRto60 ?? 0;
-  const netPrice = model.terms?.totalAmountDue ?? 0;
-  const discount = Math.max(0, grossPrice - netPrice); // savings vs sticker
-  const discountPct = grossPrice > 0 ? discount / grossPrice : 0;
-  const tenor = state.tenor ?? 60;
-
-  // v3-60: the "TENOR (VIA CREDIT CARD PMT PLAN)" variant was removed along
-  // with the credit-card balance option; the strip's TENOR label is static.
-  const tenorLabel = "TENOR";
-  const tenorLabelFontSize = 6;
-
-  const stripY = mgr.y;
-  const stripH = 11;
-  mgr.doc.setFillColor(...C.cream);
-  mgr.doc.roundedRect(MARGIN, stripY, CONTENT_W, stripH, 1, 1, "F");
-  const tiles = [
-    { label: "GROSS PRICE", value: peso(grossPrice), labelFontSize: 6 },
-    {
-      label: `${pct(discountPct, 1)} DISCOUNT`,
-      value: peso(discount),
-      labelFontSize: 6,
-    },
-    { label: "NET PRICE", value: peso(netPrice), labelFontSize: 6 },
-    {
-      label: tenorLabel,
-      value: `${tenor} Months`,
-      labelFontSize: tenorLabelFontSize,
-    },
-  ];
-  const tileW = CONTENT_W / 4;
-  tiles.forEach((t, i) => {
-    const tx = MARGIN + i * tileW + 3;
-    mgr.doc.setFont("helvetica", "bold");
-    mgr.doc.setFontSize(t.labelFontSize);
-    mgr.doc.setTextColor(...C.textMuted);
-    mgr.doc.text(t.label, tx, stripY + 3.5);
-    mgr.doc.setFont("helvetica", "bold");
-    mgr.doc.setFontSize(10);
-    mgr.doc.setTextColor(...C.brandGreen);
-    mgr.doc.text(t.value, tx, stripY + 8.5);
-  });
-  mgr.y = stripY + stripH + 4;
+  // Space before the table starts
+  mgr.y += 10;
 
   // Schedule rows table
   const rows = (annex.rows || []).filter(
@@ -2395,7 +2392,7 @@ function drawSchedulePage(mgr) {
   );
 
   const fmtDueDate = (d) => {
-    if (!d) return "\u2014";
+    if (!d) return "-";
     if (typeof d === "string") return d;
     if (d instanceof Date) {
       return d.toLocaleDateString("en-US", {
@@ -2407,269 +2404,288 @@ function drawSchedulePage(mgr) {
     return String(d);
   };
 
-  const body = rows.map((r, idx) => [
-    idx === 0 ? "DP" : String(r.payment),
+  const body = rows.map((r) => [
+    r.payment === "DP" ? "DP" : r.payment === "—" ? "-" : String(r.payment),
     fmtDueDate(r.dueDate),
     r.description || "Monthly Payment",
-    r.minDue != null ? peso(r.minDue) : "\u2014",
-    r.earlyPayoff != null ? peso(r.earlyPayoff) : "\u2014",
-    r.savings != null && r.savings > 0 ? peso(r.savings) : "\u2014",
+    r.minDue != null ? peso(r.minDue) : "-",
+    r.earlyPayoff != null ? peso(r.earlyPayoff) : "-",
+    r.savings != null && r.savings > 0 ? peso(r.savings) : "-",
   ]);
 
-  // Re-stamp slim header on each new schedule page. didDrawPage fires once
-  // per page autotable touches — including the first page where we already
-  // drew our own header. Track the starting page so we only re-add the slim
-  // header on continuation pages.
-  const scheduleStartPage = mgr.pageNumber;
-  const drawSlimHeader = () => {
+  // ---------------------------------------------------------------------------
+  // FIX: Intercept addPage to draw the background and headers BEFORE AutoTable
+  // draws the rows. This prevents the background from covering the table.
+  // ---------------------------------------------------------------------------
+  const originalAddPage = mgr.doc.addPage.bind(mgr.doc);
+  mgr.doc.addPage = function () {
+    originalAddPage(...arguments);
+    mgr.pageNumber++; // Keep our global page tracker perfectly in sync
+
+    // Draw base layers first
+    if (typeof drawPageBackground === "function") drawPageBackground(mgr);
+    if (typeof drawFooter === "function") drawFooter(mgr);
+
+    // Draw top header and title
+    mgr.y = MARGIN;
+    if (typeof drawTopHeaderFigma === "function") drawTopHeaderFigma(mgr);
+
     mgr.doc.setFont("helvetica", "bold");
-    mgr.doc.setFontSize(10);
-    mgr.doc.setTextColor(...C.brandGreen);
-    mgr.doc.text("SOLVIVA ENERGY", MARGIN, MARGIN + 3);
-    mgr.doc.setFont("helvetica", "normal");
-    mgr.doc.setFontSize(7.5);
-    mgr.doc.setTextColor(...C.textMuted);
-    mgr.doc.text(
-      `${contact?.name || ""} \u00B7 ${quoteRef}`,
-      PAGE_W - MARGIN,
-      MARGIN + 3,
-      { align: "right" },
-    );
-    mgr.doc.setDrawColor(...C.divider);
-    mgr.doc.setLineWidth(0.2);
-    mgr.doc.line(MARGIN, MARGIN + 5, PAGE_W - MARGIN, MARGIN + 5);
+    mgr.doc.setFontSize(14);
+    mgr.doc.setTextColor(0, 106, 198);
+    mgr.doc.text("Schedule of payments", MARGIN, mgr.y + 4);
   };
 
   autoTable(mgr.doc, {
     startY: mgr.y,
     head: [
-      ["#", "Due date", "Description", "Min. due", "Early payoff", "Savings"],
+      [
+        "#",
+        "Due date",
+        "Description",
+        "Min. Amount Due",
+        "Early Payoff Amount",
+        "Savings",
+      ],
     ],
     body,
-    margin: { left: MARGIN, right: MARGIN, top: MARGIN + 10, bottom: 22 },
+    margin: { left: MARGIN, right: MARGIN, top: MARGIN + 22, bottom: 25 },
     styles: {
       font: "helvetica",
       fontSize: 8,
-      cellPadding: 1.5,
+      cellPadding: 1.6, // Keeps 60 months fitting perfectly on 2 pages
       textColor: C.textBody,
-      lineColor: C.divider,
+      lineColor: [210, 210, 210],
       lineWidth: 0.15,
     },
     headStyles: {
-      fillColor: C.cream,
-      textColor: C.textMuted,
+      fillColor: [31, 82, 43], // Dark Green matching the image
+      textColor: [255, 255, 255],
       fontStyle: "bold",
-      fontSize: 7,
+      fontSize: 8,
     },
     columnStyles: {
-      0: { cellWidth: 12, halign: "left" },
+      0: { cellWidth: 10, halign: "left" },
       1: { cellWidth: 28, halign: "left" },
       2: { cellWidth: "auto", halign: "left" },
-      3: { cellWidth: 26, halign: "right" },
-      4: { cellWidth: 26, halign: "right" },
-      5: { cellWidth: 24, halign: "right" },
+      3: { cellWidth: 30, halign: "left" },
+      4: { cellWidth: 32, halign: "left" },
+      5: { cellWidth: 28, halign: "left" },
     },
-    didDrawPage: (data) => {
-      const currentPage = data.pageNumber;
-      // For continuation pages (not the first), add the slim header. The
-      // first page already has the full section header drawn before autotable.
-      if (currentPage > 1) {
-        // Sync mgr.pageNumber to autotable's view of pages, then ensure
-        // footer + header are drawn on this continuation page.
-        const expectedMgrPage = scheduleStartPage + currentPage - 1;
-        while (mgr.pageNumber < expectedMgrPage) {
-          mgr.pageNumber++;
-          drawFooter(mgr);
-        }
-        drawSlimHeader();
+    didParseCell: function (data) {
+      // Style the DP row exactly like the image
+      if (data.section === "body" && data.row.index === 0) {
+        data.cell.styles.fillColor = [100, 100, 100];
+        data.cell.styles.textColor = [255, 255, 255];
+        data.cell.styles.fontStyle = "bold";
       }
     },
+    // We completely removed didDrawPage since our addPage override handles it securely.
   });
-  mgr.y = mgr.doc.lastAutoTable.finalY + 3;
+
+  // CRITICAL: Restore the normal addPage function immediately after the table finishes
+  mgr.doc.addPage = originalAddPage;
+
+  mgr.y = mgr.doc.lastAutoTable.finalY + 6;
+
+  // Yellow disclaimer note at the end of the table
+  const noteText =
+    "Note: Early Payoff Amount is the present value of all remaining payments, discounted at 8% per annum. Savings from Early Payoff = total of remaining payments minus Early Payoff Amount.";
+  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFontSize(7);
+  const noteLines = mgr.doc.splitTextToSize(noteText, CONTENT_W - 4);
+  const noteBoxH = noteLines.length * 3.5 + 4;
+
+  pageBreakIfNeeded(mgr, noteBoxH);
+
+  const noteY = mgr.y;
+  mgr.doc.setFillColor(255, 244, 217);
+  mgr.doc.setDrawColor(248, 214, 137);
+  mgr.doc.roundedRect(MARGIN, noteY, CONTENT_W, noteBoxH, 2, 2, "FD");
+  mgr.doc.setTextColor(136, 106, 42);
+  noteLines.forEach((ln, i) =>
+    mgr.doc.text(ln, MARGIN + 2, noteY + 4.5 + i * 3.5),
+  );
+
+  mgr.y += noteBoxH + 4;
   reconcilePageNumber(mgr);
 }
 
-// ─── Terms & Conditions ─────────────────────────────────────────────────────
+// ─── Terms and Conditions ───────────────────────────────────────────────────
 
 function drawTermsAndConditions(mgr) {
-  const { doc, ctx } = mgr;
-  const pageX = 7.2;
-  const rightEdge = 202.5;
+  const { ctx } = mgr;
+  const validityDate = ctx.model.quoteValidUntil || "August 27, 2026";
+  // Grab the client's name from the context, fallback to "Client Name" if missing
+  const clientName = ctx.contact?.name || "Client Name";
 
-  // Page 6 is created with the exact Figma footer treatment. Retain this
-  // lookup as a guard for callers that invoke the renderer independently.
-  const footerStamp = mgr.footerStamps.find(
-    (stamp) => stamp.pageNumber === mgr.pageNumber,
-  );
-  if (footerStamp) footerStamp.figmaExact = true;
+  drawTopHeaderFigma(mgr);
+  mgr.y += 2;
 
-  // Page-specific Figma header uses a wider logo and tighter page margin than
-  // the shared proposal header.
-  if (ctx.assets?.logo) {
-    const props = doc.getImageProperties(ctx.assets.logo);
-    const targetHeight = 11.5;
-    const targetWidth = targetHeight * (props.width / props.height);
+  mgr.doc.setFont("helvetica", "bold");
+  mgr.doc.setFontSize(14);
+  mgr.doc.setTextColor(0, 106, 198);
+  mgr.doc.text("Terms and conditions", MARGIN, mgr.y + 4);
+  mgr.y += 12;
 
-    doc.addImage(ctx.assets.logo, "PNG", pageX, 7.5, targetWidth, targetHeight);
-  }
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.8);
-  doc.setTextColor(73, 73, 73);
-  doc.text(`Reference ID ${ctx.quoteRef}`, rightEdge, 10.8, { align: "right" });
-  doc.text(
-    `Quotation valid until ${fmtDate(ctx.validUntil)}`,
-    rightEdge,
-    15.5,
+  const colW = (CONTENT_W - 8) / 2; // Two columns with an 8pt gutter
+  const leftX = MARGIN;
+  const rightX = MARGIN + colW + 8;
+
+  const leftCol = [
     {
-      align: "right",
+      title: "Permitting Requirements Provided by the Client",
+      text: [
+        "• Electricity bill (should be under the name of the client)",
+        "• Valid ID of the person in the electricity bill",
+        "• Tax Declaration",
+        "• OCT/TCT (Land/Property Title)",
+        "• Official Receipt of latest Real Property Tax (Land & Building)",
+        "• Building Permit",
+        "• Certificate of Occupancy",
+      ],
     },
-  );
+    {
+      title: "Some LGUs may also require:",
+      text: [
+        "• Electrical Plan / Load Schedule (signed and sealed by a Professional Electrical Engineer) (Can be provided by Solviva if client avails)",
+        "• Electrical Design Analysis (Can be provided by Solviva if client avails)",
+        "• Structural Roof Plan (Can be provided by Solviva if client avails)",
+        "• Structural Analysis (Can be provided by Solviva if client avails)",
+        "• Barangay Clearance for Solar Installation",
+        "• Homeowners Association Clearance",
+      ],
+    },
+    {
+      title:
+        "The following shall apply to the pricing and scope of the installation project:",
+      text: "Any additional length beyond the initial 30 meters (m) of Direct Current (DC) cable and the initial 10 meters (m) of Alternating Current (AC) cable will be charged per meter at a specified rate.",
+    },
+    {
+      title: "Logistics Add-On Cost",
+      text: "Any excess distance beyond the first 30 kilometers (km) from Kilometer 0 (Rizal Park) will be charged per kilometer at a specified rate.",
+    },
+    {
+      title: "Price validity",
+      text: "The prices provided in this proposal are valid for a period of thirty (30) days from the date of issuance. After this period, the prices are subject to change without prior notice.",
+    },
+    {
+      title: "Exclusions",
+      text: "Any items or service not explicitly mentioned or detailed in this proposal such as but not limited to Service entrance remodeling, building permit, occupancy certificate, house plans, and any other fees not related to the Solar Photovoltaic System itself shall be considered excluded from the scope of work and will not be provided unless otherwise agreed upon through a variation order or a revision in the proposal.",
+    },
+    {
+      title: "Site assessment",
+      text: [
+        "• Technical Assessment: We first conduct a thorough technical site assessment, including roof evaluation and sunlight analysis, to assess suitability for a rooftop solar system.",
+        "• Suitability Refund: If you have paid a reservation fee and if our assessment shows that your property is not suitable, we will refund your reservation fee within thirty (30) days from such determination.",
+      ],
+    },
+  ];
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(15.4);
-  doc.setTextColor(0, 106, 198);
-  doc.text("Terms and conditions", pageX, 31.8);
+  const rightCol = [
+    {
+      title: "Installation",
+      text: "You shall provide reasonable assistance to Solviva and its designated representatives in the latter's preparation of the system design, and shall provide documents and information relating to the Premises, such as, but not limited to blueprints and/or building plans, as may be requested by the Supplier. You shall be responsible for the correctness and accuracy of any data and information provided.",
+    },
+    {
+      title: "Validity",
+      text: [
+        "• Quotation Validity: The special quotation we've provided is valid for thirty (30) days from the date it was issued. We are committed to being transparent about pricing and will inform you of any necessary adjustments as soon as possible.",
+        "• Price Adjustments: Please be aware that prices may change due to factors beyond our control, like fluctuations in material costs. We will always keep you informed and discuss any necessary adjustments.",
+        "• Inclusions: Labor costs are included in our quotation unless pre-existing wiring or systems are found that require additional work. We will assess the site during the visit and inform you of any potential extra costs.",
+        "• Additional Costs: If additional costs arise, we will notify you right away and proceed only with your written consent. We believe in full transparency, so there will be no surprises.",
+      ],
+    },
+    {
+      title: "Payment obligation",
+      text: "Your satisfaction is our priority, and we will manage the entire process diligently from start to finish.",
+    },
+    {
+      title: "Definitive Agreement",
+      text: "These Terms and Conditions shall be subject to the execution of a separate Solar Photovoltaic System Contract which shall be executed between you and the Company. Failure to execute the Solar Photovoltaic System within seven (7) days from the date of these Terms and Conditions (or such longer period as may be allowed by Solviva) shall entitle Solviva to terminate the terms and conditions without any liability to you and without any obligation to reimburse or return any payments already made. Should Solviva not be able to proceed with the completion of the installation, and consequent turnover of the Solar facility due to an action or decision of the client such as, but not limited to, the unsuitability of the structure on which the Solar facility will be installed then Solviva shall turn over any and installed portions of the facility, and the client shall be liable for the payments commensurate to the portions that have been turned over. Any additional materials required to install the solar facility shall be subject to another order form.\n\nWe appreciate your understanding that the net metering status does not impact the payment terms outlined in this proposal. Thank you for choosing Solviva. We look forward to helping you make the switch to clean, renewable energy.",
+    },
+  ];
 
-  const leftX = pageX;
-  const leftW = 87.9;
-  const rightX = 104.7;
-  const rightW = 97.8;
-  const bodySize = 6.7;
-  const bodyLeading = 3.85;
-  const sectionGap = 3.4;
+  const renderCol = (blocks, startX, startY) => {
+    let currentY = startY;
+    blocks.forEach((b) => {
+      mgr.doc.setFont("helvetica", "bold");
+      mgr.doc.setFontSize(7.5);
+      mgr.doc.setTextColor(...(C.textBody || [40, 40, 40]));
 
-  const paragraph = (x, y, width, text) => {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(bodySize);
-    doc.setTextColor(0, 0, 0);
-    const lines = doc.splitTextToSize(text, width);
-    lines.forEach((line, index) => doc.text(line, x, y + index * bodyLeading));
-    return y + lines.length * bodyLeading;
+      const titleLines = mgr.doc.splitTextToSize(b.title, colW);
+      mgr.doc.text(titleLines, startX, currentY);
+      currentY += titleLines.length * 3 + 1.5;
+
+      mgr.doc.setFont("helvetica", "normal");
+      mgr.doc.setFontSize(7);
+
+      const renderText = (textStr) => {
+        const isBullet = textStr.startsWith("• ");
+        const textToSplit = isBullet ? textStr.substring(2) : textStr;
+        const indentX = isBullet ? startX + 3.5 : startX;
+
+        const lines = mgr.doc.splitTextToSize(
+          textToSplit,
+          colW - (isBullet ? 3.5 : 0),
+        );
+
+        if (isBullet) {
+          mgr.doc.text("•", startX, currentY);
+        }
+        mgr.doc.text(lines, indentX, currentY);
+        currentY += lines.length * 3.1 + 1;
+      };
+
+      if (Array.isArray(b.text)) {
+        b.text.forEach((item) => renderText(item));
+      } else {
+        // Handle paragraphs separated by line breaks
+        const paragraphs = b.text.split("\n\n");
+        paragraphs.forEach((p) => {
+          renderText(p);
+          currentY += 1.5; // Space between paragraphs
+        });
+      }
+      currentY += 3; // Space between sections
+    });
+    return currentY;
   };
-  const heading = (x, y, width, text) => {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.7);
-    doc.setTextColor(0, 0, 0);
-    const lines = doc.splitTextToSize(text, width);
-    lines.forEach((line, index) => doc.text(line, x, y + index * 3.4));
-    return y + lines.length * 3.4 + 1.4;
-  };
-  const section = (x, y, width, title, text) => {
-    let nextY = heading(x, y, width, title);
-    nextY = paragraph(x, nextY, width, text);
-    return nextY + sectionGap;
-  };
-  const bullets = (x, y, width, title, items) => {
-    let nextY = heading(x, y, width, title);
-    for (const item of items) {
-      const lines = doc.splitTextToSize(item, width - 4.2);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(bodySize);
-      doc.setTextColor(0, 0, 0);
-      doc.text("\u2022", x + 0.7, nextY);
-      lines.forEach((line, index) =>
-        doc.text(line, x + 4.2, nextY + index * bodyLeading),
-      );
-      nextY += lines.length * bodyLeading + 3.1;
-    }
-    return nextY + 0.3;
-  };
 
-  let leftY = 39.8;
-  leftY = section(
-    leftX,
-    leftY,
-    leftW,
-    "Permitting Requirements:",
-    "Client to provide: Electricity bill (under client name), Valid ID, Tax Declaration, OCT/TCT, Official Receipt of latest Real Property Tax, Building Permit, Certificate of Occupancy.\n\nSome LGUs may also require: Electrical Plan / Load Schedule, Electrical Design Analysis, Structural Roof Plan, Structural Analysis, Barangay Clearance, HOA Clearance. Solviva can provide engineering documents if client avails.",
-  );
-  leftY = section(
-    leftX,
-    leftY,
-    leftW,
-    "The following shall apply to the pricing and scope of the installation project:",
-    "Any additional length beyond the initial 30 meters (m) of Direct Current (DCI) cable and the initial 10 meters (m) of Alternating Current (ACI) cable will be charged per meter at a specified rate.",
-  );
-  leftY = section(
-    leftX,
-    leftY,
-    leftW,
-    "Logistics Add-On Cost",
-    "Any excess distance beyond the first 30 kilometers (km) from Kilometer 0 (Rizal Park) will be charged per kilometer at a specified rate.",
-  );
-  leftY = section(
-    leftX,
-    leftY,
-    leftW,
-    "Price validity",
-    "The prices provided in this proposal are valid for a period of thirty (30) days from the date of issuance. After this period, the prices are subject to change without prior notice.",
-  );
-  leftY = section(
-    leftX,
-    leftY,
-    leftW,
-    "Exclusions",
-    "Any items or service not explicitly mentioned or detailed in this proposal such as but not limited to Service entrance remodelling building permit, occupancy certificate, house plans, and any other fees not related to the Solar Photovoltaic System itself shall be considered excluded from the scope of work and will not be provided unless otherwise agreed upon through a variation order or a revision in the proposal.",
-  );
-  section(
-    leftX,
-    leftY,
-    leftW,
-    "Installation",
-    "You shall provide reasonable assistance to Solviva and its designated representatives in the latter\u2019s preparation of the system design, and shall provide documents and information relating to the Premises, such as, but not limited to blueprints and/or building plans, as may be requested by the Supplier. You shall be responsible for the correctness and accuracy of any data and information provided to us.",
-  );
+  // Render both columns and find the lowest Y coordinate
+  const leftEndY = renderCol(leftCol, leftX, mgr.y);
+  const rightEndY = renderCol(rightCol, rightX, mgr.y);
 
-  let rightY = 39.8;
-  rightY = bullets(rightX, rightY, rightW, "Site assessment", [
-    "Technical Assessment: We first conduct a thorough technical site assessment, including roof evaluation and sunlight analysis, to assess suitability for a rooftop solar system.",
-    "Suitability Refund: If you have paid a reservation fee and if our assessment shows that your property is not suitable, we will refund your reservation fee within thirty (30) days from such determination.",
-  ]);
-  rightY = bullets(rightX, rightY, rightW, "Validity", [
-    "Quotation Validity: The special quotation we\u2019ve provided is valid for thirty (30) days from the date it was issued. We are committed to being transparent about pricing and will inform you of any necessary adjustments as soon as possible",
-    "Price Adjustments: Please be aware that prices may change due to factors beyond our control, like fluctuations in material costs. We will always keep you informed and discuss any necessary adjustments.",
-    "Inclusions: Labor costs are included in our quotation unless pre-existing wiring or systems are found that require additional work. We will assess the site during the visit and inform you of any potential extra costs.",
-    "Additional Costs: If additional costs arise, we will notify you right away and proceed only with your written consent. We believe in full transparency, so there will be no surprises.",
-  ]);
-  rightY = section(
-    rightX,
-    rightY,
-    rightW,
-    "Logistics Add-On Cost",
-    "Any excess distance beyond the first 30 kilometers (km) from Kilometer 0 (Rizal Park) will be charged per kilometer at a specified rate.",
-  );
-  section(
-    rightX,
-    rightY,
-    rightW,
-    "Payment obligation",
-    "Your satisfaction is our priority, and we will manage the entire process diligently from start to finish.",
-  );
+  mgr.y = Math.max(leftEndY, rightEndY) + 8;
 
-  // Acceptance and signature are fixed to Figma's vertical anchors rather
-  // than following the terms columns.
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.2);
-  doc.setTextColor(0, 106, 198);
-  doc.text("Proposal acceptance and signature", pageX, 203.9);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(bodySize);
-  doc.setTextColor(0, 0, 0);
-  const acceptance = doc.splitTextToSize(
-    `By signing below, the Customer and Solviva Energy acknowledge and accept the terms of this proposal, valid until ${fmtDate(ctx.validUntil)}. Subject to internal review and approval before installation.`,
-    193.2,
-  );
-  acceptance.forEach((line, index) =>
-    doc.text(line, pageX, 209.1 + index * bodyLeading),
-  );
+  // Render bottom acceptance section
+  mgr.doc.setFont("helvetica", "bold");
+  mgr.doc.setFontSize(8.5);
+  mgr.doc.setTextColor(0, 106, 198); // Solviva Blue
+  mgr.doc.text("Proposal acceptance and signature", MARGIN, mgr.y);
+  mgr.y += 4.5;
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(bodySize);
-  doc.setTextColor(0, 0, 0);
-  doc.text("[Client Signature]", pageX, 242.8);
-  doc.setFont("helvetica", "normal");
-  doc.text("Client Name", pageX, 248.0);
-  doc.text("Date:", pageX, 253.2);
-  mgr.y = 253.2;
+  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFontSize(7);
+  mgr.doc.setTextColor(...(C.textBody || [40, 40, 40]));
+
+  const acceptText = `By signing below, the Customer and Solviva Energy acknowledge and accept the terms of this proposal, valid until ${validityDate}. Subject to internal review and approval before installation.`;
+  const acceptLines = mgr.doc.splitTextToSize(acceptText, CONTENT_W);
+  mgr.doc.text(acceptLines, MARGIN, mgr.y);
+
+  mgr.y += acceptLines.length * 3.5 + 14;
+
+  // Dynamically populated signature block
+  mgr.doc.setFont("helvetica", "bold");
+  mgr.doc.setFontSize(7.5);
+  // mgr.doc.text("[Client Signature]", MARGIN, mgr.y);
+
+  mgr.y += 4;
+  mgr.doc.text(clientName, MARGIN, mgr.y);
+
+  mgr.y += 4;
+  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.text("Date:", MARGIN, mgr.y);
 }
 
 function drawWarrantyTable(mgr, warranties) {
@@ -2910,7 +2926,14 @@ export async function generateProposalPdf({
   newPage(mgr);
   drawVisualizingPage(mgr);
 
-  // Page 6: Terms & conditions
+  // Pages 6-7: Schedule of Payments (RTO terms)
+  // We only draw the schedule table if they are financing (tenor > 0)
+  if (state.tenor > 0) {
+    newPage(mgr);
+    drawSchedulePage(mgr);
+  }
+
+  // Page 8: Terms & conditions
   newPage(mgr, { figmaExact: true });
   drawTermsAndConditions(mgr);
 
