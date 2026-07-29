@@ -1529,6 +1529,13 @@ function drawPackageDetailPage(mgr) {
   const items = model.pkg?.items || [];
   const terms = model.terms || {};
 
+  // Calculate system sizes dynamically for the rolled-up package names
+  const recPanelCount = model.recommended?.recommendedPanelCount ?? 0;
+  const panelCount = state.panelCount ?? recPanelCount;
+  const panelWatts = model.recommended?.panelWatts ?? 630;
+  const systemKwp = model.systemKwp ?? (panelCount * panelWatts) / 1000;
+  const batteryKwh = model.batteryKwh ?? 0;
+
   drawTopHeaderFigma(mgr);
   mgr.y += 2;
   mgr.doc.setFont("helvetica", "bold");
@@ -1538,12 +1545,10 @@ function drawPackageDetailPage(mgr) {
   mgr.y += 8;
 
   // 1. Group items dynamically based on their descriptions
-  const solar = [];
-  const battery = [];
-  const misc = [];
-  let solarTot = 0,
-    batteryTot = 0,
-    miscTot = 0;
+  let solarTot = 0;
+  let batteryTot = 0;
+  let rsdItem = null;
+  const miscItems = [];
 
   items
     .filter(
@@ -1552,103 +1557,86 @@ function drawPackageDetailPage(mgr) {
     )
     .forEach((i) => {
       const d = i.description.toLowerCase();
-      const isBat =
+
+      if (d.includes("rapid shutdown") || d.includes("rsd")) {
+        rsdItem = i;
+      } else if (
         d.includes("battery") ||
         d.includes("ats") ||
         d.includes("transfer switch") ||
-        d.includes("critical load");
-      const isMisc =
-        d.includes("roof") ||
+        d.includes("critical load")
+      ) {
+        batteryTot += i.directPrice;
+      } else if (
+        // Only target items specifically from Section 2F & Logistics
         d.includes("location") ||
         d.includes("delivery") ||
         d.includes("canopy") ||
-        d.includes("asphalt");
-
-      if (isBat) {
-        battery.push(i);
-        batteryTot += i.directPrice;
-      } else if (isMisc) {
-        misc.push(i);
-        miscTot += i.directPrice;
+        d.includes("service entry") ||
+        d.includes("trenching") ||
+        d.includes("cfei") ||
+        d.includes("interruption") ||
+        d.includes("sign and seal") ||
+        // Fallback catch just in case your data model passes the section ID
+        i.section === "2F" ||
+        i.section === "2f"
+      ) {
+        miscItems.push(i);
       } else {
-        solar.push(i);
+        // Everything else defaults to the Solar Package!
+        // This now correctly includes Roof Preparation (Asphalt/Shingles/Tiled),
+        // AC/DC Excess cables, Panels, Inverters, and standard Mounts/Breakers.
         solarTot += i.directPrice;
       }
     });
 
   const body = [];
-  const headStyle = {
-    fontStyle: "bold",
-    fillColor: [248, 252, 248],
-    textColor: [31, 82, 43],
-    fontSize: 8,
-  };
-  const subStyle = {
-    fontStyle: "bold",
-    fillColor: [250, 250, 247],
-    textColor: [40, 40, 40],
-  };
 
-  // 2. Build Solar Group
-  if (solar.length > 0) {
+  // 2. Build Rolled-up Rows
+  if (solarTot > 0) {
+    const kwpStr = Number(systemKwp).toFixed(1).replace(/\.0$/, "");
+    body.push([`${kwpStr} kWp Solar Package`, peso(solarTot)]);
+  }
+
+  if (batteryKwh > 0 || batteryTot > 0) {
     body.push([
-      { content: "A - SOLAR PACKAGE", colSpan: 2, styles: headStyle },
-    ]);
-    // Hide individual amounts by passing an empty string
-    solar.forEach((i) => body.push([i.description, ""]));
-    body.push([
-      { content: "Solar Package Subtotal", styles: subStyle },
-      { content: peso(solarTot), styles: { ...subStyle, halign: "right" } },
+      `${Math.round(batteryKwh)} kWh Battery Package`,
+      peso(batteryTot),
     ]);
   }
 
-  // 3. Build Battery Group
-  if (battery.length > 0) {
-    body.push([
-      { content: "B - BATTERY PACKAGE", colSpan: 2, styles: headStyle },
-    ]);
-    // Hide individual amounts by passing an empty string
-    battery.forEach((i) => body.push([i.description, ""]));
-    body.push([
-      { content: "Battery Package Subtotal", styles: subStyle },
-      { content: peso(batteryTot), styles: { ...subStyle, halign: "right" } },
-    ]);
+  if (rsdItem) {
+    // Append an asterisk to RSD as shown in the design
+    body.push([`${rsdItem.description}*`, peso(rsdItem.directPrice)]);
   }
 
-  // 4. Build Misc Group
-  if (misc.length > 0) {
-    body.push([
-      {
-        content: "C - MISC. MATERIALS, LABOR, SERVICES & OTHER ADJUSTMENTS",
-        colSpan: 2,
-        styles: headStyle,
-      },
-    ]);
-    // Hide individual amounts by passing an empty string
-    misc.forEach((i) => body.push([i.description, ""]));
-    body.push([
-      { content: "Misc. Materials & Adjustments Subtotal", styles: subStyle },
-      { content: peso(miscTot), styles: { ...subStyle, halign: "right" } },
-    ]);
+  // 3. Add "Other costs:**" label IMMEDIATELY below RSD
+  body.push([
+    { content: "Other costs:**", styles: { fontStyle: "normal" } },
+    "",
+  ]);
+
+  // 4. Put the 2F/Misc items underneath "Other costs:**"
+  miscItems.forEach((i) => {
+    body.push([i.description, peso(i.directPrice)]);
+  });
+
+  // 5. Add dynamic blank underline rows for manual write-ins
+  // If they have 2 misc items, it adds 3 blanks. If they have 5, it ensures at least 2 blanks.
+  const blankRowCount = Math.max(2, 5 - miscItems.length);
+  for (let j = 0; j < blankRowCount; j++) {
+    body.push(["", ""]);
   }
 
-  // 5. Append Discounts, DST, and Final Total
+  // 6. Append Discounts and Final Total
   const discountVal = Math.abs(
     terms.promoDiscountAmount || terms.discountAmount || 0,
   );
   if (discountVal > 0) {
-    body.push([
-      { content: "Less: Discounts", styles: { textColor: [200, 50, 50] } },
-      {
-        content: peso(-discountVal),
-        styles: { textColor: [200, 50, 50], halign: "right" },
-      },
-    ]);
+    body.push(["Less: Discounts", peso(-discountVal)]);
   }
 
-  if (state.tenor !== 0 && terms.dst > 0) {
-    body.push(["DST (Documentary Stamp Tax)", peso(terms.dst)]);
-  }
+  // (Removed DST to match the base price logic)
 
   body.push([
     {
@@ -1661,7 +1649,7 @@ function drawPackageDetailPage(mgr) {
       },
     },
     {
-      content: peso(terms.summaryTotalDue ?? terms.totalAmountDue ?? 0),
+      content: peso(terms.netDirectPrice || 0),
       styles: {
         fontStyle: "bold",
         fillColor: [236, 243, 236],
@@ -1682,17 +1670,18 @@ function drawPackageDetailPage(mgr) {
       font: "helvetica",
       fontSize: 8,
       cellPadding: 2,
-      lineColor: [220, 220, 220],
+      lineColor: [210, 210, 210],
       lineWidth: 0.15,
       textColor: C.textBody,
     },
     headStyles: {
-      fillColor: [31, 82, 43], // Brand Dark Green
+      fillColor: [31, 82, 43], // Your Brand Dark Green!
       textColor: [255, 255, 255], // White text
       fontStyle: "bold",
       fontSize: 8.5,
     },
     didParseCell: (data) => {
+      // Right-align the Amount header
       if (data.section === "head" && data.column.index === 1) {
         data.cell.styles.halign = "right";
       }
