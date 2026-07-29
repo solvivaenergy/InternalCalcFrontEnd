@@ -718,7 +718,7 @@ function drawCoverPage1(mgr) {
     "",
     [
       ["Rent-to-Own tenor:", `${tenor} months`],
-      ["Monthly payment", `${peso(terms.customerMonthlyPmt ?? 0)}/mo`],
+      ["Monthly payment", `${peso(terms.customerMonthlyPmt ?? 0)}`],
     ],
     1383,
     2287,
@@ -2036,7 +2036,7 @@ function drawVisualizingPage(mgr) {
   // solar coverage line (tracks solar used directly each hour)
   if (rows.length > 0) {
     doc.setDrawColor(...CL_SOLAR);
-    doc.setLineWidth(0.9);
+    doc.setLineWidth(0.4);
     const csegs = [];
     for (let i = 1; i <= 24; i++) {
       csegs.push([xAt(i) - xAt(i - 1), yAt(cover[i]) - yAt(cover[i - 1])]);
@@ -2574,7 +2574,7 @@ function drawTermsAndConditions(mgr) {
       text: "Any items or service not explicitly mentioned or detailed in this proposal such as but not limited to Service entrance remodeling, building permit, occupancy certificate, house plans, and any other fees not related to the Solar Photovoltaic System itself shall be considered excluded from the scope of work and will not be provided unless otherwise agreed upon through a variation order or a revision in the proposal.",
     },
     {
-      title: "Site assessment",
+      title: "Site Assessment",
       text: [
         "• Technical Assessment: We first conduct a thorough technical site assessment, including roof evaluation and sunlight analysis, to assess suitability for a rooftop solar system.",
         "• Suitability Refund: If you have paid a reservation fee and if our assessment shows that your property is not suitable, we will refund your reservation fee within thirty (30) days from such determination.",
