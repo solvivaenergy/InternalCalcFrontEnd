@@ -1525,8 +1525,7 @@ function drawStep1Page(mgr) {
   drawSystemRow(mgr, false);
 }
 function drawPackageDetailPage(mgr) {
-  // Extract state alongside model and proposalContent
-  const { model, proposalContent, state } = mgr.ctx;
+  const { model, state } = mgr.ctx;
   const items = model.pkg?.items || [];
   const terms = model.terms || {};
 
@@ -1538,65 +1537,171 @@ function drawPackageDetailPage(mgr) {
   mgr.doc.text("System package in detail", MARGIN, mgr.y + 4);
   mgr.y += 8;
 
-  // Filter out items with no description, "None", or a price of 0
-  const body = items
+  // 1. Group items dynamically based on their descriptions
+  const solar = [];
+  const battery = [];
+  const misc = [];
+  let solarTot = 0,
+    batteryTot = 0,
+    miscTot = 0;
+
+  items
     .filter(
       (i) =>
-        i && i.description && i.description !== "None" && i.directPrice > 0,
+        i && i.description && i.description !== "None" && i.directPrice !== 0,
     )
-    .map((i) => [i.description, peso(i.directPrice || 0)]);
+    .forEach((i) => {
+      const d = i.description.toLowerCase();
+      const isBat =
+        d.includes("battery") ||
+        d.includes("ats") ||
+        d.includes("transfer switch") ||
+        d.includes("critical load");
+      const isMisc =
+        d.includes("roof") ||
+        d.includes("location") ||
+        d.includes("delivery") ||
+        d.includes("canopy") ||
+        d.includes("asphalt");
 
-  // Only render the Discounts row if there is an actual discount amount
+      if (isBat) {
+        battery.push(i);
+        batteryTot += i.directPrice;
+      } else if (isMisc) {
+        misc.push(i);
+        miscTot += i.directPrice;
+      } else {
+        solar.push(i);
+        solarTot += i.directPrice;
+      }
+    });
+
+  const body = [];
+  const headStyle = {
+    fontStyle: "bold",
+    fillColor: [248, 252, 248],
+    textColor: [31, 82, 43],
+    fontSize: 8,
+  };
+  const subStyle = {
+    fontStyle: "bold",
+    fillColor: [250, 250, 247],
+    textColor: [40, 40, 40],
+  };
+
+  // 2. Build Solar Group
+  if (solar.length > 0) {
+    body.push([
+      { content: "A - SOLAR PACKAGE", colSpan: 2, styles: headStyle },
+    ]);
+    solar.forEach((i) => body.push([i.description, peso(i.directPrice)]));
+    body.push([
+      { content: "Solar Package Subtotal", styles: subStyle },
+      { content: peso(solarTot), styles: { ...subStyle, halign: "right" } },
+    ]);
+  }
+
+  // 3. Build Battery Group
+  if (battery.length > 0) {
+    body.push([
+      { content: "B - BATTERY PACKAGE", colSpan: 2, styles: headStyle },
+    ]);
+    battery.forEach((i) => body.push([i.description, peso(i.directPrice)]));
+    body.push([
+      { content: "Battery Package Subtotal", styles: subStyle },
+      { content: peso(batteryTot), styles: { ...subStyle, halign: "right" } },
+    ]);
+  }
+
+  // 4. Build Misc Group
+  if (misc.length > 0) {
+    body.push([
+      {
+        content: "C - MISC. MATERIALS, LABOR, SERVICES & OTHER ADJUSTMENTS",
+        colSpan: 2,
+        styles: headStyle,
+      },
+    ]);
+    misc.forEach((i) => body.push([i.description, peso(i.directPrice)]));
+    body.push([
+      { content: "Misc. Materials & Adjustments Subtotal", styles: subStyle },
+      { content: peso(miscTot), styles: { ...subStyle, halign: "right" } },
+    ]);
+  }
+
+  // 5. Append Discounts, DST, and Final Total
   const discountVal = Math.abs(
     terms.promoDiscountAmount || terms.discountAmount || 0,
   );
   if (discountVal > 0) {
-    body.push(["Less: Discounts", peso(discountVal)]);
+    body.push([
+      { content: "Less: Discounts", styles: { textColor: [200, 50, 50] } },
+      {
+        content: peso(-discountVal),
+        styles: { textColor: [200, 50, 50], halign: "right" },
+      },
+    ]);
   }
 
-  // Add DST if the tenor is NOT direct purchase (0) and DST is greater than 0
   if (state.tenor !== 0 && terms.dst > 0) {
     body.push(["DST (Documentary Stamp Tax)", peso(terms.dst)]);
   }
 
-  // UPDATED: Use summaryTotalDue which is DST-inclusive
   body.push([
-    "Total",
-    peso(terms.summaryTotalDue ?? terms.totalAmountDue ?? 0),
+    {
+      content: "Total Package Price (VAT Inclusive)",
+      styles: {
+        fontStyle: "bold",
+        fillColor: [236, 243, 236],
+        textColor: [31, 82, 43],
+        fontSize: 9,
+      },
+    },
+    {
+      content: peso(terms.summaryTotalDue ?? terms.totalAmountDue ?? 0),
+      styles: {
+        fontStyle: "bold",
+        fillColor: [236, 243, 236],
+        textColor: [31, 82, 43],
+        fontSize: 9,
+        halign: "right",
+      },
+    },
   ]);
 
   autoTable(mgr.doc, {
     startY: mgr.y,
     head: [["Equipment, Materials, and Labor", "Amount"]],
-    // ... rest of the table config
     body,
     margin: { left: MARGIN, right: MARGIN },
     tableWidth: CONTENT_W,
     styles: {
       font: "helvetica",
       fontSize: 8,
-      cellPadding: 1.5,
-      lineColor: [210, 210, 210],
+      cellPadding: 2,
+      lineColor: [220, 220, 220],
       lineWidth: 0.15,
       textColor: C.textBody,
     },
     headStyles: {
-      fillColor: [236, 243, 236],
-      textColor: C.textBody,
-      fontStyle: "normal",
+      fillColor: [255, 255, 255],
+      textColor: [120, 120, 120],
+      fontStyle: "bold",
+      fontSize: 7.5,
     },
     didParseCell: (data) => {
       if (data.section === "head" && data.column.index === 1) {
-        data.cell.styles.halign = "center";
+        data.cell.styles.halign = "right";
       }
     },
     columnStyles: {
-      0: { cellWidth: CONTENT_W - 55 },
-      1: { cellWidth: 55, halign: "right" },
+      0: { cellWidth: CONTENT_W - 45 },
+      1: { cellWidth: 45, halign: "right" },
     },
   });
   mgr.y = mgr.doc.lastAutoTable.finalY + 6;
 
+  // Render Inclusions and Warranty (Unchanged)
   const leftX = MARGIN;
   const rightX = MARGIN + CONTENT_W * 0.52;
   mgr.doc.setFont("helvetica", "bold");
@@ -1615,7 +1720,6 @@ function drawPackageDetailPage(mgr) {
     "Dedicated 24/7 technical support team",
   ];
 
-  // Updated warranty data to match Figma
   const warranties = [
     { label: "Solar Panels Performance", duration: "30 years" },
     { label: "Solar Panels Product Warranty", duration: "12 years" },
@@ -1624,13 +1728,10 @@ function drawPackageDetailPage(mgr) {
     { label: "Workmanship", duration: "1 year" },
   ];
 
-  // Anchoring both lists to the exact same starting height
   let currentY = mgr.y + 14;
   let warrantyY = mgr.y + 14;
-
   const checkX = MARGIN;
 
-  // 1. Draw Inclusions (Left Column)
   inclusions.forEach((item) => {
     mgr.doc.setDrawColor(...C.brandGreen);
     mgr.doc.setLineWidth(0.8);
@@ -1645,7 +1746,6 @@ function drawPackageDetailPage(mgr) {
     currentY += 7.5;
   });
 
-  // 2. Draw Warranties (Right Column)
   warranties.forEach((w) => {
     mgr.doc.setFont("helvetica", "normal");
     mgr.doc.setFontSize(7.5);
@@ -1657,16 +1757,13 @@ function drawPackageDetailPage(mgr) {
     warrantyY += 7.5;
   });
 
-  // Push the yellow disclaimer box up a bit (reduced from + 8 to + 4)
   mgr.y = Math.max(currentY, warrantyY) + 4;
-
   const noteY = mgr.y;
 
   mgr.doc.setFillColor(255, 244, 217);
   mgr.doc.setDrawColor(248, 214, 137);
   mgr.doc.roundedRect(MARGIN, noteY, CONTENT_W, 29, 2, 2, "FD");
 
-  // Mixed formatting for the compliance text: splitting into tokens to bold specific words
   const complianceTokens = [
     { text: "*Compliance: ", bold: false },
     { text: "A ", bold: true },
@@ -1685,7 +1782,6 @@ function drawPackageDetailPage(mgr) {
   let cur = [];
   let curW = 0;
 
-  // Measure and wrap words
   for (const tok of complianceTokens) {
     mgr.doc.setFont("helvetica", tok.bold ? "bold" : "normal");
     mgr.doc.setFontSize(fontSize);
@@ -1701,7 +1797,6 @@ function drawPackageDetailPage(mgr) {
   }
   if (cur.length) lines.push(cur);
 
-  // Draw the compliance text line by line
   let ty = noteY + 6;
   for (const line of lines) {
     let tx = MARGIN + 2;
@@ -1712,10 +1807,9 @@ function drawPackageDetailPage(mgr) {
       mgr.doc.text(tok.text, tx, ty);
       tx += mgr.doc.getTextWidth(tok.text);
     }
-    ty += 3; // line height
+    ty += 3;
   }
 
-  // Second disclaimer (Standard text)
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(7);
   mgr.doc.setTextColor(136, 106, 42);
