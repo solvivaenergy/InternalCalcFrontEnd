@@ -1594,7 +1594,8 @@ function drawPackageDetailPage(mgr) {
     body.push([
       { content: "A - SOLAR PACKAGE", colSpan: 2, styles: headStyle },
     ]);
-    solar.forEach((i) => body.push([i.description, peso(i.directPrice)]));
+    // Hide individual amounts by passing an empty string
+    solar.forEach((i) => body.push([i.description, ""]));
     body.push([
       { content: "Solar Package Subtotal", styles: subStyle },
       { content: peso(solarTot), styles: { ...subStyle, halign: "right" } },
@@ -1606,7 +1607,8 @@ function drawPackageDetailPage(mgr) {
     body.push([
       { content: "B - BATTERY PACKAGE", colSpan: 2, styles: headStyle },
     ]);
-    battery.forEach((i) => body.push([i.description, peso(i.directPrice)]));
+    // Hide individual amounts by passing an empty string
+    battery.forEach((i) => body.push([i.description, ""]));
     body.push([
       { content: "Battery Package Subtotal", styles: subStyle },
       { content: peso(batteryTot), styles: { ...subStyle, halign: "right" } },
@@ -1622,7 +1624,8 @@ function drawPackageDetailPage(mgr) {
         styles: headStyle,
       },
     ]);
-    misc.forEach((i) => body.push([i.description, peso(i.directPrice)]));
+    // Hide individual amounts by passing an empty string
+    misc.forEach((i) => body.push([i.description, ""]));
     body.push([
       { content: "Misc. Materials & Adjustments Subtotal", styles: subStyle },
       { content: peso(miscTot), styles: { ...subStyle, halign: "right" } },
@@ -1684,10 +1687,10 @@ function drawPackageDetailPage(mgr) {
       textColor: C.textBody,
     },
     headStyles: {
-      fillColor: [255, 255, 255],
-      textColor: [120, 120, 120],
+      fillColor: [31, 82, 43], // Brand Dark Green
+      textColor: [255, 255, 255], // White text
       fontStyle: "bold",
-      fontSize: 7.5,
+      fontSize: 8.5,
     },
     didParseCell: (data) => {
       if (data.section === "head" && data.column.index === 1) {
