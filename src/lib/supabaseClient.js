@@ -30,12 +30,49 @@ if (!HAS_SUPABASE_CONFIG) {
   );
 }
 
+let localSession = null;
+const authListeners = new Set();
+
+const notifyAuthListeners = (event, session) => {
+  for (const listener of authListeners) {
+    listener(event, session);
+  }
+};
+
 const fallbackAuth = {
-  getSession: async () => ({ data: { session: null } }),
-  onAuthStateChange: () => ({
-    data: { subscription: { unsubscribe() {} } },
-  }),
-  signOut: async () => ({ error: null }),
+  getSession: async () => ({ data: { session: localSession } }),
+  onAuthStateChange: (callback) => {
+    authListeners.add(callback);
+    return {
+      data: {
+        subscription: {
+          unsubscribe() {
+            authListeners.delete(callback);
+          },
+        },
+      },
+    };
+  },
+  signInWithPassword: async ({ email, password }) => {
+    if (!email || !password) {
+      return {
+        data: { session: null },
+        error: { message: "Please enter your email and password." },
+      };
+    }
+
+    localSession = {
+      access_token: "local-dev-token",
+      user: { id: "local-user", email },
+    };
+    notifyAuthListeners("SIGNED_IN", localSession);
+    return { data: { session: localSession }, error: null };
+  },
+  signOut: async () => {
+    localSession = null;
+    notifyAuthListeners("SIGNED_OUT", null);
+    return { error: null };
+  },
 };
 
 export const supabase = HAS_SUPABASE_CONFIG
