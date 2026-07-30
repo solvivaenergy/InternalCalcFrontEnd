@@ -19,27 +19,34 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const HAS_SUPABASE_CONFIG = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+if (!HAS_SUPABASE_CONFIG) {
   // Surfaced loudly in dev so a missing .env.local is obvious rather than a
   // cryptic runtime failure on the first auth call.
-  console.error(
+  console.warn(
     "[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not set. " +
-      "Authentication will not work until these are configured.",
+      "Falling back to a local no-auth mode so the app can still render.",
   );
 }
 
-export const supabase = createClient(
-  SUPABASE_URL || "",
-  SUPABASE_ANON_KEY || "",
-  {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: false,
-    },
-  },
-);
+const fallbackAuth = {
+  getSession: async () => ({ data: { session: null } }),
+  onAuthStateChange: () => ({
+    data: { subscription: { unsubscribe() {} } },
+  }),
+  signOut: async () => ({ error: null }),
+};
+
+export const supabase = HAS_SUPABASE_CONFIG
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+      },
+    })
+  : { auth: fallbackAuth };
 
 // Canonical role vocabulary stored in public.user_roles.role. Kept here so the
 // router (App.jsx) and the role lookup below agree on one spelling.
