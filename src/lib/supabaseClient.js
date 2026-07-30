@@ -155,11 +155,7 @@ const authApi = {
     try {
       const result = await realSupabase.auth.signInWithPassword(params);
       if (result?.error) {
-        console.warn(
-          "[supabase] signInWithPassword failed, using local fallback:",
-          result.error.message,
-        );
-        return fallbackAuth.signInWithPassword(params);
+        return result;
       }
       localSession = result?.data?.session ?? null;
       if (localSession) {
@@ -167,11 +163,10 @@ const authApi = {
       }
       return result;
     } catch (error) {
-      console.warn(
-        "[supabase] signInWithPassword threw, using local fallback:",
-        error,
-      );
-      return fallbackAuth.signInWithPassword(params);
+      return {
+        data: { session: null, user: null },
+        error: { message: error?.message || "Sign in failed. Please try again." },
+      };
     }
   },
   signOut: async () => {
