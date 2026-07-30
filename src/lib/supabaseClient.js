@@ -32,6 +32,7 @@ if (!HAS_SUPABASE_CONFIG) {
 
 let localSession = null;
 const authListeners = new Set();
+let realAuthSubscription = null;
 
 const notifyAuthListeners = (event, session) => {
   for (const listener of authListeners) {
@@ -112,16 +113,42 @@ const authApi = {
     }
   },
   onAuthStateChange: (callback) => {
-    if (!realSupabase) return fallbackAuth.onAuthStateChange(callback);
-    try {
-      return realSupabase.auth.onAuthStateChange(callback);
-    } catch (error) {
-      console.warn(
-        "[supabase] onAuthStateChange failed, using local fallback:",
-        error,
-      );
-      return fallbackAuth.onAuthStateChange(callback);
+    authListeners.add(callback);
+    if (realSupabase && !realAuthSubscription) {
+      try {
+        realAuthSubscription = realSupabase.auth.onAuthStateChange(
+          (event, session) => {
+            if (session) {
+              localSession = session;
+            } else if (event === "SIGNED_OUT") {
+              localSession = null;
+            }
+            notifyAuthListeners(event, session ?? localSession);
+          },
+        );
+      } catch (error) {
+        console.warn(
+          "[supabase] onAuthStateChange failed, using local fallback:",
+          error,
+        );
+      }
     }
+    return {
+      data: {
+        subscription: {
+          unsubscribe() {
+            authListeners.delete(callback);
+            if (
+              authListeners.size === 0 &&
+              realAuthSubscription?.data?.subscription
+            ) {
+              realAuthSubscription.data.subscription.unsubscribe();
+              realAuthSubscription = null;
+            }
+          },
+        },
+      },
+    };
   },
   signInWithPassword: async (params) => {
     if (!realSupabase) return fallbackAuth.signInWithPassword(params);
@@ -135,6 +162,9 @@ const authApi = {
         return fallbackAuth.signInWithPassword(params);
       }
       localSession = result?.data?.session ?? null;
+      if (localSession) {
+        notifyAuthListeners("SIGNED_IN", localSession);
+      }
       return result;
     } catch (error) {
       console.warn(
@@ -149,6 +179,7 @@ const authApi = {
     try {
       const result = await realSupabase.auth.signOut();
       localSession = null;
+      notifyAuthListeners("SIGNED_OUT", null);
       return result;
     } catch (error) {
       console.warn("[supabase] signOut failed, using local fallback:", error);
