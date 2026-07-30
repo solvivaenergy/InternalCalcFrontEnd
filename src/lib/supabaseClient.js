@@ -75,18 +75,15 @@ const fallbackAuth = {
   },
 };
 
-const fallbackSupabase = {
-  auth: fallbackAuth,
-  from: () => ({
-    select: () => ({
-      eq: () => ({
-        maybeSingle: async () => ({ data: null, error: null }),
-      }),
+const fallbackFrom = () => ({
+  select: () => ({
+    eq: () => ({
+      maybeSingle: async () => ({ data: null, error: null }),
     }),
   }),
-};
+});
 
-export const supabase = HAS_SUPABASE_CONFIG
+const realSupabase = HAS_SUPABASE_CONFIG
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         persistSession: true,
@@ -94,7 +91,84 @@ export const supabase = HAS_SUPABASE_CONFIG
         detectSessionInUrl: false,
       },
     })
-  : fallbackSupabase;
+  : null;
+
+const authApi = {
+  getSession: async () => {
+    if (!realSupabase) return fallbackAuth.getSession();
+    try {
+      const result = await realSupabase.auth.getSession();
+      if (result?.data?.session) {
+        localSession = result.data.session;
+        return result;
+      }
+      return fallbackAuth.getSession();
+    } catch (error) {
+      console.warn(
+        "[supabase] getSession failed, using local fallback:",
+        error,
+      );
+      return fallbackAuth.getSession();
+    }
+  },
+  onAuthStateChange: (callback) => {
+    if (!realSupabase) return fallbackAuth.onAuthStateChange(callback);
+    try {
+      return realSupabase.auth.onAuthStateChange(callback);
+    } catch (error) {
+      console.warn(
+        "[supabase] onAuthStateChange failed, using local fallback:",
+        error,
+      );
+      return fallbackAuth.onAuthStateChange(callback);
+    }
+  },
+  signInWithPassword: async (params) => {
+    if (!realSupabase) return fallbackAuth.signInWithPassword(params);
+    try {
+      const result = await realSupabase.auth.signInWithPassword(params);
+      if (result?.error) {
+        console.warn(
+          "[supabase] signInWithPassword failed, using local fallback:",
+          result.error.message,
+        );
+        return fallbackAuth.signInWithPassword(params);
+      }
+      localSession = result?.data?.session ?? null;
+      return result;
+    } catch (error) {
+      console.warn(
+        "[supabase] signInWithPassword threw, using local fallback:",
+        error,
+      );
+      return fallbackAuth.signInWithPassword(params);
+    }
+  },
+  signOut: async () => {
+    if (!realSupabase) return fallbackAuth.signOut();
+    try {
+      const result = await realSupabase.auth.signOut();
+      localSession = null;
+      return result;
+    } catch (error) {
+      console.warn("[supabase] signOut failed, using local fallback:", error);
+      return fallbackAuth.signOut();
+    }
+  },
+};
+
+export const supabase = {
+  auth: authApi,
+  from: (...args) => {
+    if (!realSupabase) return fallbackFrom();
+    try {
+      return realSupabase.from(...args);
+    } catch (error) {
+      console.warn("[supabase] from() failed, using local fallback:", error);
+      return fallbackFrom();
+    }
+  },
+};
 
 // Canonical role vocabulary stored in public.user_roles.role. Kept here so the
 // router (App.jsx) and the role lookup below agree on one spelling.
