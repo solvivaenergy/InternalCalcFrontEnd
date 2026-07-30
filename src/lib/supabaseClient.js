@@ -227,6 +227,16 @@ export const ADMIN_ROLE_TO_ACCESS = Object.freeze({
 // customer calculator).
 export async function fetchUserRole(userId) {
   if (!userId) return ROLES.CUSTOMER;
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData?.session?.user;
+    const metadataRole = user?.app_metadata?.role || user?.user_metadata?.role;
+    if (Object.values(ROLES).includes(metadataRole)) {
+      return metadataRole;
+    }
+  } catch (error) {
+    console.warn("[supabase] metadata role lookup failed:", error);
+  }
   const { data, error } = await supabase
     .from("user_roles")
     .select("role")
