@@ -75,6 +75,17 @@ const fallbackAuth = {
   },
 };
 
+const fallbackSupabase = {
+  auth: fallbackAuth,
+  from: () => ({
+    select: () => ({
+      eq: () => ({
+        maybeSingle: async () => ({ data: null, error: null }),
+      }),
+    }),
+  }),
+};
+
 export const supabase = HAS_SUPABASE_CONFIG
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
@@ -83,7 +94,7 @@ export const supabase = HAS_SUPABASE_CONFIG
         detectSessionInUrl: false,
       },
     })
-  : { auth: fallbackAuth };
+  : fallbackSupabase;
 
 // Canonical role vocabulary stored in public.user_roles.role. Kept here so the
 // router (App.jsx) and the role lookup below agree on one spelling.
