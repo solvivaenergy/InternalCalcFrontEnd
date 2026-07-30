@@ -50,13 +50,6 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
   const canEditMaintenance = canEditAdminSection(accessLevel, 'maintenance');
   const canEditInv = canEditInventory(accessLevel);
 
-  // Pick password + role for server auth.
-  const sessionPassword =
-    accessLevel === 'edit'        ? AUTH.editPassword :
-    accessLevel === 'engineering' ? AUTH.engineeringPassword :
-    accessLevel === 'product'     ? AUTH.productPassword :
-    '';
-
   // ─── Unified state (persists across tab switches) ─────────────────────────
   const [params, setParams] = useState(() => JSON.parse(JSON.stringify(ADMIN_PARAMS)));
   const [panelSingle, setPanelSingle] = useState({ ...PANEL_SETTINGS.singlePhase });
@@ -300,7 +293,7 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
       snapshot.invertersThreePhase  = three.map(i => ({ ...i }));
       snapshot.devices = devices.map(d => ({ ...d }));
     }
-    const result = await paramsService.save(snapshot, sessionPassword, accessLevel);
+    const result = await paramsService.save(snapshot, accessLevel);
     setSaveStatus(result);
     if (result.ok) setDirty(false);
   };
@@ -438,11 +431,6 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
 // view cannot edit), per ROLE_ADMIN_SECTIONS in permissions.js.
 export function MaintenanceModeBlock({ accessLevel, savingDisabled }) {
   const canEdit = canEditAdminSection(accessLevel, 'maintenance');
-  const sessionPassword =
-    accessLevel === 'edit'        ? AUTH.editPassword :
-    accessLevel === 'engineering' ? AUTH.engineeringPassword :
-    accessLevel === 'product'     ? AUTH.productPassword :
-    '';
   const [enabled, setEnabled] = useState(!!(ADMIN_PARAMS.gateAuthEnabled ?? true));
   const [saveStatus, setSaveStatus] = useState(null);
 
@@ -452,7 +440,7 @@ export function MaintenanceModeBlock({ accessLevel, savingDisabled }) {
     setSaveStatus('saving');
     const snapshot = paramsService.getSnapshot();
     snapshot.adminParams = { ...(snapshot.adminParams || {}), gateAuthEnabled: newVal };
-    const result = await paramsService.save(snapshot, sessionPassword, accessLevel);
+    const result = await paramsService.save(snapshot, accessLevel);
     setSaveStatus(result);
     if (!result.ok) {
       // Roll back optimistic flip

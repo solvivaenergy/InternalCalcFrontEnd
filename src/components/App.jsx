@@ -32,7 +32,8 @@ import Calculator from './Calculator.jsx';
 import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
-import AuthDialog from './AuthDialog.jsx';
+import Login from './Login.jsx';
+import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS } from '../lib/supabaseClient.js';
 import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
 
 // v3-70: Step 1 defaults are now Product-settable (ADMIN_PARAMS
@@ -217,7 +218,87 @@ function pdfDetailsComplete(contact, agent) {
   return customerDetailsComplete(contact) && agentDetailsComplete(agent);
 }
 
+// ─── Auth wrapper (default export) ────────────────────────────────────────────
+// The landing page is now a Supabase login form. Until a session exists we
+// render <Login/>. Once authenticated we read the user's role from
+// public.user_roles and hand it to CalculatorApp, which routes admin roles to
+// the AdminShell editor and rep/customer roles to the Calculator.
 export default function App() {
+  // session: undefined = still checking; null = signed out; object = signed in
+  const [session, setSession] = useState(undefined);
+  const [role, setRole] = useState(null);
+  const [roleLoading, setRoleLoading] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (mounted) setSession(data?.session ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+      if (mounted) setSession(next ?? null);
+    });
+    return () => { mounted = false; sub?.subscription?.unsubscribe(); };
+  }, []);
+
+  // Resolve the role whenever the signed-in user changes.
+  useEffect(() => {
+    let mounted = true;
+    const userId = session?.user?.id;
+    if (!userId) { setRole(null); return; }
+    setRoleLoading(true);
+    fetchUserRole(userId).then((r) => {
+      if (!mounted) return;
+      setRole(r);
+      setRoleLoading(false);
+    });
+    return () => { mounted = false; };
+  }, [session?.user?.id]);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    // onAuthStateChange clears session → Login renders.
+  };
+
+  if (session === undefined || (session && roleLoading) || (session && !role)) {
+    return <BootSplash />;
+  }
+  if (!session) {
+    return <Login />;
+  }
+  return <CalculatorApp key={role} role={role} onSignOut={handleSignOut} />;
+}
+
+// Minimal centered splash used while the session/role resolve, matching the
+// in-app "Loading…" treatment so there's no visual flash on refresh.
+function BootSplash() {
+  return (
+    <div style={styles.app}>
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', flexDirection: 'column', gap: 12,
+      }}>
+        <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
+             style={{ opacity: 0.7 }} />
+        <div style={{ fontSize: 13, color: '#6B7280' }}>Loading…</div>
+      </div>
+    </div>
+  );
+}
+
+function CalculatorApp({ role, onSignOut }) {
+  // Role → calculator routing. Admin-tier roles land in the AdminShell editor
+  // (accessLevel maps DB 'admin' → the calculator's internal 'edit' Super
+  // Admin level); 'rep' opens the full sales-rep calculator; everyone else
+  // (incl. 'customer') gets the simplified customer calculator.
+  const initialAdminAccess = ADMIN_ROLE_TO_ACCESS[role] || 'none';
+  const isAdminRole = initialAdminAccess !== 'none';
+  const initialAdminPage = isAdminRole
+    ? (role === 'product' ? 'product'
+       : role === 'engineering' ? 'engineering'
+       : 'inventory')
+    : null;
+  const initialMode = role === 'rep' ? 'rep' : 'customer';
+
   // Customer contact — persisted to sessionStorage so a page reload preserves
   // it (the customer skips re-entering their details), but a browser close
   // clears it (so a shared device doesn't leak the previous customer's info
@@ -429,29 +510,15 @@ export default function App() {
   // show the component-price breakdown (user directive). Not persisted:
   // resets on reload, privacy-conservative.
   const [summaryPricesShown, setSummaryPricesShown] = useState(false);
-  const [adminAccess, setAdminAccess] = useState('none');
-  const [adminPage, setAdminPage] = useState(null);
+  const [adminAccess, setAdminAccess] = useState(initialAdminAccess);
+  const [adminPage, setAdminPage] = useState(initialAdminPage);
 
   // ─── Mode: 'customer' (default, simplified public view) | 'rep' (full sales-
-  //     rep view with all overrides). Persisted to sessionStorage so a reload
-  //     keeps a rep in rep mode; tab close clears it (shared-laptop safe).
-  //
-  // The rep-mode lock lives in the footer (separate from the Admin entry).
-  // When a user clicks it, we open AuthDialog in rep-only mode; on success
-  // we flip to 'rep' and persist. The header shows a small "Rep mode" pill
-  // with a "Lock" button to return to customer mode.
-  const [mode, setMode] = useState(() => {
-    try {
-      const raw = sessionStorage.getItem(MODE_STORAGE_KEY);
-      if (!raw) return 'customer';
-      const parsed = JSON.parse(raw);
-      if (parsed._v !== MODE_RECORD_VERSION) {
-        sessionStorage.removeItem(MODE_STORAGE_KEY);
-        return 'customer';
-      }
-      return parsed.mode === 'rep' ? 'rep' : 'customer';
-    } catch (_) { return 'customer'; }
-  });
+  //     rep view with all overrides). Initialised from the authenticated
+  //     user's role (rep → 'rep', everyone else → 'customer'). A rep can still
+  //     drop to the customer view via the header pill; that choice is
+  //     persisted to sessionStorage for the tab's lifetime.
+  const [mode, setMode] = useState(initialMode);
   // Persist mode through every change. 'customer' is the default so we clear
   // the key entirely rather than write the default value — keeps storage clean.
   const updateMode = (next) => {
@@ -466,10 +533,6 @@ export default function App() {
       }
     } catch (_) { /* ignore */ }
   };
-
-  // Rep auth dialog visibility — opens from the footer rep lock, closes on
-  // success (mode flips to 'rep') or on cancel (back to 'customer' view).
-  const [repAuthOpen, setRepAuthOpen] = useState(false);
 
   // Lock-confirm dialog visibility — opens when a rep clicks the "Lock"
   // button on the rep-mode pill in the header. On confirm, we reset the
@@ -899,9 +962,10 @@ export default function App() {
   const today = new Date();
   const quoteExpired = today > validUntil;
 
-  const handleAgentClick = () => setAdminPage('inventory');
-  const handleAdminAuth = (level) => setAdminAccess(level);
-  const handleAdminLogout = () => { setAdminAccess('none'); setAdminPage(null); };
+  // Admin entry is now driven by the authenticated role (see CalculatorApp
+  // routing above), not by an in-app password dialog. handleAdminLogout signs
+  // the user out entirely and returns them to the login page.
+  const handleAdminLogout = () => { onSignOut(); };
 
   // Show a brief loading screen while parameters fetch on first load.
   // Without this, customers might see stale defaults for a flash before
@@ -921,42 +985,10 @@ export default function App() {
     );
   }
 
-  if (adminPage && adminAccess === 'none') {
-    return <AuthDialog onAuth={handleAdminAuth}
-                       onCancel={() => setAdminPage(null)}
-                       viewPassword={AUTH.viewPassword}
-                       editPassword={AUTH.editPassword}
-                       engineeringPassword={AUTH.engineeringPassword}
-                       productPassword={AUTH.productPassword} />;
-  }
-
-  // Rep-mode auth dialog — opened from the footer 🔒 Rep lock. On success,
-  // we persist mode='rep' and dismiss. On cancel, the customer-view stays.
-  //
-  // v3-53: accept ANY of the 6 configured passwords, not just VITE_REP_PASSWORD.
-  // Same accept set as MaintenanceGate — anyone Solviva has issued any
-  // password to can unlock rep view. Brings rep-unlock in line with the
-  // maintenance-gate behavior; both entry points now accept the same set.
-  // Title/subtitle preserved as "Sales Rep Access" framing since that's
-  // what the user is unlocking (the rep tooling view).
-  if (repAuthOpen) {
-    return (
-      <AuthDialog
-        customTitle="Sales Rep Access"
-        customSubtitle="Enter your access password to unlock the full calculator view."
-        acceptedPasswords={[
-          AUTH.repPassword,
-          AUTH.editPassword,
-          AUTH.engineeringPassword,
-          AUTH.productPassword,
-          AUTH.viewPassword,
-          AUTH.testingPassword,
-        ]}
-        onAuth={() => { updateMode('rep'); setRepAuthOpen(false); }}
-        onCancel={() => setRepAuthOpen(false)}
-      />
-    );
-  }
+  // Admin-tier roles are routed straight into the AdminShell editor by the
+  // authenticated role (no in-app password dialog). The legacy env-password
+  // AuthDialog flows (admin entry + rep unlock) have been removed — Supabase
+  // auth is now the single access boundary.
   if (adminPage && adminAccess !== 'none') {
     // v3-54: 3-tab admin (inventory / engineering / product) with
     // MaintenanceModeBlock rendered above the tabs (always visible).
@@ -973,7 +1005,8 @@ export default function App() {
                 agent={agent} updateAgent={updateAgent}
                 generatedDate={generatedDate} validUntil={validUntil}
                 quoteExpired={quoteExpired}
-                editing={editingContacts} setEditing={setEditingContacts} leadState={state} leadModel={model} />
+                editing={editingContacts} setEditing={setEditingContacts}
+                onSignOut={onSignOut} leadState={state} leadModel={model} />
         <main className="app-main" style={styles.main}>
           <MaintenanceModeBlock
             accessLevel={adminAccess}
@@ -1015,11 +1048,7 @@ export default function App() {
           agent={agent}
           brand={BRAND}
         />
-        <FooterFixed
-          onAgentClick={handleAgentClick}
-          mode={mode}
-          onRepLockClick={() => setRepAuthOpen(true)}
-        />
+        <FooterFixed onSignOut={onSignOut} />
       </>
     );
   }
@@ -1032,9 +1061,8 @@ export default function App() {
               quoteExpired={quoteExpired}
               editing={editingContacts} setEditing={setEditingContacts}
               requireForPdf={pdfGateRequired}
-              onAgentClick={handleAgentClick}
+              onSignOut={onSignOut}
               mode={mode} onLockMode={() => setLockConfirmOpen(true)}
-              onRepLockClick={() => setRepAuthOpen(true)}
               leadState={state} leadModel={model} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
@@ -1101,9 +1129,7 @@ export default function App() {
           />
         </>
       )}
-      <Footer brand={BRAND}
-              mode={mode}
-              onRepLockClick={() => setRepAuthOpen(true)} />
+      <Footer brand={BRAND} />
       {lockConfirmOpen && (
         <ConfirmDialog
           title="Return to customer view?"
@@ -1121,7 +1147,7 @@ export default function App() {
 function Header({ brand, contact, setContact, agent, updateAgent,
                   generatedDate, validUntil, quoteExpired,
                   editing, setEditing, requireForPdf, onAgentClick,
-                  mode, onLockMode, onRepLockClick, leadState, leadModel }) {
+                  mode, onLockMode, onRepLockClick, onSignOut, leadState, leadModel }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
 
   if (editing) {
@@ -1236,6 +1262,11 @@ function Header({ brand, contact, setContact, agent, updateAgent,
               className="desktop-only-admin"
             >
               Admin
+            </button>
+          )}
+          {onSignOut && (
+            <button onClick={onSignOut} style={styles.signOutBtn} title="Sign out">
+              Sign out
             </button>
           )}
         </div>
@@ -1899,19 +1930,14 @@ function Footer({ brand, mode, onRepLockClick }) {
 //
 // Hidden on mobile via the desktop-only-admin CSS class — admin features
 // are desktop-only per product direction.
-function FooterFixed({ onAgentClick, mode, onRepLockClick }) {
+function FooterFixed({ onSignOut }) {
   return (
     <div className="desktop-only-admin" style={styles.footerFixed}>
-      {mode === 'customer' && onRepLockClick && (
-        <button
-          onClick={onRepLockClick}
-          style={styles.agentLink}
-          title="Sales rep? Click to unlock the full calculator view."
-        >
-          🔒 Rep
+      {onSignOut && (
+        <button onClick={onSignOut} style={styles.agentLink} title="Sign out">
+          Sign out
         </button>
       )}
-      <button onClick={onAgentClick} style={styles.agentLink}>Admin</button>
     </div>
   );
 }
@@ -1949,6 +1975,12 @@ const styles = {
     padding: '6px 14px', fontSize: 12, fontWeight: 600, color: '#FFFFFF',
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     flexShrink: 0, letterSpacing: 0.3,
+  },
+  signOutBtn: {
+    background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
+    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',
+    cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+    flexShrink: 0,
   },
   // Rep-mode pill in the header — small, muted, with an inline Lock button.
   // Uses an amber treatment so it reads as "you're in a privileged state"
