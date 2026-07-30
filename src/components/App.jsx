@@ -34,6 +34,7 @@ import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
 import Login from './Login.jsx';
 import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS } from '../lib/supabaseClient.js';
+import { visibleAdminTabs, canAccessAdminTab } from '../lib/permissions.js';
 import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
 
 // v3-70: Step 1 defaults are now Product-settable (ADMIN_PARAMS
@@ -992,13 +993,19 @@ function CalculatorApp({ role, onSignOut }) {
   if (adminPage && adminAccess !== 'none') {
     // v3-54: 3-tab admin (inventory / engineering / product) with
     // MaintenanceModeBlock rendered above the tabs (always visible).
-    // Default tab if `adminPage` is the legacy 'admin' string: route to
-    // engineering (the closest analog to the old Admin Parameters page).
-    const normalizedTab =
+    // v3-143: tabs are role-gated. Clamp the requested tab to one the role may
+    // see — an out-of-scope adminPage (e.g. a stale 'product' for an
+    // Engineering user) falls back to the role's first visible tab.
+    const allowedTabs = visibleAdminTabs(adminAccess);
+    const requestedTab =
       adminPage === 'inventory' ? 'inventory' :
       adminPage === 'engineering' ? 'engineering' :
       adminPage === 'product' ? 'product' :
-      'engineering';
+      null;
+    const normalizedTab =
+      requestedTab && allowedTabs.includes(requestedTab)
+        ? requestedTab
+        : (allowedTabs[0] || 'engineering');
     return (
       <div style={styles.app}>
         <Header brand={BRAND} contact={contact} setContact={setContact}
@@ -1012,14 +1019,14 @@ function CalculatorApp({ role, onSignOut }) {
             accessLevel={adminAccess}
             savingDisabled={!paramsLoadedFromServer}
           />
-          <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} />
+          <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} accessLevel={adminAccess} />
           <AdminShell
             tab={normalizedTab}
             accessLevel={adminAccess}
             onLogout={handleAdminLogout}
             savingDisabled={!paramsLoadedFromServer}
           />
-          <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} position="bottom" />
+          <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} accessLevel={adminAccess} position="bottom" />
         </main>
         <Footer brand={BRAND} />
       </div>
@@ -1710,14 +1717,16 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   );
 }
 
-function AdminTabs({ activeTab, setActiveTab, position = 'top' }) {
+function AdminTabs({ activeTab, setActiveTab, accessLevel, position = 'top' }) {
   // v3-54: 3-tab admin (Inventory / Engineering / Product). The previous
   // 'admin' tab id (the unified Admin Parameters page) is gone.
-  const tabs = [
+  // v3-143: only tabs the role may see are rendered (canAccessAdminTab).
+  const allTabs = [
     { id: 'inventory',   label: 'Inventory' },
     { id: 'engineering', label: 'Engineering' },
     { id: 'product',     label: 'Product' },
   ];
+  const tabs = allTabs.filter(t => canAccessAdminTab(accessLevel, t.id));
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
   const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;
   const tabActiveStyle = position === 'bottom' ? styles.tabActiveBottom : styles.tabActive;

@@ -6,16 +6,16 @@
 // read-only, and mirrored on the server in netlify/functions/parameters.js
 // where it's the actual security boundary.
 //
-// VISIBILITY (v3-54): All four admin roles can SEE every section in every
-// admin tab (Inventory / Engineering / Product). Sections outside a role's
-// edit allowlist render read-only (greyed). EDIT rights below are unchanged
-// from v3-53.
+// VISIBILITY (v3-143): admin TABS are now gated per role — a role only sees the
+// tabs relevant to its function (see ROLE_ADMIN_TABS below). Within a visible
+// tab, sections outside a role's edit allowlist still render read-only (greyed).
+// EDIT rights are unchanged from v3-53.
 //
-// ROLES
-//   'edit'         — Super Admin. Can edit everything.
-//   'engineering'  — Engineering Team.
-//   'product'      — Product Team.
-//   'view'         — Audit / view-only. Cannot edit anything.
+// ROLES (the three admin access types + audit)
+//   'edit'         — Management. Full access, all tabs. (DB role 'admin')
+//   'engineering'  — Engineering. Inventory + Engineering tabs.
+//   'product'      — Consumer Finance. Product tab only.
+//   'view'         — Audit / view-only. Sees all tabs, cannot edit anything.
 //   'none'         — Not signed in.
 //
 // ADMIN-PARAMETERS SECTIONS (string keys used in Admin.jsx <Section> tags)
@@ -90,10 +90,23 @@ const ROLE_INVENTORY_ACCESS = {
   product: false,
 };
 
+// v3-143 — TAB-LEVEL visibility. Beyond section edit-gating, each admin role
+// only SEES the tabs relevant to its function:
+//   edit (Management)          → all three tabs
+//   engineering (Engineering)  → Inventory + Engineering
+//   product (Consumer Finance) → Product only
+//   view (Audit)               → all three tabs (read-only)
+const ROLE_ADMIN_TABS = {
+  edit:        ['inventory', 'engineering', 'product'],
+  engineering: ['inventory', 'engineering'],
+  product:     ['product'],
+  view:        ['inventory', 'engineering', 'product'],
+};
+
 const ROLE_LABELS = {
-  edit:        'Super Admin',
+  edit:        'Management',
   engineering: 'Engineering',
-  product:     'Product',
+  product:     'Consumer Finance',
   view:        'View only',
 };
 
@@ -115,6 +128,17 @@ export function canEditAdminSection(role, sectionKey) {
 export function canEditInventory(role) {
   if (role === 'edit') return true;
   return !!ROLE_INVENTORY_ACCESS[role];
+}
+
+// v3-143 — which admin tabs this role may SEE (and navigate to). Order matches
+// the tab strip. Returns [] for non-admin / signed-out roles.
+export function visibleAdminTabs(role) {
+  return ROLE_ADMIN_TABS[role] || [];
+}
+
+// Can this role open the given admin tab ('inventory' | 'engineering' | 'product')?
+export function canAccessAdminTab(role, tab) {
+  return visibleAdminTabs(role).includes(tab);
 }
 
 // Does this role have ANY edit power somewhere?
