@@ -1385,12 +1385,40 @@ function drawStep1Page(mgr) {
   mgr.y = sectionBottomY;
 
   // ─── Savings goal section ───
-  const desiredPct = Math.round((state.desiredSavingsPct || 0.5) * 100);
+  const schedule = model.schedule || {};
+  const hasBattery = (model.batteryKwh || 0) > 0;
+  const hasNm = !!state.netMeteringEnabled;
+
+  // Calculate actual savings based on battery and net metering state
+  const actualMonthlySavings = hasNm
+    ? schedule.monthlyPesoSavingsBattNm || 0
+    : schedule.monthlyPesoSavingsBatt || 0;
+
+  // Calculate actual coverage percentage matching the EnergyVisuals logic
+  let coveragePct = 0;
+  if (schedule.coverageBars && schedule.coverageBars.length > 1) {
+    if (hasBattery && hasNm && schedule.coverageBars[3]) {
+      coveragePct =
+        schedule.coverageBars[3].solar +
+        schedule.coverageBars[3].battery +
+        schedule.coverageBars[3].netMetering;
+    } else if (hasBattery && schedule.coverageBars[2]) {
+      coveragePct =
+        schedule.coverageBars[2].solar + schedule.coverageBars[2].battery;
+    } else if (hasNm && schedule.coverageBars[3] && schedule.coverageBars[1]) {
+      const nmOnly = Math.max(
+        0,
+        schedule.coverageBars[3].netMetering + schedule.coverageBars[3].battery,
+      );
+      coveragePct = schedule.coverageBars[1].solar + nmOnly;
+    } else if (schedule.coverageBars[1]) {
+      coveragePct = schedule.coverageBars[1].solar;
+    }
+  }
+
+  const displayedPct = (coveragePct * 100).toFixed(1);
   const currentBill = Number(state.monthlyBill || 0);
-  const newBill = Math.max(
-    0,
-    currentBill * (1 - (state.desiredSavingsPct || 0.5)),
-  );
+  const newBill = Math.max(0, currentBill - actualMonthlySavings);
 
   mgr.doc.setFont("helvetica", "bold");
   mgr.doc.setFontSize(13);
@@ -1407,15 +1435,16 @@ function drawStep1Page(mgr) {
   mgr.doc.setFillColor(31, 82, 43);
   mgr.doc.roundedRect(MARGIN, goalY, leftColW, 16, 2, 2, "F");
   mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(24); // Increased from 22
+  mgr.doc.setFontSize(24);
   mgr.doc.setTextColor(210, 255, 30);
-  mgr.doc.text(`${desiredPct}%`, MARGIN + 6, goalY + 11.5);
+  // Replaced desiredPct with displayedPct
+  mgr.doc.text(`${displayedPct}%`, MARGIN + 6, goalY + 11.5);
   mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(9.5); // Increased from 7.5
+  mgr.doc.setFontSize(9.5);
   mgr.doc.setTextColor(...C.white);
   mgr.doc.text("Projected savings", MARGIN + 36, goalY + 7.5);
   mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(8); // Increased from 7
+  mgr.doc.setFontSize(8);
   mgr.doc.text("from your monthly electric bill", MARGIN + 36, goalY + 12.5);
 
   // 2. White Savings Box
@@ -1423,19 +1452,22 @@ function drawStep1Page(mgr) {
   mgr.doc.setDrawColor(230, 230, 230);
   mgr.doc.setLineWidth(0.2);
   mgr.doc.roundedRect(MARGIN, goalY + 19, leftColW, 16, 2, 2, "FD");
-  const monthlySavings = Math.max(0, currentBill - newBill);
+
   mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(22); // Increased from 20
+  mgr.doc.setFontSize(22);
   mgr.doc.setTextColor(31, 82, 43);
-  mgr.doc.text(peso(monthlySavings), MARGIN + 6, goalY + 30.5);
+  // Render the actual calculated savings
+  mgr.doc.text(peso(actualMonthlySavings), MARGIN + 6, goalY + 30.5);
   mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(9.5); // Increased from 7.5
+  mgr.doc.setFontSize(9.5);
   mgr.doc.setTextColor(...C.textBody);
   mgr.doc.text("Monthly savings", MARGIN + 36, goalY + 26.5);
   mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(8); // Increased from 7
+  mgr.doc.setFontSize(8);
   mgr.doc.setTextColor(...C.textMuted);
   mgr.doc.text("estimated at current utility rate", MARGIN + 36, goalY + 31.5);
+
+  // ... (Keep the rest of the disclaimer and bar visual generation unchanged)
 
   // Disclaimer beneath the savings boxes
   mgr.doc.setFont("helvetica", "normal");
