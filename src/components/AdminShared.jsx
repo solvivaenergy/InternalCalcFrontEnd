@@ -144,6 +144,87 @@ export function MarginAnchorRow({ label, hint, marginValue, onMargin, kwpValue, 
   );
 }
 
+// v3-142 — per-package gross-margin MATRIX. The per-system-size (kWp) curve is
+// retained, but each package (Solar / Battery / Misc) now rides its OWN curve
+// fitted through the SAME three kWp breakpoints. Rows = kWp anchors (Min / Med /
+// Max, each with an editable shared kWp), columns = packages. A no-panels order
+// prices at the Max row for every package.
+export function PackageMarginMatrix({ params, updateParam, canEdit }) {
+  const rows = [
+    {
+      label: 'Min anchor',
+      sub: 'small systems / floor',
+      kwpKey: 'grossMarginMinKwp',
+      keys: { solar: 'grossMarginSolarMin', battery: 'grossMarginBatteryMin', misc: 'grossMarginMiscMin' },
+    },
+    {
+      label: 'Med anchor',
+      sub: 'curvature',
+      kwpKey: 'grossMarginMidKwp',
+      keys: { solar: 'grossMarginSolarMid', battery: 'grossMarginBatteryMid', misc: 'grossMarginMiscMid' },
+    },
+    {
+      label: 'Max anchor',
+      sub: 'large / ceiling / no-panels',
+      kwpKey: 'grossMarginMaxKwp',
+      keys: { solar: 'grossMarginSolarMax', battery: 'grossMarginBatteryMax', misc: 'grossMarginMiscMax' },
+    },
+  ];
+  const setPct = (key, v) => { if (canEdit && v != null) updateParam('margins', key, Math.max(0, Math.min(99, v)) / 100); };
+  const setKwp = (key, v) => { if (canEdit && v != null) updateParam('margins', key, Math.max(0, v)); };
+
+  const th = {
+    textAlign: 'center', fontSize: 12, fontWeight: 600, color: COLORS.text,
+    padding: '6px 8px', borderBottom: `1px solid ${COLORS.border}`, whiteSpace: 'nowrap',
+  };
+  const thLeft = { ...th, textAlign: 'left' };
+  const td = { padding: '6px 8px', textAlign: 'center', verticalAlign: 'middle' };
+  const tdLabel = {
+    padding: '6px 8px', textAlign: 'left', fontSize: 12, color: COLORS.text, whiteSpace: 'nowrap',
+  };
+  const pctCell = (key) => (
+    canEdit
+      ? <NumberInput value={Number(((params[key] ?? 0) * 100).toFixed(4))}
+                     onChange={(v) => setPct(key, v)} step={0.5} min={0} max={99} suffix="%" width={92} />
+      : <div style={{ ...adminStyles.paramValueRO, width: 92, margin: '0 auto' }}>{((params[key] ?? 0) * 100).toFixed(2)}%</div>
+  );
+
+  return (
+    <div style={{ overflowX: 'auto', marginBottom: 12 }}>
+      <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 560 }}>
+        <thead>
+          <tr>
+            <th style={thLeft}>Anchor</th>
+            <th style={th}>kWp</th>
+            <th style={th}>A. Solar</th>
+            <th style={th}>B. Battery</th>
+            <th style={th}>C. Misc</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.kwpKey}>
+              <td style={tdLabel}>
+                <div style={{ fontWeight: 600 }}>{r.label}</div>
+                <div style={{ fontSize: 11, color: COLORS.textMuted }}>{r.sub}</div>
+              </td>
+              <td style={td}>
+                {canEdit
+                  ? <NumberInput value={params[r.kwpKey]} onChange={(v) => setKwp(r.kwpKey, v)}
+                                 step={1} min={0} suffix="kWp" width={96} />
+                  : <div style={{ ...adminStyles.paramValueRO, width: 96, margin: '0 auto' }}>{fmt.num(params[r.kwpKey])} kWp</div>}
+              </td>
+              <td style={td}>{pctCell(r.keys.solar)}</td>
+              <td style={td}>{pctCell(r.keys.battery)}</td>
+              <td style={td}>{pctCell(r.keys.misc)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ─── WeightSlider ──────────────────────────────────────────────────────────
 // v3-96 — replaces the bare "Tenor weight" NumberInput on the Product tab's
 // Interest Rates section. One slider splits the rate-surface blend between the

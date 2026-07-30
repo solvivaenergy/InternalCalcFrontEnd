@@ -155,9 +155,28 @@ export const ADMIN_PARAMS = {
   grossMarginMinKwp: 1,                  // kWp of the min-margin anchor
   grossMarginMidKwp: 15,                 // kWp of the mid-margin anchor (curvature)
   grossMarginMaxKwp: 30,                 // kWp of the max-margin anchor
-  grossMarginMin: 0.20,                  // 20% — small systems / floor
-  grossMarginMid: 0.22,                  // 22% — mid systems (curvature)
-  grossMarginMax: 0.30,                  // 30% — large systems / ceiling / no-panels default
+  grossMarginMin: 0.20,                  // 20% — small systems / floor  (legacy fallback)
+  grossMarginMid: 0.22,                  // 22% — mid systems (curvature) (legacy fallback)
+  grossMarginMax: 0.30,                  // 30% — large / ceiling / no-panels default (legacy fallback)
+  // v3-142 — package-level gross margin CURVES (CEO request). The per-system-size
+  // (kWp) curve is RETAINED, but each package now rides its own curve fitted
+  // through the SAME kWp breakpoints above (min/mid/max @ 1/15/30 kWp):
+  //   A. Solar package   (panels, inverters, solar labor/install, cabling, roof, location, RSD)
+  //   B. Battery package  (battery units, rack, ATS, critical loads, battery labor)
+  //   C. Misc package     (misc catalog lines in Step 2F)
+  // A no-panels order (battery/RSD/inverter-only) prices at that package's MAX
+  // anchor (ceiling), mirroring the legacy no-panels rule. If a package's
+  // anchors are absent in an older saved payload, calculations.js falls back to
+  // the legacy grossMarginMin/Mid/Max curve.
+  grossMarginSolarMin: 0.20,             // Solar @ 1 kWp
+  grossMarginSolarMid: 0.25,             // Solar @ 15 kWp
+  grossMarginSolarMax: 0.30,             // Solar @ 30 kWp / no-panels
+  grossMarginBatteryMin: 0.20,           // Battery @ 1 kWp
+  grossMarginBatteryMid: 0.26,           // Battery @ 15 kWp
+  grossMarginBatteryMax: 0.34,           // Battery @ 30 kWp / no-panels
+  grossMarginMiscMin: 0.20,              // Misc @ 1 kWp
+  grossMarginMiscMid: 0.27,              // Misc @ 15 kWp
+  grossMarginMiscMax: 0.35,              // Misc @ 30 kWp / no-panels
   // The margin used for the ADMIN Inventory/Engineering "DP Price" columns and the
   // boot price derivation — set DIRECTLY (v3-95) rather than via a reference kWp.
   // Default = the max anchor (ceiling price). Does NOT affect quotes; those resolve

@@ -14,12 +14,12 @@
 
 import React from 'react';
 import { COLORS } from './ui.jsx';
-import { rtoRate, grossMarginCurve } from '../lib/calculations.js';
+import { rtoRate, packageMarginForCapacity } from '../lib/calculations.js';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceDot,
 } from 'recharts';
 import {
-  Section, Param, MarginAnchorRow, WeightSlider, PromoCodesTable, MinDpTiersTable, adminStyles,
+  Section, Param, WeightSlider, PromoCodesTable, MinDpTiersTable, PackageMarginMatrix, adminStyles,
 } from './AdminShared.jsx';
 import {
   canEditAdminSection, hasAnyEditAccess,
@@ -142,35 +142,24 @@ export default function ProductTab({
           </div>
         )}
 
-        {/* v3-92 — margin is a GENLINV curve over the array's rated capacity (kWp),
-            same curve family as the interest-rate surface. Three anchors + a
-            reference capacity for admin price display. */}
+         {/* v3-142 — margin is now package-granular AND size-granular. The
+             per-system-size (kWp) curve is retained; each package (A. Solar,
+             B. Battery, C. Misc) rides its own curve through the same three kWp
+             breakpoints below. */}
         <div style={{ marginBottom: 12, fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
-          Gross margin rides a curve over the system&rsquo;s <strong>rated capacity (kWp)</strong> — small
-          arrays earn a lower margin, large arrays a higher one — fitted through three anchors. An order
-          with <strong>no solar panels</strong> (battery / RSD / inverter&#8209;only) is priced at the
-          {' '}<strong>maximum</strong> margin.
+           Gross margin is set per <strong>package</strong> and per <strong>system size</strong>. Each
+           column below (<strong>A. Solar</strong>, <strong>B. Battery</strong>, <strong>C. Misc</strong>)
+           gets its own margin curve, fitted through the three shared kWp anchors (Min / Med / Max).
+           A quote resolves each package line at the curve value for the order&rsquo;s kWp; an order with
+           <strong> no solar panels</strong> prices every package at its Max anchor (ceiling).
         </div>
-        <MarginAnchorRow label="Min gross margin (small systems)"
-               hint="Margin floor (25th-percentile anchor), applied at and below its capacity."
-               marginValue={params.grossMarginMin} onMargin={v => updateParam('margins', 'grossMarginMin', v)}
-               kwpValue={params.grossMarginMinKwp} onKwp={v => updateParam('margins', 'grossMarginMinKwp', v)}
-               canEdit={canEditSection('margins')} />
-        <MarginAnchorRow label="Med gross margin (mid systems)"
-               hint="The 50th-percentile anchor — sets the curvature between min and max."
-               marginValue={params.grossMarginMid} onMargin={v => updateParam('margins', 'grossMarginMid', v)}
-               kwpValue={params.grossMarginMidKwp} onKwp={v => updateParam('margins', 'grossMarginMidKwp', v)}
-               canEdit={canEditSection('margins')} />
-        <MarginAnchorRow label="Max gross margin (large / no-panels)"
-               hint="Margin ceiling (75th-percentile anchor), applied at/above its capacity AND to any no-solar order."
-               marginValue={params.grossMarginMax} onMargin={v => updateParam('margins', 'grossMarginMax', v)}
-               kwpValue={params.grossMarginMaxKwp} onKwp={v => updateParam('margins', 'grossMarginMaxKwp', v)}
-               canEdit={canEditSection('margins')} />
+        <PackageMarginMatrix params={params} updateParam={updateParam}
+                             canEdit={canEditSection('margins')} />
         <Param label="Reference gross margin for admin price display" isPct step={0.005} min={0} max={99}
                value={params.grossMarginReference}
                onChange={v => updateParam('margins', 'grossMarginReference', v)}
                canEdit={canEditSection('margins')}
-               hint="The margin the Inventory / Engineering 'DP Price' columns and the boot price list are computed at. Does NOT affect quotes — those use each system's own capacity-resolved margin. Default = the max anchor (ceiling price)." />
+           hint="The margin used for Inventory/Engineering DP display and boot-time derived prices. Quote math uses the package curves above." />
         <Param label="Merchant Discount Rate" isPct step={0.01} min={0} max={89}
                value={params.merchantDiscountRate}
                onChange={v => updateParam('margins', 'merchantDiscountRate', v)}
@@ -179,22 +168,47 @@ export default function ProductTab({
         <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 8,
                       backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB',
                       fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
-          <div style={{ fontWeight: 600, color: '#111827', marginBottom: 4 }}>
-            Margin by capacity (preview)
+          <div style={{ fontWeight: 600, color: '#111827', marginBottom: 6 }}>
+             Package margin curve preview
           </div>
-          <div style={{ fontFamily: 'monospace', fontSize: 11.5, marginBottom: 4 }}>
-            {[5, 10, 15, 20, 30].map(k => `${k} kWp → ${(grossMarginCurve(k, params) * 100).toFixed(1)}%`).join('    ·    ')}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 11.5, minWidth: 320 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', padding: '2px 10px 4px 0' }}>kWp</th>
+                  <th style={{ textAlign: 'right', padding: '2px 10px 4px' }}>A. Solar</th>
+                  <th style={{ textAlign: 'right', padding: '2px 10px 4px' }}>B. Battery</th>
+                  <th style={{ textAlign: 'right', padding: '2px 0 4px 10px' }}>C. Misc</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[3, 5, 10, 15, 20, 30].map(kwp => {
+                  const panels = Math.max(1, Math.round((kwp * 1000) / 620));
+                  const s = packageMarginForCapacity(kwp, panels, params, 'solar');
+                  const b = packageMarginForCapacity(kwp, panels, params, 'battery');
+                  const m = packageMarginForCapacity(kwp, panels, params, 'misc');
+                  return (
+                    <tr key={kwp}>
+                      <td style={{ textAlign: 'left', padding: '2px 10px 2px 0' }}>{kwp}</td>
+                      <td style={{ textAlign: 'right', padding: '2px 10px' }}>{(s * 100).toFixed(1)}%</td>
+                      <td style={{ textAlign: 'right', padding: '2px 10px' }}>{(b * 100).toFixed(1)}%</td>
+                      <td style={{ textAlign: 'right', padding: '2px 0 2px 10px' }}>{(m * 100).toFixed(1)}%</td>
+                    </tr>
+                  );
+                })}
+                <tr>
+                  <td style={{ textAlign: 'left', padding: '4px 10px 2px 0', borderTop: '1px solid #E5E7EB' }}>no&nbsp;panels</td>
+                  <td style={{ textAlign: 'right', padding: '4px 10px 2px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'solar')) * 100).toFixed(1)}%</td>
+                  <td style={{ textAlign: 'right', padding: '4px 10px 2px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'battery')) * 100).toFixed(1)}%</td>
+                  <td style={{ textAlign: 'right', padding: '4px 0 2px 10px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'misc')) * 100).toFixed(1)}%</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div style={{ marginBottom: 6 }}>
-            No panels → <strong>{(params.grossMarginMax * 100).toFixed(1)}%</strong>
-            {' '}·{' '} Admin price list shown at
-            {' '}<strong>{(params.grossMarginReference * 100).toFixed(1)}%</strong>
-          </div>
+           <div style={{ margin: '8px 0 6px' }}>Admin price list shown at <strong>{(params.grossMarginReference * 100).toFixed(1)}%</strong>.</div>
           Direct Purchase Price = ⌈ COGS × 1.12 ÷ (1 − margin) ÷ {(1.12 * (1 - params.merchantDiscountRate) - 0.12).toFixed(4)} ⌉.
-          COGS is entered pre-VAT because input VAT is creditable — recovered, not spent. Each quote resolves
-          its own margin from actual capacity, so a change here moves the whole price list.
+           COGS is entered pre-VAT because input VAT is creditable — recovered, not spent.
         </div>
-        <GrossMarginPreview params={params} />
       </Section>
 
       {/* ─── Interest Rates (v3-79 — tenor × DP surface) ────────────── */}

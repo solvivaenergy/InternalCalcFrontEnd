@@ -224,22 +224,48 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     return { ok: true };
   })();
 
-  // v3-83 / v3-92 — the margin curve + MDR drive every price in the app; a bad
-  // value blanks the entire price list rather than degrading one number. Gross
-  // margin is now a GENLINV curve over capacity: three anchors that must be
-  // strictly increasing fractions in [0,1), three positive strictly-increasing
-  // kWp breakpoints, and a positive reference kWp (mirrors the server guard).
+  // v3-142 — package-level margins (A/B/C) are primary. Keep legacy curve
+  // validation for older payloads where package-level keys are absent.
   const marginsValid = (() => {
     const MDR_CEILING = 1 - (0.12 / 1.12);   // 0.892857…
-    const { grossMarginMin: q1, grossMarginMid: q2, grossMarginMax: q3,
-            grossMarginMinKwp: x1, grossMarginMidKwp: x2, grossMarginMaxKwp: x3,
-            grossMarginReference: xref, merchantDiscountRate: mdr } = params;
-    if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 < q2 && q2 < q3)) {
-      return { ok: false, msg: 'Gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.' };
-    }
+    const {
+      grossMarginMin: q1,
+      grossMarginMid: q2,
+      grossMarginMax: q3,
+      grossMarginMinKwp: x1,
+      grossMarginMidKwp: x2,
+      grossMarginMaxKwp: x3,
+      grossMarginReference: xref,
+      merchantDiscountRate: mdr,
+    } = params;
+
+    // Shared capacity breakpoints (kWp) — always validated.
     if (![x1, x2, x3].every(v => Number.isFinite(v) && v > 0) || !(x1 < x2 && x2 < x3)) {
       return { ok: false, msg: 'Gross-margin capacity breakpoints (kWp) must be positive and strictly increasing: MinKwp < MidKwp < MaxKwp.' };
     }
+
+    // v3-142 — per-package anchors. Each package's three anchors must be
+    // strictly increasing fractions in [0%, 100%). A package with all three
+    // anchors absent falls back to the legacy curve, which is validated instead.
+    const packages = [
+      { label: 'A. Solar', keys: ['grossMarginSolarMin', 'grossMarginSolarMid', 'grossMarginSolarMax'] },
+      { label: 'B. Battery', keys: ['grossMarginBatteryMin', 'grossMarginBatteryMid', 'grossMarginBatteryMax'] },
+      { label: 'C. Misc', keys: ['grossMarginMiscMin', 'grossMarginMiscMid', 'grossMarginMiscMax'] },
+    ];
+    const anyPackageProvided = packages.some(p => p.keys.some(k => params[k] != null));
+    if (anyPackageProvided) {
+      for (const p of packages) {
+        const [pMin, pMid, pMax] = p.keys.map(k => params[k]);
+        if (![pMin, pMid, pMax].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(pMin < pMid && pMid < pMax)) {
+          return { ok: false, msg: `${p.label} package margins must be strictly increasing fractions in [0%, 100%): Min < Med < Max.` };
+        }
+      }
+    } else {
+      if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 < q2 && q2 < q3)) {
+        return { ok: false, msg: 'Gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.' };
+      }
+    }
+
     if (!Number.isFinite(xref) || xref < 0 || xref >= 1) {
       return { ok: false, msg: 'Reference gross margin must be a fraction in [0%, 100%).' };
     }
