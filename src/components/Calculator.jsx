@@ -43,7 +43,6 @@ import Step2Packages from './Step2Packages.jsx';
 import EnergyVisuals from './EnergyVisuals.jsx';
 import Step3PaymentTerms from './Step3PaymentTerms.jsx';
 import Step4Returns from './Step4Returns.jsx';
-import RotatingTagline from './RotatingTagline.jsx';
 
 export default function Calculator({
   state, updateState, model,
@@ -54,7 +53,6 @@ export default function Calculator({
 }) {
   return (
     <div>
-      <RotatingTagline />
       <Step1Consumption
         state={state} updateState={updateState} model={model}
         onReset={resetStep1}
