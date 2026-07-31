@@ -34,6 +34,7 @@ import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
 import Login from './Login.jsx';
 import ChangePasswordDialog from './ChangePasswordDialog.jsx';
+import ResetPassword from './ResetPassword.jsx';
 import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS } from '../lib/supabaseClient.js';
 import { visibleAdminTabs, canAccessAdminTab } from '../lib/permissions.js';
 import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
