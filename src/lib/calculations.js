@@ -438,7 +438,16 @@ export function grossMarginCurve(systemKwp, adminParams) {
 // Core GENLINV curve over kWp for an explicit anchor triple. Shared by the
 // legacy whole-quote curve and the v3-142 per-package curves so all of them use
 // identical math and only the anchor values differ.
-export function grossMarginCurveFromAnchors(systemKwp, x1, x2, x3, q1, q2, q3, fallback) {
+export function grossMarginCurveFromAnchors(
+  systemKwp,
+  x1,
+  x2,
+  x3,
+  q1,
+  q2,
+  q3,
+  fallback,
+) {
   // Defensive: a hand-edited blob with a degenerate axis must not throw.
   if (
     ![x1, x2, x3, q1, q2, q3].every(Number.isFinite) ||
@@ -446,11 +455,7 @@ export function grossMarginCurveFromAnchors(systemKwp, x1, x2, x3, q1, q2, q3, f
     x2 <= x1 ||
     x2 >= x3
   ) {
-    return Number.isFinite(q3)
-      ? q3
-      : Number.isFinite(fallback)
-        ? fallback
-        : 0;
+    return Number.isFinite(q3) ? q3 : Number.isFinite(fallback) ? fallback : 0;
   }
   const kwp = Number.isFinite(systemKwp) ? systemKwp : x3; // bad kWp → max anchor → q3
   const x = Math.min(x3, Math.max(x1, kwp));
@@ -469,9 +474,13 @@ export function grossMarginCurveFromAnchors(systemKwp, x1, x2, x3, q1, q2, q3, f
 // A package whose anchors are absent (older payload) falls back to the legacy
 // grossMarginMin/Mid/Max curve.
 const PACKAGE_MARGIN_ANCHOR_KEYS = {
-  solar:   ['grossMarginSolarMin',   'grossMarginSolarMid',   'grossMarginSolarMax'],
-  battery: ['grossMarginBatteryMin', 'grossMarginBatteryMid', 'grossMarginBatteryMax'],
-  misc:    ['grossMarginMiscMin',    'grossMarginMiscMid',    'grossMarginMiscMax'],
+  solar: ["grossMarginSolarMin", "grossMarginSolarMid", "grossMarginSolarMax"],
+  battery: [
+    "grossMarginBatteryMin",
+    "grossMarginBatteryMid",
+    "grossMarginBatteryMax",
+  ],
+  misc: ["grossMarginMiscMin", "grossMarginMiscMid", "grossMarginMiscMax"],
 };
 
 // Resolve a package's three margin anchors, falling back to the legacy anchors
@@ -481,9 +490,9 @@ export function resolvePackageMarginAnchors(adminParams, pkg) {
   const keys = PACKAGE_MARGIN_ANCHOR_KEYS[pkg];
   const pick = (k, legacy) => (Number.isFinite(ap[k]) ? ap[k] : ap[legacy]);
   return {
-    q1: pick(keys[0], 'grossMarginMin'),
-    q2: pick(keys[1], 'grossMarginMid'),
-    q3: pick(keys[2], 'grossMarginMax'),
+    q1: pick(keys[0], "grossMarginMin"),
+    q2: pick(keys[1], "grossMarginMid"),
+    q3: pick(keys[2], "grossMarginMax"),
   };
 }
 
@@ -499,18 +508,27 @@ export function grossMarginForCapacity(systemKwp, panelCount, adminParams) {
 
 // v3-142 — the margin applied to a specific PACKAGE (solar/battery/misc) for a
 // quote. Same no-panels ceiling rule as grossMarginForCapacity, but per package.
-export function packageMarginForCapacity(systemKwp, panelCount, adminParams, pkg) {
+export function packageMarginForCapacity(
+  systemKwp,
+  panelCount,
+  adminParams,
+  pkg,
+) {
   const ap = adminParams || {};
   const { q1, q2, q3 } = resolvePackageMarginAnchors(ap, pkg);
   if (!(panelCount > 0)) {
-    return Number.isFinite(q3) ? q3 : (ap.grossMarginMax ?? ap.grossMargin ?? 0);
+    return Number.isFinite(q3)
+      ? q3
+      : (ap.grossMarginMax ?? ap.grossMargin ?? 0);
   }
   return grossMarginCurveFromAnchors(
     systemKwp,
     ap.grossMarginMinKwp,
     ap.grossMarginMidKwp,
     ap.grossMarginMaxKwp,
-    q1, q2, q3,
+    q1,
+    q2,
+    q3,
     ap.grossMargin,
   );
 }
@@ -898,9 +916,24 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // v3-142 — per-package margin CURVES (A/B/C). The per-system-size (kWp) curve
   // is retained: each package rides its own curve through the shared kWp
   // breakpoints. No-panels orders price at each package's max anchor (ceiling).
-  const solarMargin = packageMarginForCapacity(systemKwp, panelCount, adminParams, "solar");
-  const batteryMargin = packageMarginForCapacity(systemKwp, panelCount, adminParams, "battery");
-  const miscMargin = packageMarginForCapacity(systemKwp, panelCount, adminParams, "misc");
+  const solarMargin = packageMarginForCapacity(
+    systemKwp,
+    panelCount,
+    adminParams,
+    "solar",
+  );
+  const batteryMargin = packageMarginForCapacity(
+    systemKwp,
+    panelCount,
+    adminParams,
+    "battery",
+  );
+  const miscMargin = packageMarginForCapacity(
+    systemKwp,
+    panelCount,
+    adminParams,
+    "misc",
+  );
 
   // Re-price solar-scope derived fields at the solar package margin.
   const ap = {
@@ -1113,12 +1146,32 @@ export function buildPackageLineItems(state, adminParams, schedule) {
       : 0;
   const rackCount =
     batteryCount > 0 ? Math.ceil(batteryCount / pkg.batteryRackCapacity) : 0;
-  const batteryUnitPrice = directFromCogs(pkg.batteryUnitCogs, ap, batteryMargin);
-  const batteryRackPrice = directFromCogs(pkg.batteryRackCogs, ap, batteryMargin);
+  const batteryUnitPrice = directFromCogs(
+    pkg.batteryUnitCogs,
+    ap,
+    batteryMargin,
+  );
+  const batteryRackPrice = directFromCogs(
+    pkg.batteryRackCogs,
+    ap,
+    batteryMargin,
+  );
   const atsPrice = directFromCogs(pkg.atsCogs, ap, batteryMargin);
-  const critLoadsPrice = directFromCogs(pkg.criticalLoadsMaterialsCogs, ap, batteryMargin);
-  const batteryLaborWithSolarPrice = directFromCogs(pkg.laborWithSolarInstallCogs, ap, batteryMargin);
-  const batteryStandaloneLaborPrice = directFromCogs(pkg.standaloneLaborCogs, ap, batteryMargin);
+  const critLoadsPrice = directFromCogs(
+    pkg.criticalLoadsMaterialsCogs,
+    ap,
+    batteryMargin,
+  );
+  const batteryLaborWithSolarPrice = directFromCogs(
+    pkg.laborWithSolarInstallCogs,
+    ap,
+    batteryMargin,
+  );
+  const batteryStandaloneLaborPrice = directFromCogs(
+    pkg.standaloneLaborCogs,
+    ap,
+    batteryMargin,
+  );
 
   const batteryDirect = batteryCount * batteryUnitPrice;
   const rackDirect = rackCount * batteryRackPrice;

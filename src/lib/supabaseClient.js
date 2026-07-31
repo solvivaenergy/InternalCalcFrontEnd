@@ -165,7 +165,9 @@ const authApi = {
     } catch (error) {
       return {
         data: { session: null, user: null },
-        error: { message: error?.message || "Sign in failed. Please try again." },
+        error: {
+          message: error?.message || "Sign in failed. Please try again.",
+        },
       };
     }
   },

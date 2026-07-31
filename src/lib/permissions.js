@@ -39,48 +39,49 @@
 // =============================================================================
 
 export const ADMIN_SECTIONS = {
-  quoteValidity:     'Quote Validity',
-  quoteLimits:       'Quote Limits',
-  step1Defaults:     'Step 1 Defaults',
-  margins:           'Gross Margin & Merchant Discount',
-  interestRates:     'Interest Rates',
-  solarPanel:        'Solar Panel & Mounting',
-  variableCharges:   'Variable Charges',
-  roofMaterial:      'Roof Material (per kWp)',
-  location:          'Location / Delivery Charges',
-  cabling:           'AC/DC Cables, Conduits, Fittings, Panel Board & Other Devices (% of Panels Price)',
-  batteryPackage:    'Battery Packages',
-  standaloneCharges: 'Standalone Retrofit Charges',
-  fixedOverhead:     'Fixed Overhead',
-  scheduleConstants: 'Schedule Constants',
-  promoCodes:        'Promo Codes',
-  maintenance:       'Maintenance Mode',
+  quoteValidity: "Quote Validity",
+  quoteLimits: "Quote Limits",
+  step1Defaults: "Step 1 Defaults",
+  margins: "Gross Margin & Merchant Discount",
+  interestRates: "Interest Rates",
+  solarPanel: "Solar Panel & Mounting",
+  variableCharges: "Variable Charges",
+  roofMaterial: "Roof Material (per kWp)",
+  location: "Location / Delivery Charges",
+  cabling:
+    "AC/DC Cables, Conduits, Fittings, Panel Board & Other Devices (% of Panels Price)",
+  batteryPackage: "Battery Packages",
+  standaloneCharges: "Standalone Retrofit Charges",
+  fixedOverhead: "Fixed Overhead",
+  scheduleConstants: "Schedule Constants",
+  promoCodes: "Promo Codes",
+  maintenance: "Maintenance Mode",
 };
 
 // Per-role allowlists. 'edit' (Super Admin) is implicit-everything; do NOT
 // include it here — checks below treat it as wildcard.
 const ROLE_ADMIN_SECTIONS = {
   engineering: new Set([
-    'solarPanel',
-    'variableCharges',
-    'roofMaterial',
-    'miscCatalog',   // v3-138 — Step 2F standing catalog
-    'location',
-    'cabling',
-    'batteryPackage',
-    'standaloneCharges',
-    'fixedOverhead',
-    'scheduleConstants',
-    'maintenance',
+    "solarPanel",
+    "variableCharges",
+    "roofMaterial",
+    "miscCatalog", // v3-138 — Step 2F standing catalog
+    "location",
+    "cabling",
+    "batteryPackage",
+    "standaloneCharges",
+    "fixedOverhead",
+    "scheduleConstants",
+    "maintenance",
   ]),
   product: new Set([
-    'margins',          // v3-83 — the two levers that drive every derived price
-    'quoteValidity',
-    'quoteLimits',      // v3-68 — min system size / min DP / max tenor
-    'step1Defaults',    // v3-70 — default utility rate / monthly bill
-    'interestRates',
-    'promoCodes',
-    'maintenance',
+    "margins", // v3-83 — the two levers that drive every derived price
+    "quoteValidity",
+    "quoteLimits", // v3-68 — min system size / min DP / max tenor
+    "step1Defaults", // v3-70 — default utility rate / monthly bill
+    "interestRates",
+    "promoCodes",
+    "maintenance",
   ]),
 };
 
@@ -97,28 +98,28 @@ const ROLE_INVENTORY_ACCESS = {
 //   product (Consumer Finance) → Product only
 //   view (Audit)               → all three tabs (read-only)
 const ROLE_ADMIN_TABS = {
-  edit:        ['inventory', 'engineering', 'product'],
-  engineering: ['inventory', 'engineering'],
-  product:     ['product'],
-  view:        ['inventory', 'engineering', 'product'],
+  edit: ["inventory", "engineering", "product"],
+  engineering: ["inventory", "engineering"],
+  product: ["product"],
+  view: ["inventory", "engineering", "product"],
 };
 
 const ROLE_LABELS = {
-  edit:        'Management',
-  engineering: 'Engineering',
-  product:     'Consumer Finance',
-  view:        'View only',
+  edit: "Management",
+  engineering: "Engineering",
+  product: "Consumer Finance",
+  view: "View only",
 };
 
 // ─── Public helpers ──────────────────────────────────────────────────────────
 
 export function roleLabel(role) {
-  return ROLE_LABELS[role] || 'Unknown';
+  return ROLE_LABELS[role] || "Unknown";
 }
 
 // Can this role edit the given Admin Parameters section?
 export function canEditAdminSection(role, sectionKey) {
-  if (role === 'edit') return true;
+  if (role === "edit") return true;
   const set = ROLE_ADMIN_SECTIONS[role];
   return set ? set.has(sectionKey) : false;
 }
@@ -126,7 +127,7 @@ export function canEditAdminSection(role, sectionKey) {
 // Can this role edit anything in the Inventory pane (panel settings,
 // inverters, battery packages, device library)?
 export function canEditInventory(role) {
-  if (role === 'edit') return true;
+  if (role === "edit") return true;
   return !!ROLE_INVENTORY_ACCESS[role];
 }
 
@@ -144,8 +145,8 @@ export function canAccessAdminTab(role, tab) {
 // Does this role have ANY edit power somewhere?
 // (Used to decide whether to show Save bar.)
 export function hasAnyEditAccess(role) {
-  if (role === 'edit') return true;
-  if (role === 'engineering' || role === 'product') return true;
+  if (role === "edit") return true;
+  if (role === "engineering" || role === "product") return true;
   return false;
 }
 
@@ -154,93 +155,93 @@ export function hasAnyEditAccess(role) {
 // sections — and also mirrored server-side as the security boundary.
 export const PARAM_KEY_TO_SECTION = {
   // Interest Rates
-  financingEntityName:           'margins',
-  financingEntityIsSeparate:     'margins',
-  grossMarginMinKwp:             'margins',
-  grossMarginMidKwp:             'margins',
-  grossMarginMaxKwp:             'margins',
-  grossMarginMin:                'margins',
-  grossMarginMid:                'margins',
-  grossMarginMax:                'margins',
-  grossMarginSolarMin:           'margins',
-  grossMarginSolarMid:           'margins',
-  grossMarginSolarMax:           'margins',
-  grossMarginBatteryMin:         'margins',
-  grossMarginBatteryMid:         'margins',
-  grossMarginBatteryMax:         'margins',
-  grossMarginMiscMin:            'margins',
-  grossMarginMiscMid:            'margins',
-  grossMarginMiscMax:            'margins',
-  grossMarginReference:          'margins',
-  merchantDiscountRate:          'margins',
-  rateAnchorMax:                 'interestRates',
-  rateAnchorMid:                 'interestRates',
-  rateAnchorMin:                 'interestRates',
-  rateTenorWeight:               'interestRates',
-  rateStepPct:                   'interestRates',
-  earlyPayoffDiscountRate:       'interestRates',
-  documentaryStampTaxRate:       'interestRates',   // v3-100 — Product-editable DST rate
+  financingEntityName: "margins",
+  financingEntityIsSeparate: "margins",
+  grossMarginMinKwp: "margins",
+  grossMarginMidKwp: "margins",
+  grossMarginMaxKwp: "margins",
+  grossMarginMin: "margins",
+  grossMarginMid: "margins",
+  grossMarginMax: "margins",
+  grossMarginSolarMin: "margins",
+  grossMarginSolarMid: "margins",
+  grossMarginSolarMax: "margins",
+  grossMarginBatteryMin: "margins",
+  grossMarginBatteryMid: "margins",
+  grossMarginBatteryMax: "margins",
+  grossMarginMiscMin: "margins",
+  grossMarginMiscMid: "margins",
+  grossMarginMiscMax: "margins",
+  grossMarginReference: "margins",
+  merchantDiscountRate: "margins",
+  rateAnchorMax: "interestRates",
+  rateAnchorMid: "interestRates",
+  rateAnchorMin: "interestRates",
+  rateTenorWeight: "interestRates",
+  rateStepPct: "interestRates",
+  earlyPayoffDiscountRate: "interestRates",
+  documentaryStampTaxRate: "interestRates", // v3-100 — Product-editable DST rate
   // Solar Panel & Mounting
-  mountingSupportFloorCogs:        'solarPanel',
-  mountingSupportPctOfPanels:    'solarPanel',
+  mountingSupportFloorCogs: "solarPanel",
+  mountingSupportPctOfPanels: "solarPanel",
   // Variable Charges
-  additionalDcCablePerMeterCogs:   'variableCharges',
-  additionalAcCablePerMeterCogs:   'variableCharges',
-  laborInstallationPerKwpCogs:     'variableCharges',
-  rsdVariablePerPanelCogs:         'variableCharges',
-  rsdFixedTransmitterCogs:         'variableCharges',
-  rsdAvailable:                    'variableCharges',   // v3-106 — RSD stock flag
+  additionalDcCablePerMeterCogs: "variableCharges",
+  additionalAcCablePerMeterCogs: "variableCharges",
+  laborInstallationPerKwpCogs: "variableCharges",
+  rsdVariablePerPanelCogs: "variableCharges",
+  rsdFixedTransmitterCogs: "variableCharges",
+  rsdAvailable: "variableCharges", // v3-106 — RSD stock flag
   // Roof Material
-  roofAsphaltPerKwpCogs:           'roofMaterial',
-  roofConcretePerKwpCogs:          'roofMaterial',
+  roofAsphaltPerKwpCogs: "roofMaterial",
+  roofConcretePerKwpCogs: "roofMaterial",
   // Misc Materials / Labor / Services catalog (v3-138)
-  miscCatalog:                     'miscCatalog',
+  miscCatalog: "miscCatalog",
   // Location / Delivery
-  deliveryLocations:               'location',   // v3-116 — replaces the 4 Cebu/Siargao scalars
-  luzonOver30FixedFeeCogs:         'location',
-  luzonOver30PerKmCogs:            'location',
+  deliveryLocations: "location", // v3-116 — replaces the 4 Cebu/Siargao scalars
+  luzonOver30FixedFeeCogs: "location",
+  luzonOver30PerKmCogs: "location",
   // Cabling
-  cablingTiers:                  'cabling',
-  cablingTiersThreePhase:        'cabling',   // NEW v3-62 — 3-phase tier table
+  cablingTiers: "cabling",
+  cablingTiersThreePhase: "cabling", // NEW v3-62 — 3-phase tier table
   // Battery Packages (v3-54: replaces the 6 flat batteryPer5kWhPrice/etc keys
   // with a single array). Edit gate stays on the 'batteryPackage' section.
-  batteryPackages:               'batteryPackage',
+  batteryPackages: "batteryPackage",
   // Standalone Retrofit Charges (RSD-only / Inverter-only orders without solar)
-  rsdStandaloneLaborPerPanelCogs:  'standaloneCharges',
-  rsdStandaloneLaborMobilizationCogs: 'standaloneCharges',
-  inverterStandaloneLaborPerUnitCogs: 'standaloneCharges',
-  inverterStandaloneMobilizationCogs: 'standaloneCharges',
+  rsdStandaloneLaborPerPanelCogs: "standaloneCharges",
+  rsdStandaloneLaborMobilizationCogs: "standaloneCharges",
+  inverterStandaloneLaborPerUnitCogs: "standaloneCharges",
+  inverterStandaloneMobilizationCogs: "standaloneCharges",
   // Fixed Overhead (rolled into "Solar Labor & Installation" line on the quote)
-  fixedOverheadDeliveryLogisticsCogs: 'fixedOverhead',
-  fixedOverheadWarehouseCogs:      'fixedOverhead',
-  fixedOverheadCustomsCogs:        'fixedOverhead',
-  fixedOverheadSafetySupervisionCogs: 'fixedOverhead',
-  fixedOverheadTestingCogs:        'fixedOverhead',
+  fixedOverheadDeliveryLogisticsCogs: "fixedOverhead",
+  fixedOverheadWarehouseCogs: "fixedOverhead",
+  fixedOverheadCustomsCogs: "fixedOverhead",
+  fixedOverheadSafetySupervisionCogs: "fixedOverhead",
+  fixedOverheadTestingCogs: "fixedOverhead",
   // Schedule Constants
-  kWhPerKwpPerDay:               'scheduleConstants',
-  batteryEfficiency:             'scheduleConstants',
-  maxDailySpillKwh:              'scheduleConstants',   // v3-132 — Mode-1 spill tolerance
-  batteryDepthOfDischarge:       'scheduleConstants',
-  panelAnnualDegradation:        'scheduleConstants',
-  lcoeNpvDiscountRate:           'scheduleConstants',
-  maintenanceInflationRate:      'scheduleConstants',
-  netMeteringEfficiency:         'scheduleConstants',
-  preventiveMaintenancePerPanelCogs: 'scheduleConstants',
-  preventiveMaintenancePerVisitCogs: 'scheduleConstants',
-  minDaysToFirstPostInstallPayment: 'scheduleConstants',
+  kWhPerKwpPerDay: "scheduleConstants",
+  batteryEfficiency: "scheduleConstants",
+  maxDailySpillKwh: "scheduleConstants", // v3-132 — Mode-1 spill tolerance
+  batteryDepthOfDischarge: "scheduleConstants",
+  panelAnnualDegradation: "scheduleConstants",
+  lcoeNpvDiscountRate: "scheduleConstants",
+  maintenanceInflationRate: "scheduleConstants",
+  netMeteringEfficiency: "scheduleConstants",
+  preventiveMaintenancePerPanelCogs: "scheduleConstants",
+  preventiveMaintenancePerVisitCogs: "scheduleConstants",
+  minDaysToFirstPostInstallPayment: "scheduleConstants",
   // Promo Codes
-  promoCodes:                    'promoCodes',
+  promoCodes: "promoCodes",
   // Quote Validity
-  quoteValidityDays:             'quoteValidity',
+  quoteValidityDays: "quoteValidity",
   // Quote Limits (v3-68)
-  minSystemKwp:                  'quoteLimits',
-  minDpTiers:                    'quoteLimits',   // v3-75 — replaces scalar minDownPaymentPct
-  maxTenorMonths:                'quoteLimits',
+  minSystemKwp: "quoteLimits",
+  minDpTiers: "quoteLimits", // v3-75 — replaces scalar minDownPaymentPct
+  maxTenorMonths: "quoteLimits",
   // Step 1 Defaults (v3-70)
-  defaultUtilityRate:            'step1Defaults',
-  defaultMonthlyBill:            'step1Defaults',
+  defaultUtilityRate: "step1Defaults",
+  defaultMonthlyBill: "step1Defaults",
   // Maintenance Mode
-  gateAuthEnabled:               'maintenance',
+  gateAuthEnabled: "maintenance",
 };
 
 // "Quote Validity" persists via ADMIN_PARAMS.quoteValidityDays (added v3-15).
