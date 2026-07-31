@@ -9,7 +9,7 @@
 // =============================================================================
 
 import React, { useState } from 'react';
-import { supabase } from '../lib/supabaseClient.js';
+import { supabase, sendPasswordReset } from '../lib/supabaseClient.js';
 import { COLORS } from './ui.jsx';
 
 export default function Login() {
@@ -18,6 +18,10 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  // 'signin' = credentials form; 'forgot' = request a reset email.
+  const [view, setView] = useState('signin');
+  const [resetSubmitting, setResetSubmitting] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   const canSubmit = email.trim() !== '' && password !== '' && !submitting;
 
@@ -42,8 +46,25 @@ export default function Login() {
     // onAuthStateChange and will re-render into the routed view automatically.
   };
 
+  const handleReset = async (e) => {
+    e.preventDefault();
+    if (resetSubmitting) return;
+    if (email.trim() === '') { setError('Enter your account email first.'); return; }
+    setResetSubmitting(true);
+    setError(null);
+    await sendPasswordReset(email.trim(), window.location.origin);
+    // Always show a neutral confirmation — never reveal whether the email is
+    // registered, so the form can't be used to enumerate accounts.
+    setResetSent(true);
+    setResetSubmitting(false);
+  };
+
+  const goForgot = () => { setView('forgot'); setError(null); setResetSent(false); };
+  const goSignin = () => { setView('signin'); setError(null); };
+
   return (
     <div style={styles.page}>
+      {view === 'signin' ? (
       <form style={styles.card} onSubmit={handleSubmit}>
         <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} />
         <h1 style={styles.title}>Sign in</h1>
@@ -85,6 +106,10 @@ export default function Login() {
           </button>
         </div>
 
+        <button type="button" onClick={goForgot} style={styles.forgotLink}>
+          Forgot password?
+        </button>
+
         {error && <div style={styles.error} role="alert">{error}</div>}
 
         <button type="submit" disabled={!canSubmit} style={{
@@ -94,6 +119,55 @@ export default function Login() {
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
+      ) : (
+      <form style={styles.card} onSubmit={handleReset}>
+        <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} />
+        <h1 style={styles.title}>Reset password</h1>
+
+        {resetSent ? (
+          <>
+            <div style={styles.success} role="status">
+              If an account exists for <strong>{email.trim()}</strong>, a
+              password-reset link is on its way. Check your inbox (and spam).
+            </div>
+            <button type="button" onClick={goSignin} style={styles.button}>
+              Back to sign in
+            </button>
+          </>
+        ) : (
+          <>
+            <p style={styles.subtitle}>
+              Enter your account email and we&rsquo;ll send you a link to set a
+              new password.
+            </p>
+
+            <label style={styles.label} htmlFor="reset-email">Email</label>
+            <input
+              id="reset-email"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setError(null); }}
+              placeholder="you@solvivaenergy.com"
+              style={styles.input}
+              autoFocus
+            />
+
+            {error && <div style={styles.error} role="alert">{error}</div>}
+
+            <button type="submit" disabled={resetSubmitting} style={{
+              ...styles.button,
+              ...(resetSubmitting ? styles.buttonDisabled : {}),
+            }}>
+              {resetSubmitting ? 'Sending…' : 'Send reset link'}
+            </button>
+            <button type="button" onClick={goSignin} style={styles.linkButton}>
+              Back to sign in
+            </button>
+          </>
+        )}
+      </form>
+      )}
       <div style={styles.footer}>
         © 2026 Solviva Energy. An AboitizPower Company.
       </div>
@@ -147,6 +221,21 @@ const styles = {
     fontSize: 13, color: COLORS.error, marginBottom: 16, fontWeight: 500,
     backgroundColor: '#FEF2F2', border: '1px solid #FECACA',
     borderRadius: 6, padding: '8px 12px',
+  },
+  success: {
+    fontSize: 13, color: COLORS.brandGreen, marginBottom: 16, fontWeight: 500,
+    backgroundColor: '#F0FDF4', border: '1px solid #BBF7D0',
+    borderRadius: 6, padding: '8px 12px', lineHeight: 1.5,
+  },
+  forgotLink: {
+    background: 'transparent', border: 'none', color: COLORS.brandGreen,
+    fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+    padding: 0, marginBottom: 16, alignSelf: 'flex-end',
+  },
+  linkButton: {
+    background: 'transparent', border: 'none', color: COLORS.textMuted,
+    fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+    marginTop: 12, padding: 4, alignSelf: 'center',
   },
   button: {
     width: '100%', padding: '12px', fontSize: 14, fontWeight: 600,

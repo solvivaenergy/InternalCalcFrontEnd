@@ -89,7 +89,11 @@ const realSupabase = HAS_SUPABASE_CONFIG
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: false,
+        // Implicit flow + URL detection so a password-reset link works even
+        // when opened in a different browser/device than the one that
+        // requested it, and fires a PASSWORD_RECOVERY auth event on return.
+        flowType: "implicit",
+        detectSessionInUrl: true,
       },
     })
   : null;
@@ -201,6 +205,26 @@ const authApi = {
       };
     }
   },
+  resetPasswordForEmail: async (email, options) => {
+    if (!realSupabase) {
+      return {
+        data: null,
+        error: {
+          message: "Password reset is unavailable in local no-auth mode.",
+        },
+      };
+    }
+    try {
+      return await realSupabase.auth.resetPasswordForEmail(email, options);
+    } catch (error) {
+      return {
+        data: null,
+        error: {
+          message: error?.message || "Failed to send the reset email.",
+        },
+      };
+    }
+  },
 };
 
 export const supabase = {
@@ -222,6 +246,7 @@ export const ROLES = Object.freeze({
   ADMIN: "admin",
   ENGINEERING: "engineering",
   PRODUCT: "product",
+  INVENTORY: "inventory",
   VIEW: "view",
   REP: "rep",
   CUSTOMER: "customer",
@@ -233,6 +258,7 @@ export const ADMIN_ROLE_TO_ACCESS = Object.freeze({
   admin: "edit",
   engineering: "engineering",
   product: "product",
+  inventory: "inventory",
   view: "view",
 });
 
@@ -282,4 +308,15 @@ export async function getCurrentUserEmail() {
 // active session, so no user id is needed here.
 export async function updateUserPassword(newPassword) {
   return supabase.auth.updateUser({ password: newPassword });
+}
+
+// Send a password-reset email. The link returns the user to `redirectTo`
+// (which must be allowlisted in Supabase Auth → URL Configuration → Redirect
+// URLs), where the app detects the recovery session (PASSWORD_RECOVERY event)
+// and shows the reset-password screen.
+export async function sendPasswordReset(email, redirectTo) {
+  return supabase.auth.resetPasswordForEmail(
+    email,
+    redirectTo ? { redirectTo } : undefined,
+  );
 }

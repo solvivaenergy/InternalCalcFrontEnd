@@ -83,11 +83,14 @@ const ROLE_ADMIN_SECTIONS = {
     "promoCodes",
     "maintenance",
   ]),
+  // Inventory-only editor — sees just the Inventory tab and its sections.
+  inventory: new Set(["solarPanel", "cabling", "batteryPackage"]),
 };
 
 const ROLE_INVENTORY_ACCESS = {
   // Super Admin handled separately as wildcard.
   engineering: true,
+  inventory: true,
   product: false,
 };
 
@@ -101,6 +104,7 @@ const ROLE_ADMIN_TABS = {
   edit: ["inventory", "engineering", "product"],
   engineering: ["inventory", "engineering"],
   product: ["product"],
+  inventory: ["inventory"],
   view: ["inventory", "engineering", "product"],
 };
 
@@ -108,6 +112,7 @@ const ROLE_LABELS = {
   edit: "Management",
   engineering: "Engineering",
   product: "Consumer Finance",
+  inventory: "Inventory",
   view: "View only",
 };
 
@@ -146,7 +151,8 @@ export function canAccessAdminTab(role, tab) {
 // (Used to decide whether to show Save bar.)
 export function hasAnyEditAccess(role) {
   if (role === "edit") return true;
-  if (role === "engineering" || role === "product") return true;
+  if (role === "engineering" || role === "product" || role === "inventory")
+    return true;
   return false;
 }
 

@@ -230,14 +230,19 @@ export default function App() {
   const [session, setSession] = useState(undefined);
   const [role, setRole] = useState(null);
   const [roleLoading, setRoleLoading] = useState(false);
+  // Set when the user arrives from a password-reset email link. Takes over the
+  // UI (shows ResetPassword) even though a temporary recovery session exists.
+  const [recovery, setRecovery] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     supabase.auth.getSession().then(({ data }) => {
       if (mounted) setSession(data?.session ?? null);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
-      if (mounted) setSession(next ?? null);
+    const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
+      if (!mounted) return;
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
+      setSession(next ?? null);
     });
     return () => { mounted = false; sub?.subscription?.unsubscribe(); };
   }, []);
@@ -261,6 +266,15 @@ export default function App() {
     // onAuthStateChange clears session → Login renders.
   };
 
+  // A password-reset link takes precedence over every other view.
+  if (recovery) {
+    return (
+      <ResetPassword onDone={async () => {
+        setRecovery(false);
+        await supabase.auth.signOut();
+      }} />
+    );
+  }
   if (session === undefined || (session && roleLoading) || (session && !role)) {
     return <BootSplash />;
   }
