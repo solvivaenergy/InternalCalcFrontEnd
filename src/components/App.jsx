@@ -33,6 +33,7 @@ import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
 import Login from './Login.jsx';
+import ChangePasswordDialog from './ChangePasswordDialog.jsx';
 import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS } from '../lib/supabaseClient.js';
 import { visibleAdminTabs, canAccessAdminTab } from '../lib/permissions.js';
 import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
@@ -1156,6 +1157,7 @@ function Header({ brand, contact, setContact, agent, updateAgent,
                   editing, setEditing, requireForPdf, onAgentClick,
                   mode, onLockMode, onRepLockClick, onSignOut, leadState, leadModel }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+  const [showChangePw, setShowChangePw] = useState(false);
 
   if (editing) {
     return (
@@ -1272,12 +1274,22 @@ function Header({ brand, contact, setContact, agent, updateAgent,
             </button>
           )}
           {onSignOut && (
+            <button
+              onClick={() => setShowChangePw(true)}
+              style={styles.signOutBtn}
+              title="Change password"
+            >
+              Change password
+            </button>
+          )}
+          {onSignOut && (
             <button onClick={onSignOut} style={styles.signOutBtn} title="Sign out">
               Sign out
             </button>
           )}
         </div>
       </div>
+      {showChangePw && <ChangePasswordDialog onClose={() => setShowChangePw(false)} />}
     </header>
   );
 }

@@ -183,6 +183,24 @@ const authApi = {
       return fallbackAuth.signOut();
     }
   },
+  updateUser: async (attributes) => {
+    if (!realSupabase) {
+      return {
+        data: { user: null },
+        error: {
+          message: "Password change is unavailable in local no-auth mode.",
+        },
+      };
+    }
+    try {
+      return await realSupabase.auth.updateUser(attributes);
+    } catch (error) {
+      return {
+        data: { user: null },
+        error: { message: error?.message || "Failed to update the account." },
+      };
+    }
+  },
 };
 
 export const supabase = {
@@ -251,4 +269,17 @@ export async function fetchUserRole(userId) {
 export async function getAccessToken() {
   const { data } = await supabase.auth.getSession();
   return data?.session?.access_token || "";
+}
+
+// Email of the signed-in user, or '' when signed out. Used by the
+// change-password flow to re-authenticate before setting a new password.
+export async function getCurrentUserEmail() {
+  const { data } = await supabase.auth.getSession();
+  return data?.session?.user?.email || "";
+}
+
+// Change the signed-in user's password. Supabase's updateUser() acts on the
+// active session, so no user id is needed here.
+export async function updateUserPassword(newPassword) {
+  return supabase.auth.updateUser({ password: newPassword });
 }

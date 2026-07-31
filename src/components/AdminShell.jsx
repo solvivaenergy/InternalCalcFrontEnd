@@ -245,8 +245,9 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     }
 
     // v3-142 — per-package anchors. Each package's three anchors must be
-    // strictly increasing fractions in [0%, 100%). A package with all three
-    // anchors absent falls back to the legacy curve, which is validated instead.
+    // non-decreasing fractions in [0%, 100%). Equal anchors are allowed (a flat
+    // margin, e.g. battery 32/32/32) — the curve degrades to a constant. A
+    // package with all three anchors absent falls back to the legacy curve.
     const packages = [
       { label: 'A. Solar', keys: ['grossMarginSolarMin', 'grossMarginSolarMid', 'grossMarginSolarMax'] },
       { label: 'B. Battery', keys: ['grossMarginBatteryMin', 'grossMarginBatteryMid', 'grossMarginBatteryMax'] },
@@ -256,13 +257,13 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     if (anyPackageProvided) {
       for (const p of packages) {
         const [pMin, pMid, pMax] = p.keys.map(k => params[k]);
-        if (![pMin, pMid, pMax].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(pMin < pMid && pMid < pMax)) {
-          return { ok: false, msg: `${p.label} package margins must be strictly increasing fractions in [0%, 100%): Min < Med < Max.` };
+        if (![pMin, pMid, pMax].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(pMin <= pMid && pMid <= pMax)) {
+          return { ok: false, msg: `${p.label} package margins must be non-decreasing fractions in [0%, 100%): Min ≤ Med ≤ Max.` };
         }
       }
     } else {
-      if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 < q2 && q2 < q3)) {
-        return { ok: false, msg: 'Gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.' };
+      if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 <= q2 && q2 <= q3)) {
+        return { ok: false, msg: 'Gross-margin anchors must be non-decreasing fractions in [0%, 100%): Min ≤ Mid ≤ Max.' };
       }
     }
 
