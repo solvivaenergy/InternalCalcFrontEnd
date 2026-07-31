@@ -267,7 +267,16 @@ export default function App() {
   if (!session) {
     return <Login />;
   }
-  return <CalculatorApp key={role} role={role} onSignOut={handleSignOut} />;
+  // Identity of the signed-in sales rep, used to auto-populate the Solviva
+  // Agent details fields. display_name + mobile are stored in user_metadata by
+  // the backend rep-seeding script; email comes from the auth account itself.
+  const repIdentity = role === 'rep' && session.user ? {
+    uid:   session.user.id,
+    name:  session.user.user_metadata?.display_name || '',
+    email: session.user.email || '',
+    phone: session.user.user_metadata?.mobile || '',
+  } : null;
+  return <CalculatorApp key={role} role={role} repIdentity={repIdentity} onSignOut={handleSignOut} />;
 }
 
 // Minimal centered splash used while the session/role resolve, matching the
@@ -287,7 +296,7 @@ function BootSplash() {
   );
 }
 
-function CalculatorApp({ role, onSignOut }) {
+function CalculatorApp({ role, repIdentity, onSignOut }) {
   // Role → calculator routing. Admin-tier roles land in the AdminShell editor
   // (accessLevel maps DB 'admin' → the calculator's internal 'edit' Super
   // Admin level); 'rep' opens the full sales-rep calculator; everyone else
@@ -357,7 +366,16 @@ function CalculatorApp({ role, onSignOut }) {
     // the same browser session but is cleared automatically when the tab/
     // browser closes — handles the shared-laptop case where one agent's
     // info shouldn't carry into another agent's later session.
-    const AGENT_RECORD_VERSION = 2;
+    const AGENT_RECORD_VERSION = 3;
+    // When a sales rep is signed in, their own name/email/mobile become the
+    // default agent identity (pulled from their account, no manual entry).
+    const repDefault = repIdentity
+      ? {
+          name:  repIdentity.name || '',
+          email: repIdentity.email || AGENT.email,
+          phone: repIdentity.phone ? formatPhPhone(repIdentity.phone) : '',
+        }
+      : { name: AGENT.name, email: AGENT.email, phone: AGENT.phone };
     try {
       // One-time cleanup: prior versions stored agent details in localStorage.
       // Wipe any stale record so it doesn't persist past today's deploy.
@@ -366,27 +384,36 @@ function CalculatorApp({ role, onSignOut }) {
       const saved = sessionStorage.getItem('solviva_agent');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed._v === AGENT_RECORD_VERSION) {
-          // Use saved values as-stored; do NOT use `||` fallback to AGENT
-          // defaults, because that would resurrect old defaults whenever
-          // the agent intentionally clears a field.
+        // Reuse a saved record only when it matches the current format AND the
+        // signed-in rep (uid) — so one rep's edits never leak into another
+        // rep's session on a shared device. For non-rep views (no repIdentity)
+        // any current-format record is fine.
+        const sameUser = !repIdentity || parsed.uid === repIdentity.uid;
+        if (parsed._v === AGENT_RECORD_VERSION && sameUser) {
+          // Use saved values as-stored; do NOT use `||` fallback to defaults,
+          // because that would resurrect old defaults whenever the agent
+          // intentionally clears a field.
           return {
-            name:  parsed.name  ?? '',
-            email: parsed.email ?? AGENT.email,
-            phone: parsed.phone ?? AGENT.phone,
+            name:  parsed.name  ?? repDefault.name,
+            email: parsed.email ?? repDefault.email,
+            phone: parsed.phone ?? repDefault.phone,
           };
         }
-        // Stale record from an older format — wipe it and fall through to defaults.
+        // Stale record (old format or a different rep) — wipe it and fall
+        // through to the rep/config defaults.
         sessionStorage.removeItem('solviva_agent');
       }
     } catch (_) { /* ignore */ }
-    return { name: AGENT.name, email: AGENT.email, phone: AGENT.phone };
+    return repDefault;
   });
   const updateAgent = (a) => {
     setAgent(a);
     try {
-      // Persist with version sentinel so future code can detect this format.
-      sessionStorage.setItem('solviva_agent', JSON.stringify({ ...a, _v: 2 }));
+      // Persist with version sentinel + the signed-in rep's uid so future
+      // loads can tell whose edits these were.
+      sessionStorage.setItem('solviva_agent', JSON.stringify({
+        ...a, uid: repIdentity?.uid ?? null, _v: 3,
+      }));
     } catch (_) { /* ignore */ }
   };
 
