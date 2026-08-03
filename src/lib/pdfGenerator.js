@@ -184,17 +184,35 @@ async function registerPdfFonts(doc) {
 
 async function cropBannerToRatio(dataUrl) {
   if (!dataUrl) return null;
+  const OUT_W = 2306;
+  const OUT_H = 436;
+  const TARGET_RATIO = OUT_W / OUT_H;
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      // Lock the canvas to the exact 2306x436 Figma aspect ratio
-      canvas.width = img.width;
-      canvas.height = img.width * (436 / 2306);
-
+      canvas.width = OUT_W;
+      canvas.height = OUT_H;
       const ctx = canvas.getContext("2d");
-      // Draw the image starting from the top. The canvas will naturally crop the excess height!
-      ctx.drawImage(img, 0, 0, img.width, img.height);
+
+      // Cover-fit: scale the source to fill the hero strip, center-cropping the
+      // overflow so any aspect ratio frames cleanly (a pre-cut wide strip is a
+      // no-op; a 3:2 photo keeps its middle band instead of being squashed).
+      const srcRatio = img.width / img.height;
+      let sx, sy, sw, sh;
+      if (srcRatio > TARGET_RATIO) {
+        sh = img.height;
+        sw = sh * TARGET_RATIO;
+        sx = (img.width - sw) / 2;
+        sy = 0;
+      } else {
+        sw = img.width;
+        sh = sw / TARGET_RATIO;
+        sx = 0;
+        sy = (img.height - sh) / 2;
+      }
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, OUT_W, OUT_H);
+
       resolve(canvas.toDataURL("image/png"));
     };
     img.onerror = () => resolve(dataUrl); // Fallback to raw data if it fails
@@ -530,6 +548,8 @@ function drawCoverPage1(mgr) {
     heroH = 436;
   const bannerData = ctx.assets?.banner;
   if (bannerData) {
+    // Text-free hero background (Figma gradient + solar photo). The title is
+    // drawn separately below so it stays live/vector text in the PDF.
     d.addImage(
       bannerData,
       "PNG",
@@ -3000,27 +3020,29 @@ export async function generateProposalPdf({
     assets: {},
   };
 
-  const figmaBannerUrl =
-    "https://www.figma.com/api/mcp/asset/aa062535-6394-4f84-a929-ab19fd9f9eb5";
   const [
     logoData,
     logoSunData,
     proposalBackgroundData,
-    figmaBannerData,
+    bannerData,
     fallbackBannerData,
   ] = await Promise.all([
     fetchPublicImageDataUrl("/logo-full-v2.png"),
     fetchPublicImageDataUrl("/logo-sun-v2.png"),
     fetchPublicImageDataUrl("/proposal-background.jpg"),
-    fetchPublicImageDataUrl(figmaBannerUrl),
+    fetchPublicImageDataUrl("/proposal-banner.png"),
     fetchPublicImageDataUrl("/twinsun-v3.png"),
   ]);
   ctx.assets.logo = logoData;
   ctx.assets.logoSun = logoSunData;
   ctx.assets.proposalBackground = proposalBackgroundData;
 
-  // Crop the banner before it hits jsPDF
-  const rawBannerData = figmaBannerData || fallbackBannerData;
+  // Crop the banner to the hero strip before it hits jsPDF. The banner is now a
+  // permanent local asset (/proposal-banner.png) exported from the Figma PDF
+  // Proposal file. It was previously fetched from an ephemeral Figma MCP URL
+  // that 404'd, which silently dropped the PDF back to the tiny pixelated
+  // /twinsun-v3.png fallback.
+  const rawBannerData = bannerData || fallbackBannerData;
   ctx.assets.banner = await cropBannerToRatio(rawBannerData);
 
   const mgr = makePageManager(doc, ctx);
