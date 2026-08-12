@@ -1,0 +1,66 @@
+name: Build & Deploy to Staging (GitHub Pages)
+
+# Staging pipeline: pushes to the `staging` branch build the app with
+# staging env vars and publish it to a SEPARATE repo's GitHub Pages site
+# (served at staging.externalcalc.solvivaenergy.com). Production (main) is
+# untouched — see deploy.yml.
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "pages-staging"
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  # Staging backend on Render — update to your real staging service URL.
+  STAGING_BACKEND_URL: "https://internalcalc-backend-staging.onrender.com"
+  # Repo that hosts the staging GitHub Pages site (owner/name).
+  STAGING_PAGES_REPO: "solvivaenergy/InternalCalcFrontEnd-Staging"
+  # Custom domain for staging (written to CNAME on each deploy).
+  STAGING_DOMAIN: "staging-internalcalc.solvivaenergy.com"
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build with staging environment variables
+        env:
+          VITE_API_BASE_URL: ${{ env.STAGING_BACKEND_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.STAGING_VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.STAGING_VITE_SUPABASE_ANON_KEY }}
+          VITE_AUDIT_PASSWORD: ${{ secrets.STAGING_VITE_AUDIT_PASSWORD }}
+          VITE_SUPERADMIN_PASSWORD: ${{ secrets.STAGING_VITE_SUPERADMIN_PASSWORD }}
+          VITE_ENGINEERING_PASSWORD: ${{ secrets.STAGING_VITE_ENGINEERING_PASSWORD }}
+          VITE_PRODUCT_PASSWORD: ${{ secrets.STAGING_VITE_PRODUCT_PASSWORD }}
+          VITE_REP_PASSWORD: ${{ secrets.STAGING_VITE_REP_PASSWORD }}
+          VITE_MAINTENANCE_PASSWORD: ${{ secrets.STAGING_VITE_MAINTENANCE_PASSWORD }}
+        run: npm run build
+
+      - name: Deploy to staging Pages repo
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          # PAT with 'repo' scope on the staging repo (see setup guide).
+          personal_token: ${{ secrets.STAGING_PAGES_DEPLOY_TOKEN }}
+          external_repository: ${{ env.STAGING_PAGES_REPO }}
+          publish_branch: gh-pages
+          publish_dir: ./dist
+          cname: ${{ env.STAGING_DOMAIN }}
