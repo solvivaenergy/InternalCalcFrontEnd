@@ -20,7 +20,7 @@ concurrency:
 env:
   NODE_VERSION: "20"
   # Staging backend on Render — update to your real staging service URL.
-  STAGING_BACKEND_URL: "https://internalcalc-backend-staging.onrender.com"
+  STAGING_BACKEND_URL: "https://internalcalcbackend-staging.onrender.com"
   # Repo that hosts the staging GitHub Pages site (owner/name).
   STAGING_PAGES_REPO: "solvivaenergy/InternalCalcFrontEnd-Staging"
   # Custom domain for staging (written to CNAME on each deploy).
