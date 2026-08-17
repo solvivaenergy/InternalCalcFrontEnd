@@ -8,7 +8,7 @@ import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
          INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_FREE_TRAVEL_KM } from '../config.js';
+         LUZON_FREE_TRAVEL_KM, NO_INVERTER } from '../config.js';
 import {
   computeRecommendedPanels, recommendInverters, buildPackageLineItems,
   computePaymentTerms, popularTenorsTable, systemSizing,
@@ -97,6 +97,15 @@ export function makeInitialState(kind = 'all') {
     // sets a non-null value. Falls back to first available package if the
     // chosen id is later deleted by admin.
     batteryPackageId: null,
+    // v3-143 — battery component unbundling (rep-only, Step 2B). Default true =
+    // include (byte-identical to prior behavior). A rep can drop the rack, ATS,
+    // and/or critical-loads materials from the quote when the client already
+    // owns them / supplies their own. Additive with safe defaults, so restored
+    // pre-v3-143 sessions read as "include everything" → no STATE_RECORD_VERSION
+    // bump. Only affect line-item emission — never the recommendation/sizing.
+    batteryIncludeRack: true,
+    batteryIncludeAts: true,
+    batteryIncludeCriticalLoads: true,
     netMeteringEnabled: false,
     // Roof Material (v3 — Excel CALCULATOR M36):
     //   'metal'    → ₱0 charge (no roof prep needed) — DEFAULT
@@ -823,6 +832,9 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // in-stock list instead, and fall back to the slot's recommendation.
     const inStockKw = new Set(availableInverters(phase).map(i => i.ratedKw));
     const effectiveInverters = state.selectedInverters.map((sel, i) => {
+      // Explicit "— None —" pick: no inverter for this slot, do NOT auto-fill
+      // the recommendation (enables inverter-less battery/panel-only quotes).
+      if (sel === NO_INVERTER) return null;
       const chosen = sel ?? recInverters[i] ?? null;
       return (chosen && !inStockKw.has(chosen.ratedKw))
         ? (recInverters[i] ?? null)

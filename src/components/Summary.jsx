@@ -45,8 +45,9 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
   const { pkg, terms, popularTenors } = model;
 
 
-  // Filter to only items with non-zero direct price (Excel: FILTER B<>0)
-  const visibleItems = pkg.items.filter(i => i.directPrice > 0);
+  // Filter to only items with non-zero direct price (Excel: FILTER B<>0),
+  // plus explicit informational lines (#5 AC4 — "Inverter — not included").
+  const visibleItems = pkg.items.filter(i => i.directPrice > 0 || i.informational);
 
   // v3-117 — the list is ALWAYS the expanded enumeration; what's gated now is
   // the PRICE COLUMN, not the expansion (user directives 2-3). Reveal state
@@ -144,14 +145,26 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
               <tbody>
                 {rows.map(({ it, d }) => (
                   <tr key={it.key}>
-                    <td style={styles.td}>{it.description}</td>
-                    {pricesShown && (
-                      <td style={mutedTd}>{d.cogsKnown ? fmt.peso(d.cogs) : '\u2014'}</td>
+                    <td style={it.informational ? { ...styles.td, fontStyle: 'italic', color: '#6B7280' } : styles.td}>{it.description}</td>
+                    {pricesShown && it.informational ? (
+                      <>
+                        <td style={mutedTd}>{'\u2014'}</td>
+                        <td style={mutedTd}>{'\u2014'}</td>
+                        <td style={mutedTd}>{'\u2014'}</td>
+                        <td style={mutedTd}>{'\u2014'}</td>
+                        <td style={numTd}>{'\u2014'}</td>
+                      </>
+                    ) : (
+                      <>
+                        {pricesShown && (
+                          <td style={mutedTd}>{d.cogsKnown ? fmt.peso(d.cogs) : '\u2014'}</td>
+                        )}
+                        {pricesShown && <td style={mutedTd}>{fmt.peso(d.gm)}</td>}
+                        {pricesShown && <td style={mutedTd}>{fmt.peso(d.mdrAmt)}</td>}
+                        {pricesShown && <td style={mutedTd}>{fmt.peso(d.vat)}</td>}
+                        {pricesShown && <td style={numTd}>{fmt.peso(d.dp)}</td>}
+                      </>
                     )}
-                    {pricesShown && <td style={mutedTd}>{fmt.peso(d.gm)}</td>}
-                    {pricesShown && <td style={mutedTd}>{fmt.peso(d.mdrAmt)}</td>}
-                    {pricesShown && <td style={mutedTd}>{fmt.peso(d.vat)}</td>}
-                    {pricesShown && <td style={numTd}>{fmt.peso(d.dp)}</td>}
                   </tr>
                 ))}
                 <tr style={styles.totalRow}>

@@ -18,6 +18,7 @@ import {
 import {
   INCLUDED_DC_CABLE_METERS,
   INCLUDED_AC_CABLE_METERS,
+  LUZON_FREE_TRAVEL_KM,
 } from "../config.js";
 import { resolveBatteryPackage } from "../data/adminParams.js";
 
@@ -904,6 +905,11 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     rsdStandalonePanelCount,
     selectedInverters,
     batteryKwh,
+    // v3-143 — battery component unbundling. Default true = include (prior
+    // behavior). Only gate line-item emission; sizing/recommendation untouched.
+    batteryIncludeRack = true,
+    batteryIncludeAts = true,
+    batteryIncludeCriticalLoads = true,
     roofMaterial, // NEW v3: 'metal' | 'asphalt' | 'concrete'
     location, // NEW v3: 'luzon' | 'cebu' | 'siargao'
     locationKm, // NEW v3: road-km from the Parañaque logistics hub (v3-114; was Rizal Park)
@@ -1088,10 +1094,21 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   }
   const rsdPanelsForLabel = Math.max(panelCount, rsdStandalonePanelCount || 0);
   const rsdAnyDirect = rsdDirect + rsdStandaloneDirect;
+  // Notional RSD price = what the RSD would cost if availed, computed even when
+  // declined so the proposal can show the amount while excluding it from totals.
+  const rsdNotionalDirect =
+    panelsTotal > 0
+      ? panelCount * ap.rsdVariablePerPanel + ap.rsdFixedTransmitter
+      : (rsdStandalonePanelCount || 0) > 0
+        ? rsdStandalonePanelCount * ap.rsdVariablePerPanel +
+          ap.rsdFixedTransmitter
+        : 0;
   items.push({
     key: "rsd",
     description: `Rapid Shutdown Device (RSD) for ${rsdPanelsForLabel} Solar Panels`,
     directPrice: rsdAnyDirect,
+    notionalPrice: rsdNotionalDirect,
+    declined: !rsdEnabled,
     cogs:
       (rsdEnabled && panelsTotal > 0
         ? panelCount * ap.rsdVariablePerPanelCogs + ap.rsdFixedTransmitterCogs
@@ -1123,6 +1140,23 @@ export function buildPackageLineItems(state, adminParams, schedule) {
       cogs: inv ? inv.cogs : 0,
     });
   });
+
+  // #5 AC4 — panels/battery order with NO inverter supplied. The per-slot
+  // "None" rows above are filtered out of the customer/rep views (B<>0 gate),
+  // so state the omission explicitly with a ₱0 informational line instead of
+  // leaving it silently missing. `informational` keeps it out of totals.
+  if (
+    !selectedInverters.some((i) => i) &&
+    (panelsTotal > 0 || batteryKwh > 0)
+  ) {
+    items.push({
+      key: "inverterNone",
+      description: "Inverter \u2014 not included (client-supplied)",
+      directPrice: 0,
+      cogs: 0,
+      informational: true,
+    });
+  }
 
   // 10. Battery package (v3-54 — package-driven)
   // The active battery package is resolved from state.batteryPackageId via
@@ -1182,9 +1216,10 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   );
 
   const batteryDirect = batteryCount * batteryUnitPrice;
-  const rackDirect = rackCount * batteryRackPrice;
-  const atsDirect = batteryKwh > 0 ? atsPrice : 0;
-  const critLoadDirect = batteryKwh > 0 ? critLoadsPrice : 0;
+  const rackDirect = batteryIncludeRack ? rackCount * batteryRackPrice : 0;
+  const atsDirect = batteryKwh > 0 && batteryIncludeAts ? atsPrice : 0;
+  const critLoadDirect =
+    batteryKwh > 0 && batteryIncludeCriticalLoads ? critLoadsPrice : 0;
 
   // Labor with solar OR standalone
   const hasSolar = panelsTotal > 0;
@@ -1204,24 +1239,62 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     directPrice: batteryDirect,
     cogs: batteryCount * pkg.batteryUnitCogs,
   });
-  items.push({
-    key: "rack",
-    description: `${rackCount} unit/s Battery Rack`,
-    directPrice: rackDirect,
-    cogs: rackCount * pkg.batteryRackCogs,
-  });
-  items.push({
-    key: "ats",
-    description: "Automatic Transfer Switch (ATS)",
-    directPrice: atsDirect,
-    cogs: batteryKwh > 0 ? pkg.atsCogs : 0,
-  });
-  items.push({
-    key: "critLoads",
-    description: "Materials for Critical Loads",
-    directPrice: critLoadDirect,
-    cogs: batteryKwh > 0 ? pkg.criticalLoadsMaterialsCogs : 0,
-  });
+  // v3-143 — rack / ATS / critical loads: when a battery is present but the rep
+  // has unbundled the component (client-supplied), emit a ₱0 informational line
+  // so the omission is explicit on the quote instead of silently vanishing.
+  if (batteryKwh > 0 && !batteryIncludeRack) {
+    items.push({
+      key: "rack",
+      description: "Battery Rack — not included (client-supplied)",
+      directPrice: 0,
+      cogs: 0,
+      informational: true,
+    });
+  } else {
+    items.push({
+      key: "rack",
+      description: `${rackCount} unit/s Battery Rack`,
+      directPrice: rackDirect,
+      cogs: batteryIncludeRack ? rackCount * pkg.batteryRackCogs : 0,
+    });
+  }
+  if (batteryKwh > 0 && !batteryIncludeAts) {
+    items.push({
+      key: "ats",
+      description:
+        "Automatic Transfer Switch (ATS) — not included (client-supplied)",
+      directPrice: 0,
+      cogs: 0,
+      informational: true,
+    });
+  } else {
+    items.push({
+      key: "ats",
+      description: "Automatic Transfer Switch (ATS)",
+      directPrice: atsDirect,
+      cogs: batteryKwh > 0 && batteryIncludeAts ? pkg.atsCogs : 0,
+    });
+  }
+  if (batteryKwh > 0 && !batteryIncludeCriticalLoads) {
+    items.push({
+      key: "critLoads",
+      description:
+        "Materials for Critical Loads — not included (client-supplied)",
+      directPrice: 0,
+      cogs: 0,
+      informational: true,
+    });
+  } else {
+    items.push({
+      key: "critLoads",
+      description: "Materials for Critical Loads",
+      directPrice: critLoadDirect,
+      cogs:
+        batteryKwh > 0 && batteryIncludeCriticalLoads
+          ? pkg.criticalLoadsMaterialsCogs
+          : 0,
+    });
+  }
   items.push({
     key: "batteryLabor",
     description: battLaborLabel,
@@ -1284,11 +1357,11 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   });
 
   // 13. Location / Delivery (v3 — Excel CALCULATOR AA38)
-  //   luzon  + km≤30 → ₱0                                            ← DEFAULT
-  //   luzon  + km>30 → luzonOver30FixedFee + MAX(0, km−30) × luzonOver30PerKm   (AA38, v3-115 fix)
+  //   luzon  + km≤33 → ₱0                                            ← DEFAULT
+  //   luzon  + km>33 → luzonOver30FixedFee + MAX(0, km−33) × luzonOver30PerKm   (AA38, v3-115 fix)
   //   dynamic row    → row.fixedFee + panels × row.perPanel   (v3-116)
   let locationDirect = 0;
-  let locationLabel = "Location / Delivery — Luzon (within 30km)";
+  let locationLabel = `Location / Delivery — Luzon (within ${LUZON_FREE_TRAVEL_KM}km)`;
   if (panelsTotal > 0) {
     // v3-116 — dynamic delivery locations. Any non-luzon/non-other location
     // id resolves against ap.deliveryLocations (derived per-row at quote
@@ -1302,22 +1375,27 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     if (dynamicLoc) {
       locationDirect = dynamicLoc.fixedFee + panelCount * dynamicLoc.perPanel;
       locationLabel = `Location / Delivery — ${dynamicLoc.label}`;
-    } else if (location === "luzon" && (locationKm || 0) > 30) {
-      // v3-115 PARITY FIX — workbook AA38 is MAX(0, Y39-30) × D41 + D40: the
-      // per-km rate applies ONLY to the EXCESS beyond the 30 km free zone.
-      // The app had charged the FULL distance since Luzon location pricing was
-      // introduced, overbilling every billable Luzon quote by 30 × perKm and
-      // contradicting the proposal's own Logistics Add-On T&C ("any excess
-      // distance beyond the first 30 kilometers"). User-reported v3-114;
-      // verified against Solviva_Calc_v_B_5_1.xlsm CALCULATOR!AA38.
+    } else if (
+      location === "luzon" &&
+      (locationKm || 0) > LUZON_FREE_TRAVEL_KM
+    ) {
+      // v3-115 PARITY FIX — workbook AA38 is MAX(0, Y39-33) × D41 + D40: the
+      // per-km rate applies ONLY to the EXCESS beyond the free zone
+      // (LUZON_FREE_TRAVEL_KM). The app had charged the FULL distance since
+      // Luzon location pricing was introduced, overbilling every billable
+      // Luzon quote and contradicting the proposal's own Logistics Add-On
+      // T&C ("any excess distance beyond the first N kilometers").
+      // User-reported v3-114; verified against Solviva_Calc_v_B_5_1.xlsm
+      // CALCULATOR!AA38.
       locationDirect =
         ap.luzonOver30FixedFee +
-        Math.max(0, (locationKm || 0) - 30) * ap.luzonOver30PerKm;
+        Math.max(0, (locationKm || 0) - LUZON_FREE_TRAVEL_KM) *
+          ap.luzonOver30PerKm;
       locationLabel = `Location / Delivery — Luzon (${locationKm} km from Parañaque hub)`; // v3-114 origin rebase
     }
   }
   // v3-134 — location COGS mirror: dynamic row → fixedFeeCogs + panels ×
-  // perPanelCogs; Luzon >30 km → luzonOver30FixedFeeCogs + excess-km ×
+  // perPanelCogs; Luzon >33 km → luzonOver30FixedFeeCogs + excess-km ×
   // luzonOver30PerKmCogs (same AA38 shape on Anjon's entered values).
   let locationCogs = 0;
   if (panelsTotal > 0) {
@@ -1328,10 +1406,14 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     if (dynRow) {
       locationCogs =
         (dynRow.fixedFeeCogs || 0) + panelCount * (dynRow.perPanelCogs || 0);
-    } else if (location === "luzon" && (locationKm || 0) > 30) {
+    } else if (
+      location === "luzon" &&
+      (locationKm || 0) > LUZON_FREE_TRAVEL_KM
+    ) {
       locationCogs =
         ap.luzonOver30FixedFeeCogs +
-        Math.max(0, (locationKm || 0) - 30) * ap.luzonOver30PerKmCogs;
+        Math.max(0, (locationKm || 0) - LUZON_FREE_TRAVEL_KM) *
+          ap.luzonOver30PerKmCogs;
     }
   }
   items.push({
