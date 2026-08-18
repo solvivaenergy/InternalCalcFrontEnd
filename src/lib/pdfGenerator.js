@@ -272,7 +272,8 @@ function drawPageBackground(mgr) {
 // Per-page signature line, bottom-left, kept subtle so it does not disturb the
 // page design (backlog #4 AC4 — "every page carries a signature line").
 function drawPageSignatureLine(doc) {
-  const y = PAGE_H - 18;
+  // Caption baseline aligns with the page number (~286.2); line sits just above.
+  const y = PAGE_H - 13.6;
   doc.setDrawColor(150, 150, 150);
   doc.setLineWidth(0.2);
   doc.line(MARGIN, y, MARGIN + 58, y);
