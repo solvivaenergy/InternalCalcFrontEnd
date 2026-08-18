@@ -2915,6 +2915,12 @@ function drawTermsAndConditions(mgr) {
   // (except the "Some LGUs" sub-header, which is Inter Bold in the design).
   const TITLE_PT = fxpt(32);
   const BODY_PT = fxpt(28);
+  // Figma uses a 1.63 line-height; jsPDF's ~1.15 default made paragraphs look
+  // cramped. Use 1.4 (close to the design, still fits one page) and advance the
+  // cursor by the real line pitch in mm so blocks don't overlap.
+  const TC_LINE_HEIGHT = 1.4;
+  const titleLineMm = TITLE_PT * TC_LINE_HEIGHT * 0.352778;
+  const bodyLineMm = BODY_PT * TC_LINE_HEIGHT * 0.352778;
   const renderCol = (blocks, startX, startY) => {
     let currentY = startY;
     blocks.forEach((b) => {
@@ -2924,7 +2930,7 @@ function drawTermsAndConditions(mgr) {
 
       const titleLines = mgr.doc.splitTextToSize(b.title, colW);
       mgr.doc.text(titleLines, startX, currentY);
-      currentY += titleLines.length * 3 + 1.5;
+      currentY += titleLines.length * titleLineMm + 1.5;
 
       mgr.doc.setFontSize(BODY_PT);
 
@@ -2943,7 +2949,7 @@ function drawTermsAndConditions(mgr) {
           mgr.doc.text("•", startX, currentY);
         }
         mgr.doc.text(lines, indentX, currentY);
-        currentY += lines.length * 3.1 + 1;
+        currentY += lines.length * bodyLineMm + 1;
       };
 
       if (Array.isArray(b.text)) {
@@ -2959,12 +2965,13 @@ function drawTermsAndConditions(mgr) {
           currentY += 1.5; // Space between paragraphs
         });
       }
-      currentY += 3; // Space between sections
+      currentY += 2; // Space between sections
     });
     return currentY;
   };
 
   // Render both columns and find the lowest Y coordinate
+  mgr.doc.setLineHeightFactor(TC_LINE_HEIGHT);
   const leftEndY = renderCol(leftCol, leftX, mgr.y);
   const rightEndY = renderCol(rightCol, rightX, mgr.y);
 
@@ -2985,12 +2992,12 @@ function drawTermsAndConditions(mgr) {
   const acceptLines = mgr.doc.splitTextToSize(acceptText, CONTENT_W);
   mgr.doc.text(acceptLines, MARGIN, mgr.y);
 
-  mgr.y += acceptLines.length * 3.5 + 14;
+  mgr.y += acceptLines.length * 3.5 + 10;
 
   // Dynamically populated signature block (Figma order: label, name, date)
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(7.5);
-  mgr.doc.text("[Client Signature]", MARGIN, mgr.y);
+  // mgr.doc.setFont("helvetica", "bold");
+  // mgr.doc.setFontSize(7.5);
+  // mgr.doc.text("[Client Signature]", MARGIN, mgr.y);
 
   mgr.y += 4;
   mgr.doc.setFont("helvetica", "normal");
@@ -2998,6 +3005,8 @@ function drawTermsAndConditions(mgr) {
 
   mgr.y += 4;
   mgr.doc.text("Date:", MARGIN, mgr.y);
+
+  mgr.doc.setLineHeightFactor(1.15); // restore jsPDF default for later pages
 }
 
 function drawWarrantyTable(mgr, warranties) {
