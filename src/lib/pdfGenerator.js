@@ -635,7 +635,7 @@ function drawCoverPage1(mgr) {
   drawInfoColumn(
     "Presented by:",
     [
-      ["Name:", agent?.name || "Solviva Customer Support"],
+      ["Sales Representative", agent?.name || "Solviva Customer Support"],
       ["Contact number:", agent?.phone || "0917-802-8948"],
       ["Email address:", agent?.email || "hello@solvivaenergy.com"],
     ],
@@ -1749,6 +1749,26 @@ function drawPackageDetailPage(mgr) {
     body.push([`${kwpStr} kWp Solar Package`, peso(solarTot)]);
   }
 
+  // RSD sits directly beneath the Solar Package (it is a solar-array device).
+  if (rsdRaw && rsdRelevant) {
+    if (rsdDeclined) {
+      // #18: show the RSD line with its amount, marked not availed, and keep
+      // it out of the total (terms.netDirectPrice already excludes it).
+      body.push([
+        {
+          content: `${rsdRaw.description} \u2014 not availed*`,
+          styles: { textColor: [136, 106, 42], fontStyle: "italic" },
+        },
+        {
+          content: peso(rsdAmount),
+          styles: { textColor: [136, 106, 42], fontStyle: "italic" },
+        },
+      ]);
+    } else {
+      body.push([`${rsdRaw.description}*`, peso(rsdAmount)]);
+    }
+  }
+
   if (batteryKwh > 0 || batteryTot > 0) {
     body.push([
       `${Math.round(batteryKwh)} kWh Battery Package`,
@@ -1771,25 +1791,6 @@ function drawPackageDetailPage(mgr) {
         styles: { textColor: [107, 114, 128], fontStyle: "italic" },
       },
     ]);
-  }
-
-  if (rsdRaw && rsdRelevant) {
-    if (rsdDeclined) {
-      // #18: show the RSD line with its amount, marked not availed, and keep
-      // it out of the total (terms.netDirectPrice already excludes it).
-      body.push([
-        {
-          content: `${rsdRaw.description} \u2014 not availed*`,
-          styles: { textColor: [136, 106, 42], fontStyle: "italic" },
-        },
-        {
-          content: peso(rsdAmount),
-          styles: { textColor: [136, 106, 42], fontStyle: "italic" },
-        },
-      ]);
-    } else {
-      body.push([`${rsdRaw.description}*`, peso(rsdAmount)]);
-    }
   }
 
   // 3. Add "Other costs:**" label IMMEDIATELY below RSD
@@ -2915,12 +2916,12 @@ function drawTermsAndConditions(mgr) {
   // (except the "Some LGUs" sub-header, which is Inter Bold in the design).
   const TITLE_PT = fxpt(32);
   const BODY_PT = fxpt(28);
-  // Figma uses a 1.63 line-height; jsPDF's ~1.15 default made paragraphs look
-  // cramped. Use 1.4 (close to the design, still fits one page) and advance the
-  // cursor by the real line pitch in mm so blocks don't overlap.
-  const TC_LINE_HEIGHT = 1.4;
-  const titleLineMm = TITLE_PT * TC_LINE_HEIGHT * 0.352778;
+  // Match the Figma 1.63 line-height exactly; advance the cursor by the real
+  // line pitch in mm so blocks don't overlap.
+  const TC_LINE_HEIGHT = 1.63;
   const bodyLineMm = BODY_PT * TC_LINE_HEIGHT * 0.352778;
+  // Headings hug their body copy, so use a tight pitch for the title advance.
+  const titleTightMm = TITLE_PT * 1.15 * 0.352778;
   const renderCol = (blocks, startX, startY) => {
     let currentY = startY;
     blocks.forEach((b) => {
@@ -2929,8 +2930,10 @@ function drawTermsAndConditions(mgr) {
       mgr.doc.setTextColor(...(C.textBody || [40, 40, 40]));
 
       const titleLines = mgr.doc.splitTextToSize(b.title, colW);
+      mgr.doc.setLineHeightFactor(1.15); // draw wrapped titles tight
       mgr.doc.text(titleLines, startX, currentY);
-      currentY += titleLines.length * titleLineMm + 1.5;
+      currentY += titleLines.length * titleTightMm + 1.5;
+      mgr.doc.setLineHeightFactor(TC_LINE_HEIGHT); // restore airy body leading
 
       mgr.doc.setFontSize(BODY_PT);
 
@@ -2975,7 +2978,7 @@ function drawTermsAndConditions(mgr) {
   const leftEndY = renderCol(leftCol, leftX, mgr.y);
   const rightEndY = renderCol(rightCol, rightX, mgr.y);
 
-  mgr.y = Math.max(leftEndY, rightEndY) + 8;
+  mgr.y = Math.max(leftEndY, rightEndY) + 5;
 
   // Render bottom acceptance section
   mgr.doc.setFont("helvetica", "semibold");
