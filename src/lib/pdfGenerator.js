@@ -279,21 +279,20 @@ function drawPageSignatureLine(doc) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(5.5);
   doc.setTextColor(120, 120, 120);
-  doc.text("Client signature over printed name", MARGIN, y + 2.6);
+  doc.text("Client Signature", MARGIN, y + 2.6);
 }
 
 function drawFooter(mgr, opts = {}) {
   const { doc, pageNumber } = mgr;
   const footerY = PAGE_H - 12;
 
-  drawPageSignatureLine(doc);
+  if (!opts.noSignatureLine) drawPageSignatureLine(doc);
 
   if (opts.figmaExact) {
     mgr.footerStamps.push({ pageNumber, y: footerY, figmaExact: true });
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(73, 73, 73);
-    doc.text("www.solvivaenergy.com", 7.2, 286.2);
     doc.text(String(pageNumber), 202.5, 286.2, { align: "right" });
     return;
   }
@@ -301,8 +300,6 @@ function drawFooter(mgr, opts = {}) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(...C.textTertiary);
-  const leftText = "www.solvivaenergy.com";
-  doc.text(leftText, MARGIN, footerY);
   mgr.footerStamps.push({ pageNumber, y: footerY });
   doc.text(`${pageNumber}`, PAGE_W - MARGIN, footerY, { align: "right" });
 }
@@ -1697,7 +1694,11 @@ function drawPackageDetailPage(mgr) {
   // RSD is a solar-array safety device. On a battery-only / no-solar order it
   // is irrelevant, so suppress the declined "not availed" line and its
   // compliance copy unless the order has solar panels or an RSD is availed.
-  const rsdAvailed = !!(rsdRaw && !rsdDeclined && (rsdRaw.directPrice || 0) > 0);
+  const rsdAvailed = !!(
+    rsdRaw &&
+    !rsdDeclined &&
+    (rsdRaw.directPrice || 0) > 0
+  );
   const rsdRelevant = panelCount > 0 || rsdAvailed;
 
   items
@@ -1948,15 +1949,15 @@ function drawPackageDetailPage(mgr) {
     ]);
     if (rsdDeclined) {
       compParas.push([
-      {
-        t: "Solviva strongly recommends the inclusion of an RSD in every system. ",
-        b: true,
-      },
-      {
-        t: "Should you elect to proceed without one, you do so at your own election and against our recommendation. By accepting this proposal with the RSD excluded, you confirm that (a) the requirement and its purpose were explained to you; (b) you assume full responsibility for all consequences of the exclusion, including denial or delay of LGU permits, delay in commissioning, adverse inspection findings, ineligibility for net metering, insurance implications, and any loss of life, injury, fire, or property damage arising from the inability to rapidly de-energize the system; and (c) you hold Solviva Energy, its affiliates, directors, officers, employees, representatives, and contractors free and harmless from any claim, loss, penalty, or liability arising from such exclusion. Installing an RSD at a later date will be quoted and charged separately.",
-        b: false,
-      },
-    ]);
+        {
+          t: "Solviva strongly recommends the inclusion of an RSD in every system. ",
+          b: true,
+        },
+        {
+          t: "Should you elect to proceed without one, you do so at your own election and against our recommendation. By accepting this proposal with the RSD excluded, you confirm that (a) the requirement and its purpose were explained to you; (b) you assume full responsibility for all consequences of the exclusion, including denial or delay of LGU permits, delay in commissioning, adverse inspection findings, ineligibility for net metering, insurance implications, and any loss of life, injury, fire, or property damage arising from the inability to rapidly de-energize the system; and (c) you hold Solviva Energy, its affiliates, directors, officers, employees, representatives, and contractors free and harmless from any claim, loss, penalty, or liability arising from such exclusion. Installing an RSD at a later date will be quoted and charged separately.",
+          b: false,
+        },
+      ]);
     }
   }
   compParas.push([
@@ -2841,7 +2842,7 @@ function drawTermsAndConditions(mgr) {
         "• Electricity bill (should be under the name of the client)",
         "• Valid ID of the person in the electricity bill",
         "• Tax Declaration",
-        "• OCT/TCT (Land/Property Title)",
+        "• OCT/TCT (Land/Property title)",
         "• Official Receipt of latest Real Property Tax (Land & Building)",
         "• Building Permit",
         "• Certificate of Occupancy",
@@ -2849,8 +2850,9 @@ function drawTermsAndConditions(mgr) {
     },
     {
       title: "Some LGUs may also require:",
+      titleBold: true,
       text: [
-        "• Electrical Plan / Load Schedule (signed and sealed by a Professional Electrical Engineer) (Can be provided by Solviva if client avails)",
+        "• Electrical Plan / Load Schedule signed and sealed by a Professional Electrical Engineer (Can be provided by Solviva if client avails)",
         "• Electrical Design Analysis (Can be provided by Solviva if client avails)",
         "• Structural Roof Plan (Can be provided by Solviva if client avails)",
         "• Structural Analysis (Can be provided by Solviva if client avails)",
@@ -2865,10 +2867,10 @@ function drawTermsAndConditions(mgr) {
     },
     {
       title: "Logistics Add-On Cost",
-      text: "Any excess distance beyond the first 30 kilometers (km) from Kilometer 0 (Rizal Park) will be charged per kilometer at a specified rate.",
+      text: "Any excess distance beyond the first 33 kilometers (km) from Parañaque City will be charged per kilometer at a specified rate.",
     },
     {
-      title: "Price validity",
+      title: "Price Validity",
       text: "The prices provided in this proposal are valid for a period of thirty (30) days from the date of issuance. After this period, the prices are subject to change without prior notice.",
     },
     {
@@ -2887,7 +2889,7 @@ function drawTermsAndConditions(mgr) {
   const rightCol = [
     {
       title: "Installation",
-      text: "You shall provide reasonable assistance to Solviva and its designated representatives in the latter's preparation of the system design, and shall provide documents and information relating to the Premises, such as, but not limited to blueprints and/or building plans, as may be requested by the Supplier. You shall be responsible for the correctness and accuracy of any data and information provided.",
+      text: "You shall provide reasonable assistance to Solviva and its designated representatives in the latter's preparation of the system design, and shall provide documents and information relating to the Premises, such as, but not limited to blueprints and/or building plans, as may be requested by the Supplier. You shall be responsible for the correctness and accuracy of any data and information provided to us.",
     },
     {
       title: "Validity",
@@ -2899,34 +2901,39 @@ function drawTermsAndConditions(mgr) {
       ],
     },
     {
-      title: "Payment obligation",
+      title: "Payment Obligation",
       text: "Your satisfaction is our priority, and we will manage the entire process diligently from start to finish.",
     },
     {
       title: "Definitive Agreement",
-      text: "These Terms and Conditions shall be subject to the execution of a separate Solar Photovoltaic System Contract which shall be executed between you and the Company. Failure to execute the Solar Photovoltaic System within seven (7) days from the date of these Terms and Conditions (or such longer period as may be allowed by Solviva) shall entitle Solviva to terminate the terms and conditions without any liability to you and without any obligation to reimburse or return any payments already made. Should Solviva not be able to proceed with the completion of the installation, and consequent turnover of the Solar facility due to an action or decision of the client such as, but not limited to, the unsuitability of the structure on which the Solar facility will be installed then Solviva shall turn over any and installed portions of the facility, and the client shall be liable for the payments commensurate to the portions that have been turned over. Any additional materials required to install the solar facility shall be subject to another order form.\n\nWe appreciate your understanding that the net metering status does not impact the payment terms outlined in this proposal. Thank you for choosing Solviva. We look forward to helping you make the switch to clean, renewable energy.",
+      boldParagraphs: [1],
+      text: "These Terms and Conditions shall be subject to the execution of a separate Solar Photovoltaic System Contract which shall be executed between you and the Company. Failure to execute the Solar Photovoltaic System within seven (7) days from the date of these Terms and Conditions (or such longer period as may be allowed by Solviva) shall entitle Solviva to terminate the Terms and Conditions without any liability to you and without any obligation to reimburse or return any payments already made. Should Solviva not be able to proceed with the completion of the installation, and consequent turnover of the Solar facility due to an action or decision of the client such as, but not limited to, the unavailability of the structure on which the Solar facility will be installed then Solviva shall turn over any and installed portions of the facility, and the client shall be liable for the payments commensurate to the portions that have been turned over. Any additional materials required to install the solar facility shall be subject to another order form.\n\nWe appreciate your understanding that the net metering status does not impact the payment terms outlined in this proposal. Thank you for choosing Solviva. We look forward to helping you make the switch to clean, renewable energy.",
     },
   ];
 
+  // Figma T&C sizes: section titles 32px, body 28px; titles are Inter SemiBold
+  // (except the "Some LGUs" sub-header, which is Inter Bold in the design).
+  const TITLE_PT = fxpt(32);
+  const BODY_PT = fxpt(28);
   const renderCol = (blocks, startX, startY) => {
     let currentY = startY;
     blocks.forEach((b) => {
-      mgr.doc.setFont("helvetica", "bold");
-      mgr.doc.setFontSize(7.5);
+      mgr.doc.setFont("helvetica", b.titleBold ? "bold" : "semibold");
+      mgr.doc.setFontSize(TITLE_PT);
       mgr.doc.setTextColor(...(C.textBody || [40, 40, 40]));
 
       const titleLines = mgr.doc.splitTextToSize(b.title, colW);
       mgr.doc.text(titleLines, startX, currentY);
       currentY += titleLines.length * 3 + 1.5;
 
-      mgr.doc.setFont("helvetica", "normal");
-      mgr.doc.setFontSize(7);
+      mgr.doc.setFontSize(BODY_PT);
 
-      const renderText = (textStr) => {
+      const renderText = (textStr, bold = false) => {
         const isBullet = textStr.startsWith("• ");
         const textToSplit = isBullet ? textStr.substring(2) : textStr;
         const indentX = isBullet ? startX + 3.5 : startX;
 
+        mgr.doc.setFont("helvetica", bold ? "bold" : "normal");
         const lines = mgr.doc.splitTextToSize(
           textToSplit,
           colW - (isBullet ? 3.5 : 0),
@@ -2944,8 +2951,11 @@ function drawTermsAndConditions(mgr) {
       } else {
         // Handle paragraphs separated by line breaks
         const paragraphs = b.text.split("\n\n");
-        paragraphs.forEach((p) => {
-          renderText(p);
+        paragraphs.forEach((p, idx) => {
+          renderText(
+            p,
+            Array.isArray(b.boldParagraphs) && b.boldParagraphs.includes(idx),
+          );
           currentY += 1.5; // Space between paragraphs
         });
       }
@@ -2962,9 +2972,9 @@ function drawTermsAndConditions(mgr) {
 
   // Render bottom acceptance section
   mgr.doc.setFont("helvetica", "semibold");
-  mgr.doc.setFontSize(8.5);
+  mgr.doc.setFontSize(fxpt(34));
   mgr.doc.setTextColor(0, 106, 198); // Solviva Blue
-  mgr.doc.text("Proposal acceptance and signature", MARGIN, mgr.y);
+  mgr.doc.text("Proposal Acceptance and Signature", MARGIN, mgr.y);
   mgr.y += 4.5;
 
   mgr.doc.setFont("helvetica", "normal");
@@ -2977,16 +2987,16 @@ function drawTermsAndConditions(mgr) {
 
   mgr.y += acceptLines.length * 3.5 + 14;
 
-  // Dynamically populated signature block
+  // Dynamically populated signature block (Figma order: label, name, date)
   mgr.doc.setFont("helvetica", "bold");
   mgr.doc.setFontSize(7.5);
-  // mgr.doc.text("[Client Signature]", MARGIN, mgr.y);
-
-  mgr.y += 4;
-  mgr.doc.text(clientName, MARGIN, mgr.y);
+  mgr.doc.text("[Client Signature]", MARGIN, mgr.y);
 
   mgr.y += 4;
   mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.text(clientName, MARGIN, mgr.y);
+
+  mgr.y += 4;
   mgr.doc.text("Date:", MARGIN, mgr.y);
 }
 
@@ -3237,8 +3247,9 @@ export async function generateProposalPdf({
     drawSchedulePage(mgr);
   }
 
-  // Page 8: Terms & conditions
-  newPage(mgr, { figmaExact: true });
+  // Page 8: Terms & conditions (own acceptance block carries the signature —
+  // suppress the per-page footer signature line here to match the Figma design)
+  newPage(mgr, { figmaExact: true, noSignatureLine: true });
   drawTermsAndConditions(mgr);
 
   // Re-stamp totals
