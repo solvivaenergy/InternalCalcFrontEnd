@@ -1345,7 +1345,10 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   //   dynamic row    → row.fixedFee + panels × row.perPanel   (v3-116)
   let locationDirect = 0;
   let locationLabel = `Location / Delivery — Luzon (within ${LUZON_FREE_TRAVEL_KM}km)`;
-  if (panelsTotal > 0) {
+  // v3-144 — delivery is billable for any physical order, not just solar. A
+  // battery-only quote still ships to the site, so location distance remains a
+  // pricing factor (panel-based per-panel term is simply 0 with no panels).
+  if (panelsTotal > 0 || batteryKwh > 0) {
     // v3-116 — dynamic delivery locations. Any non-luzon/non-other location
     // id resolves against ap.deliveryLocations (derived per-row at quote
     // margin above); a missing/deleted id defensively prices ₱0 here —
@@ -1381,7 +1384,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // perPanelCogs; Luzon >33 km → luzonOver30FixedFeeCogs + excess-km ×
   // luzonOver30PerKmCogs (same AA38 shape on Anjon's entered values).
   let locationCogs = 0;
-  if (panelsTotal > 0) {
+  if (panelsTotal > 0 || batteryKwh > 0) {
     const dynRow =
       location !== "luzon" && location !== "other"
         ? (ap.deliveryLocations || []).find((l) => l.id === location)

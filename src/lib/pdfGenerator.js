@@ -1754,14 +1754,15 @@ function drawPackageDetailPage(mgr) {
   if (rsdRaw && rsdRelevant) {
     if (rsdDeclined) {
       // #18: show the RSD line with its amount, marked not availed, and keep
-      // it out of the total (terms.netDirectPrice already excludes it).
+      // it out of the total (terms.netDirectPrice already excludes it). The
+      // "not availed*" note sits beside the amount, not on the item label.
       body.push([
         {
-          content: `${rsdRaw.description} \u2014 not availed*`,
+          content: rsdRaw.description,
           styles: { textColor: [136, 106, 42], fontStyle: "italic" },
         },
         {
-          content: peso(rsdAmount),
+          content: `${peso(rsdAmount)} \u2014 not availed*`,
           styles: { textColor: [136, 106, 42], fontStyle: "italic" },
         },
       ]);

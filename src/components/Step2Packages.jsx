@@ -989,6 +989,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             value={state.roofMaterial}
             onChange={v => updateState({ roofMaterial: v })}
             width={300}
+            disabled={panelCount === 0}
             options={[
               // Order: default first, then alphabetical
               { value: 'metal',    label: 'Metal — no roof prep needed' },
@@ -998,16 +999,22 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           />
         </Field>
         <div style={styles.roofHint}>
-          {state.roofMaterial === 'metal' && (
-            <span>Metal roofs need no prep work — no additional charge.</span>
-          )}
-          {state.roofMaterial === 'asphalt' && (
-            <span>Asphalt/shingles/tiled roofs require additional mounting prep
-              at <strong>{fmt.peso(adminParams.roofAsphaltPerKwp)}/kWp</strong>.</span>
-          )}
-          {state.roofMaterial === 'concrete' && (
-            <span>Concrete roofs require the most prep work
-              at <strong>{fmt.peso(adminParams.roofConcretePerKwp)}/kWp</strong>.</span>
+          {panelCount === 0 ? (
+            <span>Roof type doesn’t affect a battery-only order — no panels to mount.</span>
+          ) : (
+            <>
+              {state.roofMaterial === 'metal' && (
+                <span>Metal roofs need no prep work — no additional charge.</span>
+              )}
+              {state.roofMaterial === 'asphalt' && (
+                <span>Asphalt/shingles/tiled roofs require additional mounting prep
+                  at <strong>{fmt.peso(adminParams.roofAsphaltPerKwp)}/kWp</strong>.</span>
+              )}
+              {state.roofMaterial === 'concrete' && (
+                <span>Concrete roofs require the most prep work
+                  at <strong>{fmt.peso(adminParams.roofConcretePerKwp)}/kWp</strong>.</span>
+              )}
+            </>
           )}
         </div>
       </Subsection>
