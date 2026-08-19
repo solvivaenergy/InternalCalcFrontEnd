@@ -925,11 +925,8 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                     available={phaseInverters}
                     onChange={(inv) => {
                       const next = [...state.selectedInverters];
-                      if (inv && recInverters[i] && inv.ratedKw === recInverters[i].ratedKw) {
-                        next[i] = null;                  // matches recommendation → track the rec
-                      } else {
-                        next[i] = inv;
-                      }
+                      next[i] = (inv && recInverters[i] && inv.ratedKw === recInverters[i].ratedKw)
+                                ? null : inv;
                       updateState({ selectedInverters: next });
                     }}
                   />
@@ -1311,11 +1308,16 @@ function InverterRow({ slot, selected, recommended, available, onChange }) {
       <Select
         value={selected ? `${selected.ratedKw}` : ''}
         onChange={v => {
-          const inv = available.find(a => `${a.ratedKw}` === String(v));
-          onChange(inv || null);
+          if (v === '' || v == null) {
+            onChange(null);
+          } else {
+            const inv = available.find(a => `${a.ratedKw}` === String(v));
+            onChange(inv || null);
+          }
         }}
         width={180}
         options={[
+          { value: '', label: '— None —' },
           ...available.map(inv => ({
             value: `${inv.ratedKw}`,
             label: `${inv.ratedKw.toFixed(2)} kW Inverter`,
