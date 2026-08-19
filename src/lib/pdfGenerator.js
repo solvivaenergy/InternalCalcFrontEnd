@@ -1924,28 +1924,28 @@ function drawPackageDetailPage(mgr) {
   // only shown when RSD is relevant to the order — i.e. there are solar panels
   // or an RSD is availed. Battery-only orders skip it (v3-143). The Other Costs
   // note always renders. The amber box grows to fit whatever is rendered.
+  // ── Compliance / RSD disclaimer (approved Legal copy, backlog #4 & #18) ──
   const compParas = [];
-  if (rsdRelevant) {
-    compParas.push([
-      { t: "*Compliance. ", b: true },
-      {
-        t: "Rapid Shutdown Device (RSD): The Philippine Electrical Code (PEC) 2017, Section 6.90.2.6, requires an RSD for all solar PV installations. An RSD allows first responders to quickly de-energize your rooftop array during a fire or emergency, and helps you avoid findings or delays during LGU permitting and inspection. An RSD and Certificate of Final Electrical Inspection (CFEI) are likewise required when net metering conversion is availed.",
-        b: false,
-      },
-    ]);
-    if (rsdDeclined) {
-      compParas.push([
-        {
-          t: "Solviva strongly recommends the inclusion of an RSD in every system. ",
-          b: true,
-        },
-        {
-          t: "Should you elect to proceed without one, you do so at your own election and against our recommendation. By accepting this proposal with the RSD excluded, you confirm that (a) the requirement and its purpose were explained to you; (b) you assume full responsibility for all consequences of the exclusion, including denial or delay of LGU permits, delay in commissioning, adverse inspection findings, ineligibility for net metering, insurance implications, and any loss of life, injury, fire, or property damage arising from the inability to rapidly de-energize the system; and (c) you hold Solviva Energy, its affiliates, directors, officers, employees, representatives, and contractors free and harmless from any claim, loss, penalty, or liability arising from such exclusion. Installing an RSD at a later date will be quoted and charged separately.",
-          b: false,
-        },
-      ]);
-    }
-  }
+
+  compParas.push([
+    { t: "*Compliance. ", b: true },
+    {
+      t: "Rapid Shutdown Device (RSD): The Philippine Electrical Code (PEC) 2017, Section 6.90.2.6, requires an RSD for all solar PV installations. An RSD allows first responders to quickly de-energize your rooftop array during a fire or emergency, and helps you avoid findings or delays during LGU permitting and inspection. An RSD and Certificate of Final Electrical Inspection (CFEI) are likewise required when net metering conversion is availed.",
+      b: false,
+    },
+  ]);
+
+  compParas.push([
+    {
+      t: "Solviva strongly recommends the inclusion of an RSD in every system. ",
+      b: true,
+    },
+    {
+      t: "Should you elect to proceed without one, you do so at your own election and against our recommendation. By accepting this proposal with the RSD excluded, you confirm that (a) the requirement and its purpose were explained to you; (b) you assume full responsibility for all consequences of the exclusion, including denial or delay of LGU permits, delay in commissioning, adverse inspection findings, ineligibility for net metering, insurance implications, and any loss of life, injury, fire, or property damage arising from the inability to rapidly de-energize the system; and (c) you hold Solviva Energy, its affiliates, directors, officers, employees, representatives, and contractors free and harmless from any claim, loss, penalty, or liability arising from such exclusion. Installing an RSD at a later date will be quoted and charged separately.",
+      b: false,
+    },
+  ]);
+
   compParas.push([
     { t: "**Other Costs", b: true },
     {
@@ -1953,7 +1953,6 @@ function drawPackageDetailPage(mgr) {
       b: false,
     },
   ]);
-
   const compFont = 6.8;
   const compLineH = 2.9;
   const compParaGap = 1.6;
