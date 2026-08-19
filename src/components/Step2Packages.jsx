@@ -28,7 +28,7 @@ import { availableInverters, directFromCogs, grossMarginForCapacity } from '../l
 import { availableDeliveryLocations, availableMiscCatalog,
          findMiscCatalogItem, MISC_CATALOG_OTHER } from '../data/adminParams.js';
 import { INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_FREE_TRAVEL_KM, LUZON_REGIONS, NO_INVERTER } from '../config.js';
+         LUZON_FREE_TRAVEL_KM, LUZON_REGIONS } from '../config.js';
 import {
   SectionCard, Subsection, Field, NumberInput, Select, Checkbox, TextInput,
   CalloutBox, RecommendationPill, StatTile, COLORS, fmt, RSD_INFO,
@@ -925,9 +925,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                     available={phaseInverters}
                     onChange={(inv) => {
                       const next = [...state.selectedInverters];
-                      if (inv === NO_INVERTER) {
-                        next[i] = NO_INVERTER;            // explicit — None —
-                      } else if (inv && recInverters[i] && inv.ratedKw === recInverters[i].ratedKw) {
+                      if (inv && recInverters[i] && inv.ratedKw === recInverters[i].ratedKw) {
                         next[i] = null;                  // matches recommendation → track the rec
                       } else {
                         next[i] = inv;
@@ -1313,16 +1311,11 @@ function InverterRow({ slot, selected, recommended, available, onChange }) {
       <Select
         value={selected ? `${selected.ratedKw}` : ''}
         onChange={v => {
-          if (v === '' || v == null) {
-            onChange(NO_INVERTER);
-          } else {
-            const inv = available.find(a => `${a.ratedKw}` === String(v));
-            onChange(inv || NO_INVERTER);
-          }
+          const inv = available.find(a => `${a.ratedKw}` === String(v));
+          onChange(inv || null);
         }}
         width={180}
         options={[
-          { value: '', label: '— None —' },
           ...available.map(inv => ({
             value: `${inv.ratedKw}`,
             label: `${inv.ratedKw.toFixed(2)} kW Inverter`,

@@ -8,7 +8,7 @@ import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
          INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_FREE_TRAVEL_KM, NO_INVERTER } from '../config.js';
+         LUZON_FREE_TRAVEL_KM } from '../config.js';
 import {
   computeRecommendedPanels, recommendInverters, buildPackageLineItems,
   computePaymentTerms, popularTenorsTable, systemSizing,
@@ -832,9 +832,6 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // in-stock list instead, and fall back to the slot's recommendation.
     const inStockKw = new Set(availableInverters(phase).map(i => i.ratedKw));
     const effectiveInverters = state.selectedInverters.map((sel, i) => {
-      // Explicit "— None —" pick: no inverter for this slot, do NOT auto-fill
-      // the recommendation (enables inverter-less battery/panel-only quotes).
-      if (sel === NO_INVERTER) return null;
       const chosen = sel ?? recInverters[i] ?? null;
       return (chosen && !inStockKw.has(chosen.ratedKw))
         ? (recInverters[i] ?? null)

@@ -1777,23 +1777,6 @@ function drawPackageDetailPage(mgr) {
     ]);
   }
 
-  // #5 AC4 — panels/battery order with no inverter: state the omission.
-  const hasInverter = (model.effectiveInverters || []).some(
-    (inv) => inv && inv.ratedKw,
-  );
-  if (!hasInverter && (solarTot > 0 || batteryKwh > 0 || batteryTot > 0)) {
-    body.push([
-      {
-        content: "Inverter \u2014 not included (client-supplied)",
-        styles: { textColor: [107, 114, 128], fontStyle: "italic" },
-      },
-      {
-        content: "\u2014",
-        styles: { textColor: [107, 114, 128], fontStyle: "italic" },
-      },
-    ]);
-  }
-
   // 3. Add "Other costs:**" label IMMEDIATELY below RSD
   body.push([
     { content: "Other costs:**", styles: { fontStyle: "normal" } },

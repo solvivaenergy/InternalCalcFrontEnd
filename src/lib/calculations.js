@@ -1141,23 +1141,6 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     });
   });
 
-  // #5 AC4 — panels/battery order with NO inverter supplied. The per-slot
-  // "None" rows above are filtered out of the customer/rep views (B<>0 gate),
-  // so state the omission explicitly with a ₱0 informational line instead of
-  // leaving it silently missing. `informational` keeps it out of totals.
-  if (
-    !selectedInverters.some((i) => i) &&
-    (panelsTotal > 0 || batteryKwh > 0)
-  ) {
-    items.push({
-      key: "inverterNone",
-      description: "Inverter \u2014 not included (client-supplied)",
-      directPrice: 0,
-      cogs: 0,
-      informational: true,
-    });
-  }
-
   // 10. Battery package (v3-54 — package-driven)
   // The active battery package is resolved from state.batteryPackageId via
   // ap.batteryPackages[]. Each package carries its own unit size,

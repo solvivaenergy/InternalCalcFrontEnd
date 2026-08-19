@@ -124,13 +124,6 @@ export const DEFAULTS = {
 export const INCLUDED_DC_CABLE_METERS = 30;
 export const INCLUDED_AC_CABLE_METERS = 10;
 
-// Sentinel stored in state.selectedInverters[i] when the rep EXPLICITLY picks
-// "— None —" for a slot. Distinct from `null`, which means "untouched → use the
-// recommendation". Lets all three slots be None (inverter-less battery-only or
-// panels-only supply) without the model snapping the slot back to the
-// recommended inverter. Resolved to `null` (no inverter) in effectiveInverters.
-export const NO_INVERTER = "none";
-
 // Land-travel-distance threshold (Luzon location surcharge). The first
 // LUZON_FREE_TRAVEL_KM kilometers from the Parañaque logistics hub
 // (DB Schenker / DSV warehouse) are included; only distance beyond that
