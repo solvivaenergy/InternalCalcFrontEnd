@@ -1228,7 +1228,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   if (batteryKwh > 0 && !batteryIncludeRack) {
     items.push({
       key: "rack",
-      description: "Battery Rack — not included (client-supplied)",
+      description: "Battery Rack — not included",
       directPrice: 0,
       cogs: 0,
       informational: true,
@@ -1244,8 +1244,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   if (batteryKwh > 0 && !batteryIncludeAts) {
     items.push({
       key: "ats",
-      description:
-        "Automatic Transfer Switch (ATS) — not included (client-supplied)",
+      description: "Automatic Transfer Switch (ATS) — not included",
       directPrice: 0,
       cogs: 0,
       informational: true,
@@ -1261,8 +1260,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   if (batteryKwh > 0 && !batteryIncludeCriticalLoads) {
     items.push({
       key: "critLoads",
-      description:
-        "Materials for Critical Loads — not included (client-supplied)",
+      description: "Materials for Critical Loads — not included",
       directPrice: 0,
       cogs: 0,
       informational: true,
