@@ -1749,20 +1749,20 @@ function drawPackageDetailPage(mgr) {
     const kwpStr = Number(systemKwp).toFixed(1).replace(/\.0$/, "");
     body.push([`${kwpStr} kWp Solar Package`, peso(solarTot)]);
   }
-
+  // #18: show the RSD line with its amount, marked not availed, and keep
+  // it out of the total (terms.netDirectPrice already excludes it). The
+  // "not availed*" note sits beside the amount, not on the item label.
   // RSD sits directly beneath the Solar Package (it is a solar-array device).
   if (rsdRaw && rsdRelevant) {
     if (rsdDeclined) {
-      // #18: show the RSD line with its amount, marked not availed, and keep
-      // it out of the total (terms.netDirectPrice already excludes it). The
-      // "not availed*" note sits beside the amount, not on the item label.
+      // Updated per client instruction: append text to description and leave amount blank
       body.push([
         {
-          content: rsdRaw.description,
+          content: `${rsdRaw.description}* (excluded per client instruction)`,
           styles: { textColor: [136, 106, 42], fontStyle: "italic" },
         },
         {
-          content: `${peso(rsdAmount)} \u2014 not availed*`,
+          content: "", // Leaves the amount column blank
           styles: { textColor: [136, 106, 42], fontStyle: "italic" },
         },
       ]);
@@ -1770,7 +1770,6 @@ function drawPackageDetailPage(mgr) {
       body.push([`${rsdRaw.description}*`, peso(rsdAmount)]);
     }
   }
-
   if (batteryKwh > 0 || batteryTot > 0) {
     body.push([
       `${Math.round(batteryKwh)} kWh Battery Package`,
