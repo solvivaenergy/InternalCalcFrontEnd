@@ -97,6 +97,15 @@ export function makeInitialState(kind = 'all') {
     // sets a non-null value. Falls back to first available package if the
     // chosen id is later deleted by admin.
     batteryPackageId: null,
+    // v3-143 — battery component unbundling (rep-only, Step 2B). Default true =
+    // include (byte-identical to prior behavior). A rep can drop the rack, ATS,
+    // and/or critical-loads materials from the quote when the client already
+    // owns them / supplies their own. Additive with safe defaults, so restored
+    // pre-v3-143 sessions read as "include everything" → no STATE_RECORD_VERSION
+    // bump. Only affect line-item emission — never the recommendation/sizing.
+    batteryIncludeRack: true,
+    batteryIncludeAts: true,
+    batteryIncludeCriticalLoads: true,
     netMeteringEnabled: false,
     // Roof Material (v3 — Excel CALCULATOR M36):
     //   'metal'    → ₱0 charge (no roof prep needed) — DEFAULT

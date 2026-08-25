@@ -149,9 +149,15 @@ async function fetchPublicFontBase64(path) {
 }
 
 async function registerPdfFonts(doc) {
+  // Embed Inter (18pt optical cut) to match the Figma proposal design. Inter
+  // includes the ₱ (U+20B1) glyph, so no currency-only font fallback is needed.
   const fontFiles = [
-    ["NotoSans-Regular.ttf", "/fonts/NotoSans-Regular.ttf", "normal"],
-    ["NotoSans-Bold.ttf", "/fonts/NotoSans-Bold.ttf", "bold"],
+    ["Inter-Regular.ttf", "/fonts/Inter-Regular.ttf", "normal"],
+    ["Inter-Medium.ttf", "/fonts/Inter-Medium.ttf", "medium"],
+    ["Inter-SemiBold.ttf", "/fonts/Inter-SemiBold.ttf", "semibold"],
+    ["Inter-Bold.ttf", "/fonts/Inter-Bold.ttf", "bold"],
+    ["Inter-Italic.ttf", "/fonts/Inter-Italic.ttf", "italic"],
+    ["Inter-BoldItalic.ttf", "/fonts/Inter-BoldItalic.ttf", "bolditalic"],
   ];
   const fontData = await Promise.all(
     fontFiles.map(([, path]) => fetchPublicFontBase64(path)),
@@ -159,27 +165,20 @@ async function registerPdfFonts(doc) {
 
   fontFiles.forEach(([fileName, , style], index) => {
     doc.addFileToVFS(fileName, fontData[index]);
-    doc.addFont(fileName, "NotoSans", style);
+    doc.addFont(fileName, "Inter", style);
   });
 
-  // Keep Helvetica's established layout metrics, switching to Noto Sans only
-  // for currency runs that need the U+20B1 glyph. This also covers autotables.
-  const text = doc.text.bind(doc);
-  doc.text = (value, ...args) => {
-    const needsPesoFont = Array.isArray(value)
-      ? value.some((line) => String(line).includes("\u20B1"))
-      : String(value).includes("\u20B1");
-    if (!needsPesoFont) return text(value, ...args);
-
-    const currentFont = doc.internal.getFont();
-    const pesoStyle = currentFont.fontStyle.includes("bold")
-      ? "bold"
-      : "normal";
-    doc.setFont("NotoSans", pesoStyle);
-    const result = text(value, ...args);
-    doc.setFont(currentFont.fontName, currentFont.fontStyle);
-    return result;
+  // Remap every "helvetica" font request to the embedded Inter family so all
+  // existing setFont("helvetica", …) call sites — plus autotable's internal
+  // font selection and width measurement — render in Inter with no call-site
+  // changes and consistent text metrics.
+  const setFont = doc.setFont.bind(doc);
+  doc.setFont = (fontName, ...rest) => {
+    if (fontName === "helvetica") return setFont("Inter", ...rest);
+    return setFont(fontName, ...rest);
   };
+
+  doc.setFont("Inter", "normal");
 }
 
 async function cropBannerToRatio(dataUrl) {
@@ -270,16 +269,31 @@ function drawPageBackground(mgr) {
   }
 }
 
+// Per-page signature line, bottom-left, kept subtle so it does not disturb the
+// page design (backlog #4 AC4 — "every page carries a signature line").
+function drawPageSignatureLine(doc) {
+  // Caption baseline aligns with the page number (~286.2); line sits just above.
+  const y = PAGE_H - 13.6;
+  doc.setDrawColor(150, 150, 150);
+  doc.setLineWidth(0.2);
+  doc.line(MARGIN, y, MARGIN + 58, y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.5);
+  doc.setTextColor(120, 120, 120);
+  doc.text("Client Signature", MARGIN, y + 2.6);
+}
+
 function drawFooter(mgr, opts = {}) {
   const { doc, pageNumber } = mgr;
   const footerY = PAGE_H - 12;
+
+  if (!opts.noSignatureLine) drawPageSignatureLine(doc);
 
   if (opts.figmaExact) {
     mgr.footerStamps.push({ pageNumber, y: footerY, figmaExact: true });
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(73, 73, 73);
-    doc.text("www.solvivaenergy.com", 7.2, 286.2);
     doc.text(String(pageNumber), 202.5, 286.2, { align: "right" });
     return;
   }
@@ -287,8 +301,6 @@ function drawFooter(mgr, opts = {}) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(...C.textTertiary);
-  const leftText = "www.solvivaenergy.com";
-  doc.text(leftText, MARGIN, footerY);
   mgr.footerStamps.push({ pageNumber, y: footerY });
   doc.text(`${pageNumber}`, PAGE_W - MARGIN, footerY, { align: "right" });
 }
@@ -579,15 +591,15 @@ function drawCoverPage1(mgr) {
       colW = 986,
       wrapValues = false,
     } = opt || {};
-    if (title) T(title, colXpx, topPx, 46, { style: "bold" });
+    if (title) T(title, colXpx, topPx, 46, { style: "semibold" });
     const contentTop = title ? topPx + 100 : topPx;
     const valueXpx = colXpx + labelW + 56;
     const valueW = colW - labelW - 56;
     rows.forEach((r, i) => {
       const y = contentTop + i * pitch;
 
-      // UPDATED: Changed style to "normal" and color to GRAY to match Figma
-      T(r[0], colXpx, y, textSize, { style: "normal", c: GRAY });
+      // Figma: labels are Inter Medium, black; values Inter Regular, black.
+      T(r[0], colXpx, y, textSize, { style: "medium", c: BLACK });
 
       if (wrapValues) {
         const valLines = d.splitTextToSize(String(r[1] ?? "-"), fxmm(valueW));
@@ -624,7 +636,7 @@ function drawCoverPage1(mgr) {
   drawInfoColumn(
     "Presented by:",
     [
-      ["Name:", agent?.name || "Solviva Customer Support"],
+      ["Sales Representative", agent?.name || "Solviva Customer Support"],
       ["Contact number:", agent?.phone || "0917-802-8948"],
       ["Email address:", agent?.email || "hello@solvivaenergy.com"],
     ],
@@ -635,7 +647,7 @@ function drawCoverPage1(mgr) {
   // ── Tile-row helper ──
   const drawTilesRow = (titleText, titleXpx, titleTopPx, tiles, opt) => {
     const { leftPx = 88, widthPx = 2304, bg = TILEG } = opt || {};
-    T(titleText, titleXpx, titleTopPx, 64, { c: BLUE, style: "bold" });
+    T(titleText, titleXpx, titleTopPx, 64, { c: BLUE, style: "semibold" });
     const gap = 80;
     const tileW = (widthPx - 3 * gap) / 4;
     const tileH = 407;
@@ -659,7 +671,7 @@ function drawCoverPage1(mgr) {
       lines.forEach((l) => {
         T(l.txt, cx, ly, l.size, {
           c: l.c,
-          style: l.style || "normal",
+          style: l.style || "medium",
           align: "center",
         });
         ly += l.size + 8;
@@ -681,6 +693,10 @@ function drawCoverPage1(mgr) {
     model.activeBatteryPackage?.batteryUnitKwh || state.batteryUnitKwh || 5;
   const batteryUnitCount =
     batteryKwh > 0 ? Math.ceil(batteryKwh / batteryUnitKwh) : 0;
+  // v3-143 — storage-only orders (no solar array) show N/A on the solar
+  // tiles, mirroring the inverter tile, so a battery-only quote never
+  // implies a phantom 0kWp / 0-panel solar package.
+  const hasSolar = panelCount > 0;
 
   drawTilesRow(
     "System package",
@@ -688,19 +704,35 @@ function drawCoverPage1(mgr) {
     1502,
     [
       [
-        { txt: `${Math.round(systemKwp)}kWp`, size: 100, c: DGREEN },
+        {
+          txt: hasSolar ? `${Math.round(systemKwp)}kWp` : "N/A",
+          size: 100,
+          c: DGREEN,
+        },
         { txt: "Peak system", size: 38, c: BLACK },
-        { txt: "capacity", size: 38, c: BLACK },
+        { txt: hasSolar ? "capacity" : "Not included", size: 38, c: BLACK },
       ],
       [
-        { txt: `${panelCount}`, size: 100, c: DGREEN },
+        { txt: hasSolar ? `${panelCount}` : "N/A", size: 100, c: DGREEN },
         { txt: "No. of panels", size: 38, c: BLACK },
-        { txt: `${panelWatts}W panels`, size: 38, c: NEUTRAL },
+        {
+          txt: hasSolar ? `${panelWatts}W panels` : "Not included",
+          size: 38,
+          c: NEUTRAL,
+        },
       ],
       [
-        { txt: `${inverterTotalKw}kW`, size: 100, c: DGREEN },
+        {
+          txt: inverters.length ? `${inverterTotalKw}kW` : "N/A",
+          size: 100,
+          c: DGREEN,
+        },
         { txt: "Inverter", size: 38, c: BLACK },
-        { txt: "Hybrid", size: 38, c: NEUTRAL },
+        {
+          txt: inverters.length ? "Hybrid" : "Not included",
+          size: 38,
+          c: NEUTRAL,
+        },
       ],
       [
         { txt: `${batteryKwh.toFixed(0)} kWh`, size: 100, c: DGREEN },
@@ -722,7 +754,7 @@ function drawCoverPage1(mgr) {
   const terms = model.terms || {};
   const tenor = state.tenor ?? 60;
   // Payment title is blue like the other section headings.
-  T("System package", 94, 2165, 64, { c: BLUE, style: "bold" });
+  T("Quote at a glance", 94, 2165, 64, { c: BLUE, style: "semibold" });
   drawInfoColumn(
     "",
     [
@@ -817,6 +849,8 @@ function drawSystemRow(mgr, showHeading = true) {
     batteryUnitCount > 0
       ? `${batteryUnitCount} unit(s) of ${batteryUnitKwh} kWh`
       : "\u2014";
+  // v3-143 — storage-only orders (no solar array) show N/A on the solar tiles.
+  const hasSolar = panelCount > 0;
 
   if (showHeading) {
     mgr.doc.setFont("helvetica", "bold");
@@ -830,19 +864,19 @@ function drawSystemRow(mgr, showHeading = true) {
   const tileH = 28;
   const tiles = [
     {
-      bigNum: `${Math.round(systemKwp)}kWp`,
+      bigNum: hasSolar ? `${Math.round(systemKwp)}kWp` : "N/A",
       line1: "Peak system",
-      line2: "capacity",
+      line2: hasSolar ? "capacity" : "Not included",
     },
     {
-      bigNum: `${panelCount}`,
+      bigNum: hasSolar ? `${panelCount}` : "N/A",
       line1: "No. of panels",
-      line2: `${panelWatts}W panels`,
+      line2: hasSolar ? `${panelWatts}W panels` : "Not included",
     },
     {
-      bigNum: `${inverterTotalKw}kW`,
+      bigNum: inverters.length ? `${inverterTotalKw}kW` : "N/A",
       line1: "Inverter",
-      line2: "Hybrid",
+      line2: inverters.length ? "Hybrid" : "Not included",
     },
     {
       bigNum: `${batteryKwh.toFixed(0)} kWh`,
@@ -893,7 +927,7 @@ function drawQuoteAtAGlanceRow(mgr) {
   mgr.doc.setFont("helvetica", "bold");
   mgr.doc.setFontSize(12);
   mgr.doc.setTextColor(27, 119, 188);
-  mgr.doc.text("System package", MARGIN, mgr.y + 3);
+  mgr.doc.text("Quote at a glance", MARGIN, mgr.y + 3);
   mgr.y += 8;
 
   const splitX = MARGIN + CONTENT_W * 0.56;
@@ -1161,8 +1195,8 @@ function drawStep1Page(mgr) {
   drawTopHeaderFigma(mgr);
   mgr.y += 2;
 
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(14);
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(64));
   mgr.doc.setTextColor(0, 106, 198);
   mgr.doc.text("Current energy consumption", MARGIN, mgr.y + 4);
   mgr.y += 9;
@@ -1440,8 +1474,8 @@ function drawStep1Page(mgr) {
   const currentBill = Number(state.monthlyBill || 0);
   const newBill = Math.max(0, currentBill - actualMonthlySavings);
 
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(13);
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(64));
   mgr.doc.setTextColor(0, 106, 198);
   mgr.doc.text("Savings goal", MARGIN, mgr.y + 5);
 
@@ -1453,114 +1487,135 @@ function drawStep1Page(mgr) {
 
   // 1. Green Target Box
   mgr.doc.setFillColor(31, 82, 43);
-  mgr.doc.roundedRect(MARGIN, goalY, leftColW, 16, 2, 2, "F");
+  mgr.doc.roundedRect(MARGIN, goalY, leftColW, 22, 2, 2, "F");
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(24);
   mgr.doc.setTextColor(210, 255, 30);
   // Replaced desiredPct with displayedPct
-  mgr.doc.text(`${displayedPct}%`, MARGIN + 6, goalY + 11.5);
+  mgr.doc.text(`${displayedPct}%`, MARGIN + 6, goalY + 14.5);
   mgr.doc.setFont("helvetica", "bold");
   mgr.doc.setFontSize(9.5);
   mgr.doc.setTextColor(...C.white);
-  mgr.doc.text("Projected savings", MARGIN + 36, goalY + 7.5);
+  mgr.doc.text("Projected savings", MARGIN + 36, goalY + 10.5);
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(8);
-  mgr.doc.text("from your monthly electric bill", MARGIN + 36, goalY + 12.5);
+  mgr.doc.text("from your monthly electric bill", MARGIN + 36, goalY + 15.5);
 
   // 2. White Savings Box
   mgr.doc.setFillColor(250, 250, 250);
   mgr.doc.setDrawColor(230, 230, 230);
   mgr.doc.setLineWidth(0.2);
-  mgr.doc.roundedRect(MARGIN, goalY + 19, leftColW, 16, 2, 2, "FD");
+  mgr.doc.roundedRect(MARGIN, goalY + 25, leftColW, 22, 2, 2, "FD");
 
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(22);
   mgr.doc.setTextColor(31, 82, 43);
   // Render the actual calculated savings
-  mgr.doc.text(peso(actualMonthlySavings), MARGIN + 6, goalY + 30.5);
+  const monthlySavingsStr = peso(actualMonthlySavings);
+  mgr.doc.text(monthlySavingsStr, MARGIN + 6, goalY + 39.5);
+  // Asterisk anchor linking the figure to the savings disclaimer (#4 AC1)
+  const monthlySavingsW = mgr.doc.getTextWidth(monthlySavingsStr);
+  mgr.doc.setFontSize(11);
+  mgr.doc.text("*", MARGIN + 6 + monthlySavingsW + 0.6, goalY + 34);
   mgr.doc.setFont("helvetica", "bold");
   mgr.doc.setFontSize(9.5);
   mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text("Monthly savings", MARGIN + 36, goalY + 26.5);
+  mgr.doc.text("Monthly savings", MARGIN + 36, goalY + 35.5);
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(8);
   mgr.doc.setTextColor(...C.textMuted);
-  mgr.doc.text("estimated at current utility rate", MARGIN + 36, goalY + 31.5);
+  mgr.doc.text("estimated at current utility rate", MARGIN + 36, goalY + 40.5);
 
-  // ... (Keep the rest of the disclaimer and bar visual generation unchanged)
+  // NOTE: the savings disclaimer now renders full-width at the page foot
+  // (see drawSavingsDisclaimerFooter) so it can carry the full approved copy.
 
-  // Disclaimer beneath the savings boxes
-  mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(7.5); // Adjusted to 7.5
-  mgr.doc.setTextColor(...C.textMuted);
-  const savingsDisc = mgr.doc.splitTextToSize(
-    "*Savings estimates are based on your stated monthly bill and utility rate. Actual savings may vary based on usage patterns, weather, and utility rate changes.",
-    leftColW,
-  );
-  savingsDisc.forEach(
-    (ln, i) => mgr.doc.text(ln, MARGIN, goalY + 40 + i * 3.2), // Adjusted line spacing to 3.2
-  );
-
-  // 3. Simple bar visual (Aligned squarely to the right column)
-  const barBaseY = goalY + 38;
-  const axisTop = goalY + 4;
+  // 3. Bar visual (mockup-matched: rounded bars with pill value labels).
+  // Tallest bar top is aligned to the top of the savings-goal boxes (goalY).
   const maxVal = Math.max(currentBill, newBill, 1);
-  const h1 = (currentBill / maxVal) * 28;
-  const h2 = (newBill / maxVal) * 28;
+  const barMaxH = 30;
+  const barMinH = 12;
+  const barBaseY = goalY + barMaxH;
+  // Compressed scale with a min-height floor so the shorter bar still reads
+  // clearly (mockup renders the smaller bar taller than a strict ratio would).
+  const scaleBar = (v) =>
+    v <= 0 ? 0 : barMinH + (v / maxVal) * (barMaxH - barMinH);
+  const h1 = scaleBar(currentBill);
+  const h2 = scaleBar(newBill);
 
-  // Clean faint grid lines
-  mgr.doc.setDrawColor(240, 240, 240);
-  mgr.doc.setLineWidth(0.2);
-  for (let i = 0; i < 5; i++) {
-    const gy = axisTop + i * 7;
-    mgr.doc.line(rightColX, gy, rightColX + rightColW, gy);
-  }
+  const barW = 15;
+  // Figma bar centers are 519.6px apart => 44.0mm; nudged slightly closer.
+  const barGap = 38;
+  const barColMid = rightColX + rightColW / 2;
+  const b1X = barColMid - barGap / 2 - barW / 2;
+  const b2X = barColMid + barGap / 2 - barW / 2;
 
-  // Bars
-  const barW = 14;
-  const b1X = rightColX + rightColW * 0.3 - barW / 2;
-  const b2X = rightColX + rightColW * 0.7 - barW / 2;
+  // Bars: top corners rounded, bottom edges square (overlay a plain rect over
+  // the lower half to square off the rounded bottom corners).
+  const barR = 2;
+  const drawBar = (x, h, rgb) => {
+    mgr.doc.setFillColor(...rgb);
+    mgr.doc.roundedRect(x, barBaseY - h, barW, h, barR, barR, "F");
+    mgr.doc.rect(x, barBaseY - h + barR, barW, h - barR, "F");
+  };
+  drawBar(b1X, h1, [255, 112, 0]);
+  drawBar(b2X, h2, [140, 225, 20]);
 
-  mgr.doc.setFillColor(245, 121, 28);
-  mgr.doc.roundedRect(b1X, barBaseY - h1, barW, h1, 1, 1, "F");
-  mgr.doc.setFillColor(128, 230, 0);
-  mgr.doc.roundedRect(b2X, barBaseY - h2, barW, h2, 1, 1, "F");
+  // Value pills floating above each bar
+  const drawValuePill = (label, cx, pillTopY) => {
+    mgr.doc.setFont("helvetica", "medium");
+    mgr.doc.setFontSize(8);
+    const pillH = 5.4;
+    const pillW = mgr.doc.getTextWidth(label) + 4.4;
+    mgr.doc.setFillColor(247, 247, 247);
+    mgr.doc.setDrawColor(226, 226, 226);
+    mgr.doc.setLineWidth(0.2);
+    mgr.doc.roundedRect(
+      cx - pillW / 2,
+      pillTopY,
+      pillW,
+      pillH,
+      pillH / 2,
+      pillH / 2,
+      "FD",
+    );
+    mgr.doc.setTextColor(0, 0, 0);
+    mgr.doc.text(label, cx, pillTopY + pillH / 2 + 1.1, { align: "center" });
+  };
+  drawValuePill(peso(currentBill), b1X + barW / 2, barBaseY - h1 - 7.4);
+  drawValuePill(peso(newBill), b2X + barW / 2, barBaseY - h2 - 7.4);
 
-  // Text Labels
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(8.5);
-  mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text(peso(currentBill), b1X + barW / 2, barBaseY - h1 - 2, {
-    align: "center",
-  });
-  mgr.doc.text(peso(newBill), b2X + barW / 2, barBaseY - h2 - 2, {
-    align: "center",
-  });
-
+  // Text Labels (Figma: title black Medium, subtitle Neutral/600 gray Medium)
+  mgr.doc.setFont("helvetica", "medium");
   mgr.doc.setFontSize(7.5);
+  mgr.doc.setTextColor(0, 0, 0);
   mgr.doc.text("Current electric bill", b1X + barW / 2, barBaseY + 5, {
     align: "center",
   });
-  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFont("helvetica", "medium");
   mgr.doc.setFontSize(6.5);
-  mgr.doc.setTextColor(...C.textMuted);
+  mgr.doc.setTextColor(71, 84, 103);
   mgr.doc.text("Pre-solar", b1X + barW / 2, barBaseY + 9, { align: "center" });
 
-  mgr.doc.setFont("helvetica", "bold");
+  mgr.doc.setFont("helvetica", "medium");
   mgr.doc.setFontSize(7.5);
-  mgr.doc.setTextColor(...C.textBody);
+  mgr.doc.setTextColor(0, 0, 0);
   mgr.doc.text("New electric bill", b2X + barW / 2, barBaseY + 5, {
     align: "center",
   });
-  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFont("helvetica", "medium");
   mgr.doc.setFontSize(6.5);
-  mgr.doc.setTextColor(...C.textMuted);
+  mgr.doc.setTextColor(71, 84, 103);
   mgr.doc.text("With solar", b2X + barW / 2, barBaseY + 9, { align: "center" });
 
-  // Recommended package repeat row at bottom
-  mgr.y = goalY + 68; // Increased from 52 to add more padding
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(13);
+  // Savings disclaimer in an emphasized amber box, placed between the savings
+  // goal block and the recommended package (mockup-matched, #4 AC2).
+  mgr.y = goalY + 52;
+  drawSavingsDisclaimerBox(mgr);
+
+  // Recommended package repeat row
+  mgr.y += 4;
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(64));
   mgr.doc.setTextColor(0, 106, 198);
   mgr.doc.text("Recommended solar system package", MARGIN, mgr.y + 4);
 
@@ -1573,8 +1628,32 @@ function drawStep1Page(mgr) {
     mgr.y + 9,
   );
 
-  mgr.y += 15; // Also slightly increased this gap from 12 to 15 to give the text breathing room before the tiles start
+  mgr.y += 15;
   drawSystemRow(mgr, false);
+}
+
+// Savings disclaimer in an emphasized amber box (approved Legal wording,
+// backlog #4 AC2). Draws at mgr.y and advances it past the box.
+function drawSavingsDisclaimerBox(mgr) {
+  const text =
+    "*The savings and investment returns are estimates only and are based on the monthly bill, current distribution utility rate, and major appliances/loads you provided, as listed in this proposal. Other external factors, including those which may be unique to your situation, have not been considered in calculating these estimates. Actual savings will vary depending on, among others, your actual usage patterns and load profile, weather and solar irradiance, system performance, and changes in distribution utility rates. These figures are illustrative projections only, may not be conclusively relied upon, and do not constitute a guarantee.";
+  const pad = fxmm(23.896);
+  const radius = fxmm(23.896);
+  const lineH = fxmm(27.879 * 1.58); // Figma: 27.879px font x 1.58 line-height
+  mgr.doc.setFont("helvetica", "medium");
+  mgr.doc.setFontSize(fxpt(27.879));
+  const lines = mgr.doc.splitTextToSize(text, CONTENT_W - pad * 2);
+  const boxH = lines.length * lineH + pad * 2;
+  const boxY = mgr.y;
+  mgr.doc.setFillColor(255, 237, 192);
+  mgr.doc.setDrawColor(248, 203, 83);
+  mgr.doc.setLineWidth(fxmm(1.991));
+  mgr.doc.roundedRect(MARGIN, boxY, CONTENT_W, boxH, radius, radius, "FD");
+  mgr.doc.setTextColor(132, 99, 0);
+  lines.forEach((ln, i) =>
+    mgr.doc.text(ln, MARGIN + pad, boxY + pad + fxmm(27.879) * 0.8 + i * lineH),
+  );
+  mgr.y = boxY + boxH;
 }
 function drawPackageDetailPage(mgr) {
   const { model, state } = mgr.ctx;
@@ -1590,8 +1669,8 @@ function drawPackageDetailPage(mgr) {
 
   drawTopHeaderFigma(mgr);
   mgr.y += 2;
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(14);
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(64));
   mgr.doc.setTextColor(0, 106, 198);
   mgr.doc.text("System package in detail", MARGIN, mgr.y + 4);
   mgr.y += 8;
@@ -1599,8 +1678,29 @@ function drawPackageDetailPage(mgr) {
   // 1. Group items dynamically based on their descriptions
   let solarTot = 0;
   let batteryTot = 0;
-  let rsdItem = null;
   const miscItems = [];
+
+  // RSD is handled from the raw item list so it can still be shown (with its
+  // notional amount, excluded from the total) when the client declines it (#18).
+  const rsdRaw = items.find((i) => i && i.key === "rsd");
+  const rsdDeclined = !!(
+    rsdRaw &&
+    (rsdRaw.declined || (rsdRaw.directPrice || 0) === 0)
+  );
+  const rsdAmount = rsdRaw
+    ? rsdDeclined
+      ? rsdRaw.notionalPrice || 0
+      : rsdRaw.directPrice || 0
+    : 0;
+  // RSD is a solar-array safety device. On a battery-only / no-solar order it
+  // is irrelevant, so suppress the declined "not availed" line and its
+  // compliance copy unless the order has solar panels or an RSD is availed.
+  const rsdAvailed = !!(
+    rsdRaw &&
+    !rsdDeclined &&
+    (rsdRaw.directPrice || 0) > 0
+  );
+  const rsdRelevant = panelCount > 0 || rsdAvailed;
 
   items
     .filter(
@@ -1611,7 +1711,7 @@ function drawPackageDetailPage(mgr) {
       const d = i.description.toLowerCase();
 
       if (d.includes("rapid shutdown") || d.includes("rsd")) {
-        rsdItem = i;
+        // handled separately via rsdRaw
       } else if (
         d.includes("battery") ||
         d.includes("ats") ||
@@ -1649,17 +1749,32 @@ function drawPackageDetailPage(mgr) {
     const kwpStr = Number(systemKwp).toFixed(1).replace(/\.0$/, "");
     body.push([`${kwpStr} kWp Solar Package`, peso(solarTot)]);
   }
-
+  // #18: show the RSD line with its amount, marked not availed, and keep
+  // it out of the total (terms.netDirectPrice already excludes it). The
+  // "not availed*" note sits beside the amount, not on the item label.
+  // RSD sits directly beneath the Solar Package (it is a solar-array device).
+  if (rsdRaw && rsdRelevant) {
+    if (rsdDeclined) {
+      // Updated per client instruction: append text to description and leave amount blank
+      body.push([
+        {
+          content: `${rsdRaw.description}* (excluded per client instruction)`,
+          styles: { textColor: [136, 106, 42], fontStyle: "italic" },
+        },
+        {
+          content: "", // Leaves the amount column blank
+          styles: { textColor: [136, 106, 42], fontStyle: "italic" },
+        },
+      ]);
+    } else {
+      body.push([`${rsdRaw.description}*`, peso(rsdAmount)]);
+    }
+  }
   if (batteryKwh > 0 || batteryTot > 0) {
     body.push([
       `${Math.round(batteryKwh)} kWh Battery Package`,
       peso(batteryTot),
     ]);
-  }
-
-  if (rsdItem) {
-    // Append an asterisk to RSD as shown in the design
-    body.push([`${rsdItem.description}*`, peso(rsdItem.directPrice)]);
   }
 
   // 3. Add "Other costs:**" label IMMEDIATELY below RSD
@@ -1802,67 +1917,101 @@ function drawPackageDetailPage(mgr) {
   });
 
   mgr.y = Math.max(currentY, warrantyY) + 4;
+
+  // ── Compliance / RSD disclaimer (approved Legal copy, backlog #4 & #18) ──
+  // The RSD compliance paragraph (and the declined "did not choose" copy) is
+  // only shown when RSD is relevant to the order — i.e. there are solar panels
+  // or an RSD is availed. Battery-only orders skip it (v3-143). The Other Costs
+  // note always renders. The amber box grows to fit whatever is rendered.
+  // ── Compliance / RSD disclaimer (approved Legal copy, backlog #4 & #18) ──
+  const compParas = [];
+
+  compParas.push([
+    { t: "*Compliance. ", b: true },
+    {
+      t: "Rapid Shutdown Device (RSD): The Philippine Electrical Code (PEC) 2017, Section 6.90.2.6, requires an RSD for all solar PV installations. An RSD allows first responders to quickly de-energize your rooftop array during a fire or emergency, and helps you avoid findings or delays during LGU permitting and inspection. An RSD and Certificate of Final Electrical Inspection (CFEI) are likewise required when net metering conversion is availed.",
+      b: false,
+    },
+  ]);
+
+  compParas.push([
+    {
+      t: "Solviva strongly recommends the inclusion of an RSD in every system. ",
+      b: true,
+    },
+    {
+      t: "Should you elect to proceed without one, you do so at your own election and against our recommendation. By accepting this proposal with the RSD excluded, you confirm that (a) the requirement and its purpose were explained to you; (b) you assume full responsibility for all consequences of the exclusion, including denial or delay of LGU permits, delay in commissioning, adverse inspection findings, ineligibility for net metering, insurance implications, and any loss of life, injury, fire, or property damage arising from the inability to rapidly de-energize the system; and (c) you hold Solviva Energy, its affiliates, directors, officers, employees, representatives, and contractors free and harmless from any claim, loss, penalty, or liability arising from such exclusion. Installing an RSD at a later date will be quoted and charged separately.",
+      b: false,
+    },
+  ]);
+
+  compParas.push([
+    { t: "**Other Costs", b: true },
+    {
+      t: ". Final system layout and price subject to site assessment. Roof orientation, shading, structural load, and available area may affect panel placement, output, and price.",
+      b: false,
+    },
+  ]);
+  const compFont = 6.8;
+  const compLineH = 2.9;
+  const compParaGap = 1.6;
+  const compPadX = 4;
+  const compMaxW = CONTENT_W - compPadX * 2;
+
+  const wrapCompPara = (para) => {
+    const words = [];
+    for (const span of para) {
+      span.t.split(" ").forEach((word) => {
+        if (word.length) words.push({ t: word + " ", b: span.b });
+      });
+    }
+    const out = [];
+    let line = [];
+    let lineW = 0;
+    for (const wd of words) {
+      mgr.doc.setFont("helvetica", wd.b ? "bold" : "normal");
+      mgr.doc.setFontSize(compFont);
+      const w = mgr.doc.getTextWidth(wd.t);
+      if (lineW + w > compMaxW && line.length) {
+        out.push(line);
+        line = [];
+        lineW = 0;
+      }
+      line.push(wd);
+      lineW += w;
+    }
+    if (line.length) out.push(line);
+    return out;
+  };
+
+  const compWrapped = compParas.map(wrapCompPara);
+  const compLineCount = compWrapped.reduce((n, l) => n + l.length, 0);
+  const compBoxH =
+    compLineCount * compLineH + (compWrapped.length - 1) * compParaGap + 8;
+
+  pageBreakIfNeeded(mgr, compBoxH + 4);
   const noteY = mgr.y;
 
   mgr.doc.setFillColor(255, 244, 217);
   mgr.doc.setDrawColor(248, 214, 137);
-  mgr.doc.roundedRect(MARGIN, noteY, CONTENT_W, 29, 2, 2, "FD");
+  mgr.doc.roundedRect(MARGIN, noteY, CONTENT_W, compBoxH, 2, 2, "FD");
 
-  const complianceTokens = [
-    { text: "*Compliance: ", bold: false },
-    { text: "A ", bold: true },
-    { text: "Rapid ", bold: true },
-    { text: "Shutdown ", bold: true },
-    { text: "Device ", bold: true },
-    { text: "(RSD) ", bold: true },
-    ..."is required by the Philippine Electrical Code (PEC) 2017 (Section 6.90.2.6) for all solar installations. This ensures your system protects your home during emergencies while meeting regulatory standards and avoiding potential LGU compliance issues. RSD and CFEI are also required by the PEC when net metering conversion is availed."
-      .split(" ")
-      .map((w) => ({ text: w + " ", bold: false })),
-  ];
-
-  const fontSize = 7;
-  const maxW = CONTENT_W - 4;
-  const lines = [];
-  let cur = [];
-  let curW = 0;
-
-  for (const tok of complianceTokens) {
-    mgr.doc.setFont("helvetica", tok.bold ? "bold" : "normal");
-    mgr.doc.setFontSize(fontSize);
-    const w = mgr.doc.getTextWidth(tok.text);
-    if (curW + w > maxW && cur.length) {
-      lines.push(cur);
-      cur = [tok];
-      curW = w;
-    } else {
-      cur.push(tok);
-      curW += w;
+  let cty = noteY + 6;
+  compWrapped.forEach((linesForPara, pi) => {
+    for (const line of linesForPara) {
+      let cx = MARGIN + compPadX;
+      for (const span of line) {
+        mgr.doc.setFont("helvetica", span.b ? "bold" : "normal");
+        mgr.doc.setFontSize(compFont);
+        mgr.doc.setTextColor(136, 106, 42);
+        mgr.doc.text(span.t, cx, cty);
+        cx += mgr.doc.getTextWidth(span.t);
+      }
+      cty += compLineH;
     }
-  }
-  if (cur.length) lines.push(cur);
-
-  let ty = noteY + 6;
-  for (const line of lines) {
-    let tx = MARGIN + 2;
-    for (const tok of line) {
-      mgr.doc.setFont("helvetica", tok.bold ? "bold" : "normal");
-      mgr.doc.setFontSize(fontSize);
-      mgr.doc.setTextColor(136, 106, 42);
-      mgr.doc.text(tok.text, tx, ty);
-      tx += mgr.doc.getTextWidth(tok.text);
-    }
-    ty += 3;
-  }
-
-  mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(7);
-  mgr.doc.setTextColor(136, 106, 42);
-  mgr.doc.text(
-    "**Other Costs: Final system layout and price subject to site assessment. Roof orientation, shading, structural load, and available area may affect panel placement, output, and price.",
-    MARGIN + 2,
-    noteY + 22,
-    { maxWidth: CONTENT_W - 4 },
-  );
+    if (pi < compWrapped.length - 1) cty += compParaGap;
+  });
+  mgr.y = noteY + compBoxH + 3;
 }
 function drawPaymentOptionsPage(mgr) {
   const { model, state } = mgr.ctx;
@@ -1880,8 +2029,8 @@ function drawPaymentOptionsPage(mgr) {
   drawSavingsDefinitions(mgr);
   mgr.y += 5;
 
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(14);
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(64));
   mgr.doc.setTextColor(0, 106, 198);
   mgr.doc.text("Your payment options", MARGIN, mgr.y + 4);
   mgr.y += 8;
@@ -2516,8 +2665,8 @@ function drawSchedulePage(mgr) {
   mgr.y += 2;
 
   // Match the image's blue header
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(14);
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(64));
   mgr.doc.setTextColor(0, 106, 198);
   mgr.doc.text("Schedule of payments", MARGIN, mgr.y + 4);
 
@@ -2568,8 +2717,8 @@ function drawSchedulePage(mgr) {
     mgr.y = MARGIN;
     if (typeof drawTopHeaderFigma === "function") drawTopHeaderFigma(mgr);
 
-    mgr.doc.setFont("helvetica", "bold");
-    mgr.doc.setFontSize(14);
+    mgr.doc.setFont("helvetica", "semibold");
+    mgr.doc.setFontSize(fxpt(64));
     mgr.doc.setTextColor(0, 106, 198);
     mgr.doc.text("Schedule of payments", MARGIN, mgr.y + 4);
   };
@@ -2660,8 +2809,8 @@ function drawTermsAndConditions(mgr) {
   drawTopHeaderFigma(mgr);
   mgr.y += 2;
 
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(14);
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(64));
   mgr.doc.setTextColor(0, 106, 198);
   mgr.doc.text("Terms and conditions", MARGIN, mgr.y + 4);
   mgr.y += 12;
@@ -2677,7 +2826,7 @@ function drawTermsAndConditions(mgr) {
         "• Electricity bill (should be under the name of the client)",
         "• Valid ID of the person in the electricity bill",
         "• Tax Declaration",
-        "• OCT/TCT (Land/Property Title)",
+        "• OCT/TCT (Land/Property title)",
         "• Official Receipt of latest Real Property Tax (Land & Building)",
         "• Building Permit",
         "• Certificate of Occupancy",
@@ -2685,8 +2834,9 @@ function drawTermsAndConditions(mgr) {
     },
     {
       title: "Some LGUs may also require:",
+      titleBold: true,
       text: [
-        "• Electrical Plan / Load Schedule (signed and sealed by a Professional Electrical Engineer) (Can be provided by Solviva if client avails)",
+        "• Electrical Plan / Load Schedule signed and sealed by a Professional Electrical Engineer (Can be provided by Solviva if client avails)",
         "• Electrical Design Analysis (Can be provided by Solviva if client avails)",
         "• Structural Roof Plan (Can be provided by Solviva if client avails)",
         "• Structural Analysis (Can be provided by Solviva if client avails)",
@@ -2701,10 +2851,10 @@ function drawTermsAndConditions(mgr) {
     },
     {
       title: "Logistics Add-On Cost",
-      text: "Any excess distance beyond the first 30 kilometers (km) from Kilometer 0 (Rizal Park) will be charged per kilometer at a specified rate.",
+      text: "Any excess distance beyond the first 33 kilometers (km) from Parañaque City will be charged per kilometer at a specified rate.",
     },
     {
-      title: "Price validity",
+      title: "Price Validity",
       text: "The prices provided in this proposal are valid for a period of thirty (30) days from the date of issuance. After this period, the prices are subject to change without prior notice.",
     },
     {
@@ -2723,7 +2873,7 @@ function drawTermsAndConditions(mgr) {
   const rightCol = [
     {
       title: "Installation",
-      text: "You shall provide reasonable assistance to Solviva and its designated representatives in the latter's preparation of the system design, and shall provide documents and information relating to the Premises, such as, but not limited to blueprints and/or building plans, as may be requested by the Supplier. You shall be responsible for the correctness and accuracy of any data and information provided.",
+      text: "You shall provide reasonable assistance to Solviva and its designated representatives in the latter's preparation of the system design, and shall provide documents and information relating to the Premises, such as, but not limited to blueprints and/or building plans, as may be requested by the Supplier. You shall be responsible for the correctness and accuracy of any data and information provided to us.",
     },
     {
       title: "Validity",
@@ -2735,34 +2885,47 @@ function drawTermsAndConditions(mgr) {
       ],
     },
     {
-      title: "Payment obligation",
+      title: "Payment Obligation",
       text: "Your satisfaction is our priority, and we will manage the entire process diligently from start to finish.",
     },
     {
       title: "Definitive Agreement",
-      text: "These Terms and Conditions shall be subject to the execution of a separate Solar Photovoltaic System Contract which shall be executed between you and the Company. Failure to execute the Solar Photovoltaic System within seven (7) days from the date of these Terms and Conditions (or such longer period as may be allowed by Solviva) shall entitle Solviva to terminate the terms and conditions without any liability to you and without any obligation to reimburse or return any payments already made. Should Solviva not be able to proceed with the completion of the installation, and consequent turnover of the Solar facility due to an action or decision of the client such as, but not limited to, the unsuitability of the structure on which the Solar facility will be installed then Solviva shall turn over any and installed portions of the facility, and the client shall be liable for the payments commensurate to the portions that have been turned over. Any additional materials required to install the solar facility shall be subject to another order form.\n\nWe appreciate your understanding that the net metering status does not impact the payment terms outlined in this proposal. Thank you for choosing Solviva. We look forward to helping you make the switch to clean, renewable energy.",
+      boldParagraphs: [1],
+      text: "These Terms and Conditions shall be subject to the execution of a separate Solar Photovoltaic System Contract which shall be executed between you and the Company. Failure to execute the Solar Photovoltaic System within seven (7) days from the date of these Terms and Conditions (or such longer period as may be allowed by Solviva) shall entitle Solviva to terminate the Terms and Conditions without any liability to you and without any obligation to reimburse or return any payments already made. Should Solviva not be able to proceed with the completion of the installation, and consequent turnover of the Solar facility due to an action or decision of the client such as, but not limited to, the unavailability of the structure on which the Solar facility will be installed then Solviva shall turn over any and installed portions of the facility, and the client shall be liable for the payments commensurate to the portions that have been turned over. Any additional materials required to install the solar facility shall be subject to another order form.\n\nWe appreciate your understanding that the net metering status does not impact the payment terms outlined in this proposal. Thank you for choosing Solviva. We look forward to helping you make the switch to clean, renewable energy.",
     },
   ];
 
+  // Figma T&C sizes: section titles 32px, body 28px; titles are Inter SemiBold
+  // (except the "Some LGUs" sub-header, which is Inter Bold in the design).
+  const TITLE_PT = fxpt(32);
+  const BODY_PT = fxpt(28);
+  // Match the Figma 1.63 line-height exactly; advance the cursor by the real
+  // line pitch in mm so blocks don't overlap.
+  const TC_LINE_HEIGHT = 1.63;
+  const bodyLineMm = BODY_PT * TC_LINE_HEIGHT * 0.352778;
+  // Headings hug their body copy, so use a tight pitch for the title advance.
+  const titleTightMm = TITLE_PT * 1.15 * 0.352778;
   const renderCol = (blocks, startX, startY) => {
     let currentY = startY;
     blocks.forEach((b) => {
-      mgr.doc.setFont("helvetica", "bold");
-      mgr.doc.setFontSize(7.5);
+      mgr.doc.setFont("helvetica", b.titleBold ? "bold" : "semibold");
+      mgr.doc.setFontSize(TITLE_PT);
       mgr.doc.setTextColor(...(C.textBody || [40, 40, 40]));
 
       const titleLines = mgr.doc.splitTextToSize(b.title, colW);
+      mgr.doc.setLineHeightFactor(1.15); // draw wrapped titles tight
       mgr.doc.text(titleLines, startX, currentY);
-      currentY += titleLines.length * 3 + 1.5;
+      currentY += titleLines.length * titleTightMm + 1.5;
+      mgr.doc.setLineHeightFactor(TC_LINE_HEIGHT); // restore airy body leading
 
-      mgr.doc.setFont("helvetica", "normal");
-      mgr.doc.setFontSize(7);
+      mgr.doc.setFontSize(BODY_PT);
 
-      const renderText = (textStr) => {
+      const renderText = (textStr, bold = false) => {
         const isBullet = textStr.startsWith("• ");
         const textToSplit = isBullet ? textStr.substring(2) : textStr;
         const indentX = isBullet ? startX + 3.5 : startX;
 
+        mgr.doc.setFont("helvetica", bold ? "bold" : "normal");
         const lines = mgr.doc.splitTextToSize(
           textToSplit,
           colW - (isBullet ? 3.5 : 0),
@@ -2772,7 +2935,7 @@ function drawTermsAndConditions(mgr) {
           mgr.doc.text("•", startX, currentY);
         }
         mgr.doc.text(lines, indentX, currentY);
-        currentY += lines.length * 3.1 + 1;
+        currentY += lines.length * bodyLineMm + 1;
       };
 
       if (Array.isArray(b.text)) {
@@ -2780,27 +2943,31 @@ function drawTermsAndConditions(mgr) {
       } else {
         // Handle paragraphs separated by line breaks
         const paragraphs = b.text.split("\n\n");
-        paragraphs.forEach((p) => {
-          renderText(p);
+        paragraphs.forEach((p, idx) => {
+          renderText(
+            p,
+            Array.isArray(b.boldParagraphs) && b.boldParagraphs.includes(idx),
+          );
           currentY += 1.5; // Space between paragraphs
         });
       }
-      currentY += 3; // Space between sections
+      currentY += 2; // Space between sections
     });
     return currentY;
   };
 
   // Render both columns and find the lowest Y coordinate
+  mgr.doc.setLineHeightFactor(TC_LINE_HEIGHT);
   const leftEndY = renderCol(leftCol, leftX, mgr.y);
   const rightEndY = renderCol(rightCol, rightX, mgr.y);
 
-  mgr.y = Math.max(leftEndY, rightEndY) + 8;
+  mgr.y = Math.max(leftEndY, rightEndY) + 5;
 
   // Render bottom acceptance section
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(8.5);
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(34));
   mgr.doc.setTextColor(0, 106, 198); // Solviva Blue
-  mgr.doc.text("Proposal acceptance and signature", MARGIN, mgr.y);
+  mgr.doc.text("Proposal Acceptance and Signature", MARGIN, mgr.y);
   mgr.y += 4.5;
 
   mgr.doc.setFont("helvetica", "normal");
@@ -2811,19 +2978,21 @@ function drawTermsAndConditions(mgr) {
   const acceptLines = mgr.doc.splitTextToSize(acceptText, CONTENT_W);
   mgr.doc.text(acceptLines, MARGIN, mgr.y);
 
-  mgr.y += acceptLines.length * 3.5 + 14;
+  mgr.y += acceptLines.length * 3.5 + 10;
 
-  // Dynamically populated signature block
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(7.5);
+  // Dynamically populated signature block (Figma order: label, name, date)
+  // mgr.doc.setFont("helvetica", "bold");
+  // mgr.doc.setFontSize(7.5);
   // mgr.doc.text("[Client Signature]", MARGIN, mgr.y);
 
   mgr.y += 4;
+  mgr.doc.setFont("helvetica", "normal");
   mgr.doc.text(clientName, MARGIN, mgr.y);
 
   mgr.y += 4;
-  mgr.doc.setFont("helvetica", "normal");
   mgr.doc.text("Date:", MARGIN, mgr.y);
+
+  mgr.doc.setLineHeightFactor(1.15); // restore jsPDF default for later pages
 }
 
 function drawWarrantyTable(mgr, warranties) {
@@ -3073,8 +3242,9 @@ export async function generateProposalPdf({
     drawSchedulePage(mgr);
   }
 
-  // Page 8: Terms & conditions
-  newPage(mgr, { figmaExact: true });
+  // Page 8: Terms & conditions (own acceptance block carries the signature —
+  // suppress the per-page footer signature line here to match the Figma design)
+  newPage(mgr, { figmaExact: true, noSignatureLine: true });
   drawTermsAndConditions(mgr);
 
   // Re-stamp totals

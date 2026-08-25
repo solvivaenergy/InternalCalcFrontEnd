@@ -332,6 +332,45 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           </div>
         )}
 
+        {/* v3-143 — Battery-only shortcut (rep-only). One click zeroes the
+            solar array for a storage-only order and pins the battery the rep
+            is seeing so it survives the loss of the solar-excess battery
+            recommendation (which drops to 0 without solar). Unchecking
+            restores the full auto solar + battery recommendation. */}
+        {!isCustomer && panelsAvailable && anyBatteryInStock && (
+          <div style={styles.consvBlock}>
+            <label style={styles.consvRow}>
+              <input
+                type="checkbox"
+                checked={panelCount === 0}
+                onChange={e => {
+                  if (e.target.checked) {
+                    const patch = { panelCount: 0 };
+                    // Pin the current battery so a storage-only order doesn't
+                    // silently drop to ₱0 (rec can't size storage w/o solar).
+                    if (state.batteryKwh == null && batteryKwh > 0) {
+                      patch.batteryKwh = batteryKwh;
+                    }
+                    updateState(patch);
+                  } else {
+                    updateState({ panelCount: null, batteryKwh: null });
+                  }
+                }}
+                style={styles.consvCheckbox}
+              />
+              <span>
+                <span style={styles.consvLabel}>Battery-only order (no solar panels)</span>
+                <span style={styles.consvHint}>
+                  Storage-only quote: zeroes the solar array and prices the
+                  battery package on its own (standalone labor, plus ATS &amp;
+                  critical-loads materials unless unbundled below). The inverter
+                  is treated as client-supplied unless you add one in 2C.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+
         {(() => {
           // Override flags drive the amber treatment on the Selected tiles.
           // A null state value means "use the recommendation" — either the
@@ -523,7 +562,16 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             // standalone retrofit path).
                             const floor = recommended?.minPanelsFloor || 0;
                             const c = (v > 0 && v < floor) ? floor : v;
-                            updateState({ panelCount: c === recPanelCount ? null : c });
+                            const patch = { panelCount: c === recPanelCount ? null : c };
+                            // Going standalone (0 panels) zeroes the solar-excess
+                            // battery recommendation; pin the battery the rep is
+                            // seeing so a battery-only order doesn't silently drop
+                            // to ₱0 (the recommendation can't size storage without
+                            // solar — it must be an explicit choice).
+                            if (c === 0 && state.batteryKwh == null && batteryKwh > 0) {
+                              patch.batteryKwh = batteryKwh;
+                            }
+                            updateState(patch);
                           }}
                           min={0}
                           step={1}
@@ -759,6 +807,45 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             </>
           )}
         </div>
+
+        {/* v3-143 — battery component unbundling (rep-only). Shown only when a
+            battery is on the quote. Unchecking excludes that component from
+            the price and prints an explicit "not included (client-supplied)"
+            line on the quote/PDF instead of silently dropping it. */}
+        {!isCustomer && anyBatteryInStock && batteryKwh > 0 && (
+          <div style={styles.battUnbundleBlock}>
+            <div style={styles.battUnbundleHeader}>
+              Battery components &mdash; uncheck any the client supplies themselves
+            </div>
+            <label style={styles.battUnbundleRow}>
+              <input
+                type="checkbox"
+                checked={state.batteryIncludeRack !== false}
+                onChange={e => updateState({ batteryIncludeRack: e.target.checked })}
+                style={styles.consvCheckbox}
+              />
+              <span style={styles.consvLabel}>Include battery rack(s)</span>
+            </label>
+            <label style={styles.battUnbundleRow}>
+              <input
+                type="checkbox"
+                checked={state.batteryIncludeAts !== false}
+                onChange={e => updateState({ batteryIncludeAts: e.target.checked })}
+                style={styles.consvCheckbox}
+              />
+              <span style={styles.consvLabel}>Include Automatic Transfer Switch (ATS)</span>
+            </label>
+            <label style={styles.battUnbundleRow}>
+              <input
+                type="checkbox"
+                checked={state.batteryIncludeCriticalLoads !== false}
+                onChange={e => updateState({ batteryIncludeCriticalLoads: e.target.checked })}
+                style={styles.consvCheckbox}
+              />
+              <span style={styles.consvLabel}>Include critical-loads materials</span>
+            </label>
+          </div>
+        )}
       </Subsection>
 
       {/* ─── Slot for "Visualizing your system" block ───
@@ -902,6 +989,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             value={state.roofMaterial}
             onChange={v => updateState({ roofMaterial: v })}
             width={300}
+            disabled={panelCount === 0}
             options={[
               // Order: default first, then alphabetical
               { value: 'metal',    label: 'Metal — no roof prep needed' },
@@ -911,16 +999,22 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           />
         </Field>
         <div style={styles.roofHint}>
-          {state.roofMaterial === 'metal' && (
-            <span>Metal roofs need no prep work — no additional charge.</span>
-          )}
-          {state.roofMaterial === 'asphalt' && (
-            <span>Asphalt/shingles/tiled roofs require additional mounting prep
-              at <strong>{fmt.peso(adminParams.roofAsphaltPerKwp)}/kWp</strong>.</span>
-          )}
-          {state.roofMaterial === 'concrete' && (
-            <span>Concrete roofs require the most prep work
-              at <strong>{fmt.peso(adminParams.roofConcretePerKwp)}/kWp</strong>.</span>
+          {panelCount === 0 ? (
+            <span>Roof type doesn’t affect a battery-only order — no panels to mount.</span>
+          ) : (
+            <>
+              {state.roofMaterial === 'metal' && (
+                <span>Metal roofs need no prep work — no additional charge.</span>
+              )}
+              {state.roofMaterial === 'asphalt' && (
+                <span>Asphalt/shingles/tiled roofs require additional mounting prep
+                  at <strong>{fmt.peso(adminParams.roofAsphaltPerKwp)}/kWp</strong>.</span>
+              )}
+              {state.roofMaterial === 'concrete' && (
+                <span>Concrete roofs require the most prep work
+                  at <strong>{fmt.peso(adminParams.roofConcretePerKwp)}/kWp</strong>.</span>
+              )}
+            </>
           )}
         </div>
       </Subsection>
@@ -1544,6 +1638,28 @@ const styles = {
     border: `1px solid ${COLORS.divider}`,
     borderRadius: 8,
     marginBottom: 10,
+  },
+  battUnbundleBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 7,
+    padding: '10px 12px',
+    background: COLORS.brandCream,
+    border: `1px solid ${COLORS.divider}`,
+    borderRadius: 8,
+    margin: '4px 0 10px',
+  },
+  battUnbundleHeader: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: COLORS.textBody,
+    marginBottom: 2,
+  },
+  battUnbundleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 9,
+    cursor: 'pointer',
   },
   consvRow: {
     display: 'flex',
