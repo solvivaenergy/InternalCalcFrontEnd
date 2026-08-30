@@ -1108,84 +1108,39 @@ export const DISCLAIMERS = {
 //
 // Verbatim from the office's standard proposal pages 6-7 supplied by the
 // user. Trailing/leading whitespace and parenthetical notes preserved.
+
 export const PROPOSAL_CONTENT = {
   termsAndConditions: [
-    // ═══ v3-104 — RECONCILED WITH MARKETING'S PROPOSAL TEMPLATE (071426) ═════
-    // Marketing supplied a standard proposal PDF; its page-6 T&C is adopted
-    // where it agrees with the calculator, and corrected where it doesn't:
-    //   • "more than one (1) month" → "any financed term (other than a Direct
-    //     Purchase)" — since v3-100 the 1-month tenor IS financed (interest +
-    //     DST); only tenor 0 is not an installment sale.
-    //   • Validity is the `quoteValidityDays` PARAM (user-directed). The two
-    //     hardcoded "thirty (30) days" mentions become {{QUOTE_VALIDITY_DAYS}}
-    //     / {{VALID_UNTIL}} tokens, substituted by the PDF generator from the
-    //     LIVE param + computed date — the T&C can never contradict the
-    //     cover's "Valid until". (The Suitability REFUND's thirty (30) days is
-    //     a distinct policy period and stays literal, as does the Definitive
-    //     Agreement's seven (7)-day execution window.)
-    //   • Early settlement wording now matches the annex math: PV of remaining
-    //     payments (Admin C28 discount), NOT "outstanding principal".
-    //   • DST added to the RA 3765 item list + its own bullet.
-    //   • NEW: RSD compliance note (PEC 2017 §6.90.2.6) from Marketing pg 4.
-    //   • Warranty table split to Marketing's 5 rows (Inverter / Battery).
-    //   • RETAINED vs Marketing's template (user-ratified): the Financing &
-    //     Ownership section (their template is generic; ours actually
-    //     finances), Definitive Agreement + partial-turnover paragraphs, and
-    //     the net-metering closing note.
-    //
-    // ═══ v3-87 — FINANCING & OWNERSHIP (seller-financed conditional sale) ════
-    // ⚠ NOT REVIEWED BY COUNSEL. Drafted from the structure the user chose and
-    // MUST be cleared before it reaches a customer.
-    //
-    // The creditor is Solviva Energy Incorporated — which is also the SELLER.
-    // The name is the `financingEntityName` param: a one-field change if/when
-    // financing is ever separated out. RA 8556 / RA 9474 regulate entities
-    // whose PRINCIPAL BUSINESS is extending credit to OTHERS; a vendor selling
-    // ITS OWN goods on installment is doing SELLER FINANCING under the Civil
-    // Code. COUNSEL TO CONFIRM.
-    //
-    // STILL OPEN FOR COUNSEL / THE ACCOUNTANT (unchanged):
-    //   (a) Art. 415 — rooftop panels may be IMMOVABLE BY DESTINATION; title
-    //       retention may be unenforceable as drafted. THE BIGGEST HOLE.
-    //   (b) Recto Law (Arts. 1484-86) — one remedy only; reflected below.
-    //   (c) ⚠ VAT ON THE FINANCE CHARGE — the model taxes neither GRT nor VAT
-    //       on interest. NOT TAX ADVICE — put in front of the accountant.
-    //   (d) DST is charged to the customer below — confirm allocation.
     {
       kind: "heading",
-      text: "FINANCING, OWNERSHIP & PAYMENT DISCLOSURE",
+      text: "Permitting Requirements to be Provided by the Client",
     },
     {
       kind: "bullets",
       items: [
-        "Where you elect a financed payment term (any term other than a Direct Purchase), Solviva Energy Incorporated sells the system to you on installment, on a conditional sale basis. The credit is extended by Solviva Energy Incorporated as seller.",
-        "Title and ownership of the system are retained by Solviva Energy Incorporated until the total amount payable is settled in full. Ownership transfers to you automatically upon final payment. You have the right to possess and use the system from installation.",
-        "Interest is computed on the DIMINISHING BALANCE \u2014 you pay interest only on the amount still outstanding, never on the original amount. The rate stated in your proposal is the rate actually applied to your account.",
-        "A written Disclosure Statement setting out the cash price, down payment, amount financed, finance charge, documentary stamp tax, total amount payable and the interest rate will be issued to you before any installment agreement is signed, in accordance with Republic Act No. 3765 (the Truth in Lending Act). These figures already appear in your proposal.",
-        "Documentary stamp tax on the installment agreement is for your account, is itemized in your proposal, and is payable upon installation. No documentary stamp tax applies to a Direct Purchase.",
-        "You bear the risk of loss or damage to the system from installation and shall keep it insured for its full value until ownership transfers to you.",
-        "Should you default on two (2) or more consecutive installments, Solviva Energy Incorporated may elect ONE of the remedies available to it by law: to demand payment of the unpaid balance, to cancel the sale, or to repossess the system. If it elects to repossess, it shall have no further claim against you for any unpaid balance.",
-        "You may settle the outstanding balance early at any time. The early settlement amount is the present value of your remaining payments, as shown in the Early Payoff column of the Schedule of Payments.",
+        "Electricity bill (should be under the name of the client)",
+        "Valid ID of the person in the electricity bill",
+        "Tax Declaration",
+        "OCT/TCT (Land/Property title)",
+        "Official Receipt of latest Real Property Tax (Land & Building)",
+        "Building Permit",
+        "Certificate of Occupancy",
       ],
     },
     {
       kind: "heading",
-      text: "Permitting Requirements",
+      text: "Some LGUs may also require:",
     },
     {
-      kind: "paragraph",
-      text:
-        "Client to provide: Electricity bill (under client name), Valid ID, " +
-        "Tax Declaration, OCT/TCT, Official Receipt of latest Real Property " +
-        "Tax, Building Permit, Certificate of Occupancy.",
-    },
-    {
-      kind: "paragraph",
-      text:
-        "Some LGUs may also require: Electrical Plan / Load Schedule, " +
-        "Electrical Design Analysis, Structural Roof Plan, Structural " +
-        "Analysis, Barangay Clearance, HOA Clearance. Solviva can provide " +
-        "engineering documents if client avails.",
+      kind: "bullets",
+      items: [
+        "Electrical Plan / Load Schedule signed and sealed by a Professional Electrical Engineer (Can be provided by Solviva if client avails)",
+        "Electrical Design Analysis (Can be provided by Solviva if client avails)",
+        "Structural Roof Plan (Can be provided by Solviva if client avails)",
+        "Structural Analysis (Can be provided by Solviva if client avails)",
+        "Barangay Clearance for Solar Installation",
+        "Homeowners Association Clearance",
+      ],
     },
     {
       kind: "heading",
@@ -1193,206 +1148,101 @@ export const PROPOSAL_CONTENT = {
     },
     {
       kind: "paragraph",
-      text:
-        "Any additional length beyond the initial 30 meters (m) of Direct " +
-        "Current (DCI) cable and the initial 10 meters (m) of Alternating " +
-        "Current (ACI) cable will be charged per meter at a specified rate.",
+      text: "Any additional length beyond the initial 30 meters (m) of Direct Current (DC) cable and the initial 10 meters (m) of Alternating Current (AC) cable will be charged per meter at a specified rate.",
     },
-    { kind: "heading", text: "Logistics Add-On Cost" },
+    {
+      kind: "heading",
+      text: "Logistics Add-On Cost",
+    },
     {
       kind: "paragraph",
-      text:
-        "Any excess distance beyond the first 30 kilometers (km) from " +
-        "Solviva's Parañaque logistics hub will be charged per kilometer " +
-        "at a specified rate.", // v3-114 origin rebase (was Km-0/Rizal Park)
+      text: "Any excess distance beyond the first 33 kilometers (km) from Parañaque City will be charged per kilometer at a specified rate.",
     },
-    { kind: "heading", text: "Price Validity" },
+    {
+      kind: "heading",
+      text: "Price Validity",
+    },
     {
       kind: "paragraph",
-      // {{tokens}} substituted by the PDF generator from the LIVE
-      // quoteValidityDays param + the computed validUntil date (v3-104).
-      text:
-        "The prices provided in this proposal are valid for " +
-        "{{QUOTE_VALIDITY_DAYS}} days from the date of issuance \u2014 " +
-        "until {{VALID_UNTIL}}. After this period, the prices are subject " +
-        "to change without prior notice.",
+      text: "The prices provided in this Proposal are valid for a period of thirty (30) days from the date of issuance. After this period, the prices are subject to change without prior notice.",
     },
-    { kind: "heading", text: "Compliance \u2014 Rapid Shutdown Device (RSD)" },
+    {
+      kind: "heading",
+      text: "Exclusions",
+    },
     {
       kind: "paragraph",
-      text:
-        "A Rapid Shutdown Device (RSD) is required by the Philippine " +
-        "Electrical Code (PEC) 2017 (Section 6.90.2.6) for all solar " +
-        "installations. This ensures your system protects your home during " +
-        "emergencies while meeting regulatory standards and avoiding " +
-        "potential LGU compliance issues. RSD and CFEI are also required " +
-        "by the PEC when net metering conversion is availed.",
+      text: "Any items or service not explicitly mentioned or detailed in this Proposal such as but not limited to Service entrance remodeling, building permit, occupancy certificate, house plans, and any other fees not related to the Solar Photovoltaic System itself shall be considered excluded from the scope of work and will not be provided unless otherwise agreed upon through a variation order or a revision in the proposal.",
     },
-    { kind: "heading", text: "Exclusions" },
     {
-      kind: "paragraph",
-      text:
-        "Any items or service not explicitly mentioned or detailed in this " +
-        "proposal such as but not limited to Service entrance remodelling " +
-        "building permit, occupancy certificate, house plans, and any other " +
-        "fees not related to the Solar Photovoltaic System itself shall be " +
-        "considered excluded from the scope of work and will not be " +
-        "provided unless otherwise agreed upon through a variation order " +
-        "or a revision in the proposal.",
+      kind: "heading",
+      text: "Site Assessment",
     },
-    { kind: "heading", text: "Site Assessment" },
     {
       kind: "bullets",
       items: [
         {
           term: "Technical Assessment:",
-          rest:
-            " We first conduct a thorough technical site assessment, " +
-            "including roof evaluation and sunlight analysis, to assess " +
-            "suitability for a rooftop solar system.",
+          rest: " We first conduct a thorough technical site assessment, including roof evaluation and sunlight analysis, to assess suitability for a rooftop solar system.",
         },
         {
           term: "Suitability Refund:",
-          rest:
-            " If you have paid a reservation fee and if our assessment " +
-            "shows that your property is not suitable, we will refund " +
-            "your reservation fee within thirty (30) days from such " +
-            "determination.",
+          rest: " If you have paid a reservation fee and if our assessment shows that your property is not suitable, we will refund your reservation fee within thirty (30) days from such determination.",
         },
       ],
     },
-    { kind: "heading", text: "Installation" },
+    {
+      kind: "heading",
+      text: "Installation",
+    },
     {
       kind: "paragraph",
-      text:
-        "You shall provide reasonable assistance to Solviva and its " +
-        "designated representatives in the latter\u2019s preparation of " +
-        "the system design, and shall provide documents and information " +
-        "relating to the Premises, such as, but not limited to blueprints " +
-        "and/or building plans, as may be requested by the Supplier. You " +
-        "shall be responsible for the correctness and accuracy of any " +
-        "data and information provided to us.",
+      text: "You shall provide reasonable assistance to Solviva and its designated representatives in the latter's preparation of the system design, and shall provide documents and information relating to the Premises, such as, but not limited to blueprints and/or building plans, as may be requested by Solviva. You shall be responsible for the correctness and accuracy of any data and information provided.",
     },
-    { kind: "heading", text: "Validity" },
+    {
+      kind: "heading",
+      text: "Validity",
+    },
     {
       kind: "bullets",
       items: [
         {
           term: "Quotation Validity:",
-          rest:
-            " The special quotation we\u2019ve provided is valid for " +
-            "{{QUOTE_VALIDITY_DAYS}} days from the date it was issued " +
-            "(until {{VALID_UNTIL}}). We are committed to being " +
-            "transparent about pricing and will inform you of any " +
-            "necessary adjustments as soon as possible.",
+          rest: " The special quotation we've provided is valid for thirty (30) days from the date it was issued. We are committed to being transparent about pricing and will endeavor to inform you of any necessary adjustments as soon as possible.",
         },
         {
           term: "Price Adjustments:",
-          rest:
-            " Please be aware that prices may change due to factors " +
-            "beyond our control, like fluctuations in material costs. We " +
-            "will always keep you informed and discuss any necessary " +
-            "adjustments.",
+          rest: " Please be aware that prices may change due to factors beyond our control, like fluctuations in material costs. We will always keep you informed and discuss any necessary adjustments",
         },
         {
           term: "Inclusions:",
-          rest:
-            " Labor costs are included in our quotation unless " +
-            "pre-existing wiring or systems are found that require " +
-            "additional work. We will assess the site during the visit " +
-            "and inform you of any potential extra costs.",
+          rest: " Labor costs are included in our quotation unless pre-existing wiring, systems, obstructions, or structures are found which were either not disclosed or require additional work. We will assess the site during the visit and inform you of any potential extra costs.",
         },
         {
           term: "Additional Costs:",
-          rest:
-            " If additional costs arise, we will notify you right away " +
-            "and proceed only with your written consent. We believe in " +
-            "full transparency, so there will be no surprises.",
+          rest: " If additional costs arise, we will notify you right away and proceed only with your written consent. We believe in full transparency, so there will be no surprises.",
         },
       ],
     },
-    { kind: "heading", text: "Payment Obligation" },
-    // v3-105 — replaces the template's satisfaction pleasantry (which said
-    // nothing about payment) with an actual obligation clause, user-directed:
-    //   • Mirrors EXACTLY how the calculator schedules payments (annex rows:
-    //     DP at signing → DST or Direct Purchase Balance upon installation →
-    //     monthlies per the Schedule).
-    //   • "Installation" is pinned to SOLVIVA'S PHYSICAL COMPLETION of the
-    //     works, and payments due upon/after installation are expressly NOT
-    //     contingent on third-party matters outside Solviva's control (CFEI,
-    //     LGU/utility/HOA permits and clearances, net-metering processing,
-    //     energization delays from the client's own construction/renovation).
-    //   • ⚠ Legal clause — NOT REVIEWED BY COUNSEL; clear together with the
-    //     v3-87 financing section.
-    // The satisfaction sentence moved to the closing paragraph below.
     {
       kind: "paragraph",
-      text:
-        "You agree to pay the amounts shown in this proposal as they fall " +
-        "due: the down payment upon contract signing; on a financed term, " +
-        "the documentary stamp tax upon installation and each monthly " +
-        "payment on the due dates shown in the Schedule of Payments; and " +
-        "on a Direct Purchase, the remaining balance in full upon " +
-        "installation.",
+      text: "Your satisfaction is our priority, and we will manage the entire process diligently from start to finish.",
+    },
+    {
+      kind: "heading",
+      text: "Definitive Agreement",
     },
     {
       kind: "paragraph",
-      text:
-        "For payment purposes, \u201cinstallation\u201d means Solviva\u2019s " +
-        "completion of the physical installation of the system at the " +
-        "Premises. Payments falling due upon or after installation are not " +
-        "conditioned on, and shall not be withheld or deferred on account " +
-        "of, matters outside Solviva\u2019s control \u2014 including, without " +
-        "limitation, the issuance of a CFEI or other LGU, utility, or " +
-        "homeowners\u2019 association permits and clearances; net-metering " +
-        "processing; or energization delays attributable to the " +
-        "Premises\u2019 ongoing construction, renovation, or repair. Solviva " +
-        "will continue to assist with these processes where they are " +
-        "included in the scope of this proposal.",
+      text: 'This Proposal shall be subject to the execution of a separate Solar Photovoltaic System Contract and Standard Terms and Conditions ("Definitive Agreements") which shall be executed between you and the Company. Failure to execute the Solar Photovoltaic System within seven (7) days from the date of this Proposal (or such longer period as may be allowed by Solviva in writing) shall entitle Solviva to treat this Proposal as invalid without any liability to you and without any obligation to reimburse or return any payments already made. Should Solviva not be able to proceed with the completion of the installation, and consequent turnover of the Solar facility due to an action or decision of the client such as, but not limited to, the unsuitability of the structure on which the Solar facility will be installed then Solviva shall turn over any and installed portions of the facility, and the client shall be liable for the payments commensurate to the portions that have been turned over. Any additional materials required to install the solar facility shall be subject to another order form.',
     },
-    { kind: "heading", text: "Definitive Agreement" },
-    {
-      kind: "paragraph",
-      text:
-        "These Terms and Conditions shall be subject to the execution of " +
-        "a separate Solar Photovoltaic System Contract which shall be " +
-        "executed between you and the Company. Failure to execute the " +
-        "Solar Photovoltaic System within seven (7) days from the date " +
-        "of these Terms and Conditions (or such longer period as may be " +
-        "allowed by Solviva) shall entitle Solviva to terminate the " +
-        "Terms and Conditions without any liability to you and without " +
-        "any obligation to reimburse or return any payments already made.",
-    },
-    {
-      kind: "paragraph",
-      text:
-        "Should Solviva not be able to proceed with the completion of " +
-        "the installation, and consequent turnover of the Solar facility " +
-        "due to an action or decision of the client such as, but not " +
-        "limited to, the unavailability of the structure on which the " +
-        "Solar facility will be installed then Solviva shall turn over " +
-        "any and installed portions of the facility, and the client " +
-        "shall be liable for the payments commensurate to the portions " +
-        "that have been turned over. Any additional materials required " +
-        "to install the solar facility shall be subject to another order " +
-        "form.",
-    },
-    { kind: "warrantyTable" },
     {
       kind: "paragraph",
       bold: true,
-      text:
-        "We appreciate your understanding that the net metering status " +
-        "does not impact the payment terms outlined in this proposal. " +
-        "Your satisfaction is our priority, and we will manage the entire " +
-        "process diligently from start to finish. Thank you for choosing " +
-        "Solviva. We look forward to helping you make the switch to " +
-        "clean, renewable energy.",
+      text: "We look forward to helping you make the switch to clean, renewable energy.",
     },
   ],
 
-  // Warranties and Coverage — Marketing's 5-row schedule (v3-104: Inverter and
-  // Battery split into their own rows; previously combined).
   warranties: [
     { component: "Solar Panels Performance", term: "30 years" },
     { component: "Solar Panels Product Warranty", term: "12 years" },

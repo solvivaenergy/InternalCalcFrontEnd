@@ -2802,8 +2802,7 @@ function drawSchedulePage(mgr) {
 
 function drawTermsAndConditions(mgr) {
   const { ctx } = mgr;
-  const validityDate = ctx.model.quoteValidUntil || "August 27, 2026";
-  // Grab the client's name from the context, fallback to "Client Name" if missing
+  const validityDate = fmtDate(ctx.validUntil);
   const clientName = ctx.contact?.name || "Client Name";
 
   drawTopHeaderFigma(mgr);
@@ -2812,111 +2811,84 @@ function drawTermsAndConditions(mgr) {
   mgr.doc.setFont("helvetica", "semibold");
   mgr.doc.setFontSize(fxpt(64));
   mgr.doc.setTextColor(0, 106, 198);
-  mgr.doc.text("Terms and conditions", MARGIN, mgr.y + 4);
+  mgr.doc.text("Proposal Terms", MARGIN, mgr.y + 4);
   mgr.y += 12;
 
   const colW = (CONTENT_W - 8) / 2; // Two columns with an 8pt gutter
   const leftX = MARGIN;
   const rightX = MARGIN + colW + 8;
 
-  const leftCol = [
-    {
-      title: "Permitting Requirements Provided by the Client",
-      text: [
-        "• Electricity bill (should be under the name of the client)",
-        "• Valid ID of the person in the electricity bill",
-        "• Tax Declaration",
-        "• OCT/TCT (Land/Property title)",
-        "• Official Receipt of latest Real Property Tax (Land & Building)",
-        "• Building Permit",
-        "• Certificate of Occupancy",
-      ],
-    },
-    {
-      title: "Some LGUs may also require:",
-      titleBold: true,
-      text: [
-        "• Electrical Plan / Load Schedule signed and sealed by a Professional Electrical Engineer (Can be provided by Solviva if client avails)",
-        "• Electrical Design Analysis (Can be provided by Solviva if client avails)",
-        "• Structural Roof Plan (Can be provided by Solviva if client avails)",
-        "• Structural Analysis (Can be provided by Solviva if client avails)",
-        "• Barangay Clearance for Solar Installation",
-        "• Homeowners Association Clearance",
-      ],
-    },
-    {
-      title:
-        "The following shall apply to the pricing and scope of the installation project:",
-      text: "Any additional length beyond the initial 30 meters (m) of Direct Current (DC) cable and the initial 10 meters (m) of Alternating Current (AC) cable will be charged per meter at a specified rate.",
-    },
-    {
-      title: "Logistics Add-On Cost",
-      text: "Any excess distance beyond the first 33 kilometers (km) from Parañaque City will be charged per kilometer at a specified rate.",
-    },
-    {
-      title: "Price Validity",
-      text: "The prices provided in this proposal are valid for a period of thirty (30) days from the date of issuance. After this period, the prices are subject to change without prior notice.",
-    },
-    {
-      title: "Exclusions",
-      text: "Any items or service not explicitly mentioned or detailed in this proposal such as but not limited to Service entrance remodeling, building permit, occupancy certificate, house plans, and any other fees not related to the Solar Photovoltaic System itself shall be considered excluded from the scope of work and will not be provided unless otherwise agreed upon through a variation order or a revision in the proposal.",
-    },
-    {
-      title: "Site Assessment",
-      text: [
-        "• Technical Assessment: We first conduct a thorough technical site assessment, including roof evaluation and sunlight analysis, to assess suitability for a rooftop solar system.",
-        "• Suitability Refund: If you have paid a reservation fee and if our assessment shows that your property is not suitable, we will refund your reservation fee within thirty (30) days from such determination.",
-      ],
-    },
-  ];
+  // 1. Parse dynamic content from adminParams.js instead of hardcoding
+  const rawBlocks = ctx.proposalContent?.termsAndConditions || [];
+  const parsedBlocks = [];
+  let currentBlock = null;
 
-  const rightCol = [
-    {
-      title: "Installation",
-      text: "You shall provide reasonable assistance to Solviva and its designated representatives in the latter's preparation of the system design, and shall provide documents and information relating to the Premises, such as, but not limited to blueprints and/or building plans, as may be requested by the Supplier. You shall be responsible for the correctness and accuracy of any data and information provided to us.",
-    },
-    {
-      title: "Validity",
-      text: [
-        "• Quotation Validity: The special quotation we've provided is valid for thirty (30) days from the date it was issued. We are committed to being transparent about pricing and will inform you of any necessary adjustments as soon as possible.",
-        "• Price Adjustments: Please be aware that prices may change due to factors beyond our control, like fluctuations in material costs. We will always keep you informed and discuss any necessary adjustments.",
-        "• Inclusions: Labor costs are included in our quotation unless pre-existing wiring or systems are found that require additional work. We will assess the site during the visit and inform you of any potential extra costs.",
-        "• Additional Costs: If additional costs arise, we will notify you right away and proceed only with your written consent. We believe in full transparency, so there will be no surprises.",
-      ],
-    },
-    {
-      title: "Payment Obligation",
-      text: "Your satisfaction is our priority, and we will manage the entire process diligently from start to finish.",
-    },
-    {
-      title: "Definitive Agreement",
-      boldParagraphs: [1],
-      text: "These Terms and Conditions shall be subject to the execution of a separate Solar Photovoltaic System Contract which shall be executed between you and the Company. Failure to execute the Solar Photovoltaic System within seven (7) days from the date of these Terms and Conditions (or such longer period as may be allowed by Solviva) shall entitle Solviva to terminate the Terms and Conditions without any liability to you and without any obligation to reimburse or return any payments already made. Should Solviva not be able to proceed with the completion of the installation, and consequent turnover of the Solar facility due to an action or decision of the client such as, but not limited to, the unavailability of the structure on which the Solar facility will be installed then Solviva shall turn over any and installed portions of the facility, and the client shall be liable for the payments commensurate to the portions that have been turned over. Any additional materials required to install the solar facility shall be subject to another order form.\n\nWe appreciate your understanding that the net metering status does not impact the payment terms outlined in this proposal. Thank you for choosing Solviva. We look forward to helping you make the switch to clean, renewable energy.",
-    },
-  ];
+  rawBlocks.forEach((item) => {
+    if (item.kind === "heading") {
+      // Push previous block and start a new one
+      if (currentBlock) parsedBlocks.push(currentBlock);
+      currentBlock = { title: item.text, text: [], boldParagraphs: [] };
+    } else if (item.kind === "paragraph") {
+      if (!currentBlock) currentBlock = { text: [], boldParagraphs: [] };
 
-  // Figma T&C sizes: section titles 32px, body 28px; titles are Inter SemiBold
-  // (except the "Some LGUs" sub-header, which is Inter Bold in the design).
+      let text = item.text
+        .replace(
+          /{{QUOTE_VALIDITY_DAYS}}/g,
+          ctx.adminParams?.quoteValidityDays || 30,
+        )
+        .replace(/{{VALID_UNTIL}}/g, validityDate);
+
+      // Track if this specific paragraph needs to be bold
+      if (item.bold) {
+        currentBlock.boldParagraphs.push(currentBlock.text.length);
+      }
+      currentBlock.text.push(text);
+    } else if (item.kind === "bullets") {
+      if (!currentBlock) currentBlock = { text: [], boldParagraphs: [] };
+      item.items.forEach((bullet) => {
+        if (typeof bullet === "string") {
+          currentBlock.text.push(`• ${bullet}`);
+        } else if (bullet.term && bullet.rest) {
+          currentBlock.text.push(`• ${bullet.term}${bullet.rest}`);
+        }
+      });
+    } else if (item.kind === "warrantyTable") {
+      if (currentBlock) parsedBlocks.push(currentBlock);
+      currentBlock = null;
+    }
+  });
+  // Catch the final block
+  if (currentBlock) parsedBlocks.push(currentBlock);
+
+  // 2. Dynamically split parsed blocks at a specific heading to match Figma
+  let splitIndex = parsedBlocks.findIndex((b) => b.title === "Installation");
+  if (splitIndex === -1) splitIndex = Math.ceil(parsedBlocks.length / 2);
+
+  const leftCol = parsedBlocks.slice(0, splitIndex);
+  const rightCol = parsedBlocks.slice(splitIndex);
+
   const TITLE_PT = fxpt(32);
   const BODY_PT = fxpt(28);
-  // Match the Figma 1.63 line-height exactly; advance the cursor by the real
-  // line pitch in mm so blocks don't overlap.
   const TC_LINE_HEIGHT = 1.63;
   const bodyLineMm = BODY_PT * TC_LINE_HEIGHT * 0.352778;
-  // Headings hug their body copy, so use a tight pitch for the title advance.
   const titleTightMm = TITLE_PT * 1.15 * 0.352778;
+
+  // 3. Updated renderCol
   const renderCol = (blocks, startX, startY) => {
     let currentY = startY;
     blocks.forEach((b) => {
-      mgr.doc.setFont("helvetica", b.titleBold ? "bold" : "semibold");
-      mgr.doc.setFontSize(TITLE_PT);
-      mgr.doc.setTextColor(...(C.textBody || [40, 40, 40]));
+      // Check for existence of a title before drawing
+      if (b.title) {
+        mgr.doc.setFont("helvetica", b.titleBold ? "bold" : "semibold");
+        mgr.doc.setFontSize(TITLE_PT);
+        mgr.doc.setTextColor(...(C.textBody || [40, 40, 40]));
 
-      const titleLines = mgr.doc.splitTextToSize(b.title, colW);
-      mgr.doc.setLineHeightFactor(1.15); // draw wrapped titles tight
-      mgr.doc.text(titleLines, startX, currentY);
-      currentY += titleLines.length * titleTightMm + 1.5;
-      mgr.doc.setLineHeightFactor(TC_LINE_HEIGHT); // restore airy body leading
+        const titleLines = mgr.doc.splitTextToSize(b.title, colW);
+        mgr.doc.setLineHeightFactor(1.15);
+        mgr.doc.text(titleLines, startX, currentY);
+        currentY += titleLines.length * titleTightMm + 1.5;
+        mgr.doc.setLineHeightFactor(TC_LINE_HEIGHT);
+      }
 
       mgr.doc.setFontSize(BODY_PT);
 
@@ -2931,38 +2903,36 @@ function drawTermsAndConditions(mgr) {
           colW - (isBullet ? 3.5 : 0),
         );
 
-        if (isBullet) {
-          mgr.doc.text("•", startX, currentY);
-        }
+        if (isBullet) mgr.doc.text("•", startX, currentY);
         mgr.doc.text(lines, indentX, currentY);
         currentY += lines.length * bodyLineMm + 1;
       };
 
       if (Array.isArray(b.text)) {
-        b.text.forEach((item) => renderText(item));
-      } else {
-        // Handle paragraphs separated by line breaks
-        const paragraphs = b.text.split("\n\n");
-        paragraphs.forEach((p, idx) => {
+        b.text.forEach((item, idx) => {
+          // Add extra vertical space before a paragraph if it follows bullets or another paragraph
+          if (idx > 0 && !item.startsWith("• ")) {
+            currentY += 3.5;
+          }
           renderText(
-            p,
+            item,
             Array.isArray(b.boldParagraphs) && b.boldParagraphs.includes(idx),
           );
-          currentY += 1.5; // Space between paragraphs
         });
       }
-      currentY += 2; // Space between sections
+      currentY += 2;
     });
     return currentY;
   };
 
-  // Render both columns and find the lowest Y coordinate
   mgr.doc.setLineHeightFactor(TC_LINE_HEIGHT);
   const leftEndY = renderCol(leftCol, leftX, mgr.y);
   const rightEndY = renderCol(rightCol, rightX, mgr.y);
 
   mgr.y = Math.max(leftEndY, rightEndY) + 5;
 
+  // (The "4. Render dynamic closing paragraph" code block is now deleted entirely,
+  // so the next line of code below this should be:
   // Render bottom acceptance section
   mgr.doc.setFont("helvetica", "semibold");
   mgr.doc.setFontSize(fxpt(34));
@@ -2974,16 +2944,11 @@ function drawTermsAndConditions(mgr) {
   mgr.doc.setFontSize(7);
   mgr.doc.setTextColor(...(C.textBody || [40, 40, 40]));
 
-  const acceptText = `By signing below, the Customer and Solviva Energy acknowledge and accept the terms of this proposal, valid until ${validityDate}. Subject to internal review and approval before installation.`;
+  const acceptText = `By signing below, the Customer and Solviva Energy acknowledge and accept the terms of this proposal, valid until ${validityDate}. This Proposal is subject to among others, the internal review and approval and execution of the Definitive Agreements, before installation.`;
   const acceptLines = mgr.doc.splitTextToSize(acceptText, CONTENT_W);
   mgr.doc.text(acceptLines, MARGIN, mgr.y);
 
   mgr.y += acceptLines.length * 3.5 + 10;
-
-  // Dynamically populated signature block (Figma order: label, name, date)
-  // mgr.doc.setFont("helvetica", "bold");
-  // mgr.doc.setFontSize(7.5);
-  // mgr.doc.text("[Client Signature]", MARGIN, mgr.y);
 
   mgr.y += 4;
   mgr.doc.setFont("helvetica", "normal");
@@ -3072,7 +3037,7 @@ function drawAcceptancePage(mgr) {
 
   drawParagraph(
     mgr,
-    `By signing below, the Customer and Solviva Energy, Inc. acknowledge and accept the terms of this proposal${validUntil ? `, valid until ${fmtDate(validUntil)}` : ""}. This acceptance is subject to review and approval by the Documents and Collections Group (DCG) before any installation may proceed.`,
+    `By signing below, the Customer and Solviva Energy acknowledge and accept the terms of this Proposal${validUntil ? `, valid until ${fmtDate(validUntil)}` : ""}. This Proposal is subject to among others, the internal review and approval and execution of the Definitive Agreements, before installation.`,
     { fontSize: 9, color: C.textMuted },
   );
   mgr.y += 3;
