@@ -247,6 +247,10 @@ export const ROLES = Object.freeze({
   ENGINEERING: "engineering",
   PRODUCT: "product",
   INVENTORY: "inventory",
+  // v3-180 — FinCo Admin: the financing entity's own parameters (financing
+  // limits, interest rates, returns assumptions, DU inflation reference).
+  // Requires supabase/migrations/20260901_add_finco_role.sql to be applied.
+  FINCO: "finco",
   VIEW: "view",
   REP: "rep",
   CUSTOMER: "customer",
@@ -259,6 +263,7 @@ export const ADMIN_ROLE_TO_ACCESS = Object.freeze({
   engineering: "engineering",
   product: "product",
   inventory: "inventory",
+  finco: "finco",
   view: "view",
 });
 

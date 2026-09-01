@@ -43,6 +43,8 @@ import Step2Packages from './Step2Packages.jsx';
 import EnergyVisuals from './EnergyVisuals.jsx';
 import Step3PaymentTerms from './Step3PaymentTerms.jsx';
 import Step4Returns from './Step4Returns.jsx';
+import Step3Payoff from './Step3Payoff.jsx';
+import RotatingTagline from './RotatingTagline.jsx';
 
 export default function Calculator({
   state, updateState, model,
@@ -53,6 +55,7 @@ export default function Calculator({
 }) {
   return (
     <div>
+      <RotatingTagline />
       <Step1Consumption
         state={state} updateState={updateState} model={model}
         onReset={resetStep1}
@@ -76,12 +79,19 @@ export default function Calculator({
             state={state} updateState={updateState} model={model}
             adminParams={adminParams}
             onReset={resetStep3}
+            mode={mode}
           />
+          {/* v3-191 — payoff graphic, directly under Step 3 in the same column.
+              Driven by all four of the controls that surround it: down payment
+              and tenor above, the IRR period and the assumed DU rate increase
+              in Step 4 to the right. */}
+          <Step3Payoff state={state} model={model} adminParams={adminParams} />
         </div>
         <div className="step34-col-right" style={styles.step34RightCol}>
           <Step4Returns
             state={state} updateState={updateState} model={model}
             disclaimers={disclaimers}
+            adminParams={adminParams}
             mode={mode}
           />
         </div>

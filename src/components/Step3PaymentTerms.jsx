@@ -38,7 +38,8 @@ import {
   SectionCard, Subsection, Field, Select, TextInput,
   CalloutBox, COLORS, fmt,
 } from './ui.jsx';
-import { resolveMinDpPct } from '../lib/calculations.js';
+import { resolveMinDpPct, allowedDpOptions, DP_EPS } from '../lib/calculations.js';
+import { normalizePromoType } from '../data/adminParams.js';   // v3-152 — peso vs percent promo display
 
 // ─── Hardcoded Step 3 dropdown value sets ────────────────────────────────────
 // These are the customer-facing options for tenor and DP%. The base lists are
@@ -58,15 +59,10 @@ const TENOR_OPTIONS = [0, 1, 3, 6, 9, 12, 18, 24, 30, 36, 42, 48, 54, 60];
 // v3-82 — extended from a 50% ceiling to 100%. A 100% down payment is simply a
 // full cash purchase: nothing is financed, the monthly is ₱0, and the tenor
 // stops meaning anything (see terms.isFullyPaid).
-const DP_PCT_OPTIONS = [
-  0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50,
-  0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00,
-];
+// v3-153 — DP_PCT_OPTIONS / DP_EPS moved to calculations.js and are now
+// shared with the Summary's compare-terms selector. Imported below.
 
-// Float-safe comparison epsilon for DP fractions (0.15 vs 0.15000000000002).
-const DP_EPS = 1e-9;
-
-export default function Step3PaymentTerms({ state, updateState, model, adminParams, onReset }) {
+export default function Step3PaymentTerms({ state, updateState, model, adminParams, onReset, mode = 'rep' }) {
   const { terms } = model;
 
   // ─── v3-68 / v3-75: Quote Limits (Product-settable floors/caps) ────────────
@@ -84,7 +80,7 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
   // circularity: netDirectPrice doesn't depend on the DP% either.
   const minDpPct  = resolveMinDpPct(adminParams.minDpTiers, terms.netDirectPrice);
   const maxTenor  = adminParams.maxTenorMonths || 60;
-  const dpOptions    = DP_PCT_OPTIONS.filter(p => p >= minDpPct - DP_EPS);
+  const dpOptions    = allowedDpOptions(minDpPct);
   const tenorOptions = TENOR_OPTIONS.filter(t => t <= maxTenor);
 
   // Snap live/restored quotes into the allowed ranges. Runs at render-time
@@ -105,8 +101,28 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
   // Promo code feedback
   const promoCode = (state.promoCode || '').trim().toUpperCase();
   const matchedPromo = adminParams.promoCodes.find(p => p.code === promoCode);
+  // v3-152 — BUGFIX. This line read `pct: matchedPromo.discount` and formatted
+  // it with fmt.pct() unconditionally, which was correct while every promo was
+  // a fraction. v3-151 added flat peso codes, whose `discount` is a peso
+  // AMOUNT — so a ₱10,000 code rendered as "1000000% discount". The Summary's
+  // equivalent line was converted in v3-151; this render site was missed.
+  //
+  // The amount shown is the one the engine ACTUALLY APPLIED (terms.discountAmount),
+  // not the catalog value, so a peso code larger than the quote reports the
+  // clamped figure rather than a discount the customer never received.
+  const promoIsPeso = normalizePromoType(matchedPromo?.type) === 'peso';
+  const promoApplied = Math.abs(terms?.discountAmount || 0);
+  const promoClamped = promoIsPeso
+    && promoApplied < (Number(matchedPromo?.discount) || 0) - 0.005;
   const promoStatus = !state.promoCode ? null
-                     : matchedPromo ? { kind: 'ok', label: matchedPromo.label, pct: matchedPromo.discount }
+                     : matchedPromo ? {
+                         kind: 'ok',
+                         label: matchedPromo.label,
+                         isPeso: promoIsPeso,
+                         pct: matchedPromo.discount,
+                         applied: promoApplied,
+                         clamped: promoClamped,
+                       }
                      : { kind: 'invalid' };
 
   return (
@@ -253,35 +269,79 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
           />
           {promoStatus?.kind === 'ok' && (
             <span style={styles.promoOk}>
-              ✓ {promoStatus.label} — {fmt.pct(promoStatus.pct, 0)} discount
+              ✓ {promoStatus.label} — {promoStatus.isPeso
+                  ? `${fmt.peso(promoStatus.applied)} discount`
+                  : `${fmt.pct(promoStatus.pct, 0)} discount`}
+              {promoStatus.clamped && ' (capped at the package price)'}
             </span>
           )}
           {promoStatus?.kind === 'invalid' && (
             <span style={styles.promoInvalid}>Code not recognized</span>
           )}
         </Field>
+        {/* v3-166 — customer-mode promo note, mirroring the Mobile Flow's
+            Investment-screen note (Pat-approved wording). Hidden in rep
+            mode: the rep IS the representative. */}
+        {mode === 'customer' && (
+          <p style={{ margin: '10px 0 0', fontSize: 12.5, lineHeight: 1.5,
+                      color: '#5C7561', background: 'rgba(185,216,235,0.35)',
+                      borderRadius: 10, padding: '9px 12px' }}>
+            {'\uD83C\uDF81'} Discounts and promos may apply &mdash; request your
+            free proposal and your Solviva Representative will walk you through
+            what&rsquo;s available.
+          </p>
+        )}
       </Subsection>
 
-      {/* ──── 3E · Total Amount Due Summary ────
+      {/* ──── 3E · Total Price Summary ────
+          v3-177 — was "YOUR TOTAL AMOUNT DUE" (the DST-inclusive
+          summaryTotalDue). User-directed: seeing the financed total turns
+          customers off, so the headline is now the PRICE, and the financing
+          arithmetic moves to the sub-line.
+
+          THE FIGURE IS `terms.netDirectPrice`, NOT `pkg.totalDirect`.
+          User decision 1(b) was "show Total Price, switch to Net Price when a
+          promo code is applied" — and since the engine defines
+          netDirectPrice = totalDirect + discountAmount (AH7, discountAmount
+          <= 0), those are the SAME NUMBER whenever no code is applied. One
+          field satisfies both halves of the decision with no branch to drift.
+          The sub-line names the discount (decision 7) so the card can't be
+          read against the Summary's pre-discount "Total Price" row and look
+          like a contradiction.
+
           v3-56: hidden when terms.negativeBalance because the figure would
           read as "DP + (negative balance)" which is meaningless to a customer
           and might be misread as a discount they're entitled to. The 3C
-          callout already explains what to adjust to resurface this row. */}
+          callout already explains what to adjust to resurface this row.
+          (negativeBalance has been permanently false since v3-80; the guard
+          is kept for the same reason the flag is.) */}
       {!terms.negativeBalance && (
         <div style={styles.totalDue}>
-          {/* v3-100 — DST-INCLUSIVE (summaryTotalDue = SUMMARY!H20), per user:
-              every customer-facing "TOTAL AMOUNT DUE" prints the same number.
-              This deliberately deviates from CALCULATOR!AG29 (which excludes
-              DST) — the workbook shows two different totals under one label. */}
           <div>
-            <div style={styles.totalDueLabel}>YOUR TOTAL AMOUNT DUE</div>
+            <div style={styles.totalDueLabel}>YOUR TOTAL PRICE</div>
+            {/* v3-177 — variant B (user-approved): the price alone never moves
+                when the customer changes 3A or 3B, so a card that ignores the
+                two controls above it reads as broken. The sub-line carries the
+                payment shape and reacts to both. Three branches, mirroring the
+                Summary's own Direct-Purchase / fully-paid splits. */}
             <div style={styles.totalDueSub}>
-              DP {fmt.peso(terms.dpTotalCharge)} + Balance {fmt.peso(terms.finalPostInstallBalance)}
-              {terms.dst > 0 && <> + DST {fmt.peso(terms.dst)}</>}
+              VAT inclusive
+              {terms.promo && Math.abs(terms.discountAmount) >= 0.5 && (
+                <>, after {fmt.peso(Math.abs(terms.discountAmount))}{' '}
+                  {terms.promo.label || terms.promo.code} discount</>
+              )}
+              {terms.isFullyPaid
+                ? <> &middot; payable in full upon contract signing</>
+                : terms.isDirectPurchase
+                  ? <> &middot; {fmt.peso(terms.dpTotalCharge)} down, balance{' '}
+                      {fmt.peso(terms.finalPostInstallBalance)} upon installation</>
+                  : <> &middot; {fmt.peso(terms.dpTotalCharge)} down, then{' '}
+                      {fmt.peso(terms.customerMonthlyPmt)} / month for {state.tenor}{' '}
+                      {state.tenor === 1 ? 'month' : 'months'}</>}
             </div>
           </div>
           <div style={styles.totalDueAmount}>
-            {fmt.peso(terms.summaryTotalDue)}
+            {fmt.peso(terms.netDirectPrice)}
           </div>
         </div>
       )}

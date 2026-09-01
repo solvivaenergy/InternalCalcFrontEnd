@@ -23,7 +23,9 @@ import React, { useState } from 'react';
 import { COLORS, fmt } from './ui.jsx';
 import AuthDialog from './AuthDialog.jsx';
 import { AUTH } from '../config.js';
-import { monthlyAddOnRate, decomposeDirectPrice } from '../lib/calculations.js';   // v3-117 / v3-135
+import { monthlyAddOnRate, decomposeDirectPrice,
+         resolveMinDpPct, allowedDpOptions } from '../lib/calculations.js';   // v3-117 / v3-135 / v3-153
+import { PACKAGE_CATEGORIES, normalizePromoType } from '../data/adminParams.js';   // v3-150 / v3-151
 
 // Keys that belong to the Solar collapsed group (panels + everything that
 // installs alongside them: cabling extras, RSD, labor). Keys that belong
@@ -40,14 +42,32 @@ const BATTERY_GROUP_KEYS = new Set([
 ]);
 const INVERTER_KEY_PREFIX = 'inverter';
 
+// v3-153 — `updateState` is new: the compare-terms block now WRITES state (down
+// payment and tenor), where the Summary was previously read-only. Defaulted to
+// a no-op so any other mount point degrades to the old read-only behaviour
+// instead of throwing.
+// v3-177 — `financingShown` / `onFinancingShown` are the SECOND admin gate on
+// this tab. It reveals the financing detail removed from the customer view:
+// the EIR row, the Post-Installation Balance row, the TOTAL AMOUNT DUE row and
+// the EIR + Total Amount Due columns of the compare table. Same shape as the
+// v3-117 price reveal — lifted to App so Generate PDF can force it hidden
+// during the html2canvas snapshot, not persisted, default locked on every load.
 export default function Summary({ state, model, adminParams, contact, agent, generatedDate, validUntil,
-                                  pricesShown = false, onPricesShown = () => {} }) {
+                                  updateState = () => {},
+                                  pricesShown = false, onPricesShown = () => {},
+                                  financingShown = false, onFinancingShown = () => {} }) {
   const { pkg, terms, popularTenors } = model;
+  // v3-153 — the tier floor is a function of the DISCOUNTED price, the same
+  // basis Step 3A resolves it on, so both selectors offer the same range.
+  const summaryMinDpPct = resolveMinDpPct(adminParams.minDpTiers, terms.netDirectPrice);
 
 
-  // Filter to only items with non-zero direct price (Excel: FILTER B<>0),
-  // plus explicit informational lines (#5 AC4 — "Inverter — not included").
-  const visibleItems = pkg.items.filter(i => i.directPrice > 0 || i.informational);
+  // Filter to only items with non-zero direct price (Excel: FILTER B<>0).
+  // v3-146 — !== 0, not > 0: the Excel semantic is <>0, and REVERSAL/credit
+  // lines (negative, v3-144) must enumerate — the engine already nets them
+  // into every total, so hiding them made the table disagree with the
+  // Pricing & Payment cascade below it. True-empty rows stay hidden.
+  const visibleItems = pkg.items.filter(i => i.directPrice !== 0);
 
   // v3-117 — the list is ALWAYS the expanded enumeration; what's gated now is
   // the PRICE COLUMN, not the expansion (user directives 2-3). Reveal state
@@ -60,16 +80,31 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
   // deliberately EXCLUDES the Rep and Maintenance passwords, which the old
   // Expand gate accepted. Empty env vars filter out inside AuthDialog so a
   // missing var can't accidentally match an empty input.
+  // v3-180 — FinCo added: it is an internal-staff gate and the financing
+  // entity sets the rates that produce these very prices. The Rep/Maintenance
+  // exclusion of decision B is untouched.
   const acceptedPasswords = [
     AUTH.editPassword,
     AUTH.engineeringPassword,
     AUTH.productPassword,
+    AUTH.fincoPassword,
     AUTH.viewPassword,
   ];
 
   const handleAuthSuccess = () => {
     onPricesShown(true);
     setAuthOpen(false);
+  };
+
+  // v3-177 — second gate, same accepted roles as the price reveal (Rep and
+  // Maintenance deliberately excluded, per v3-117 decision B). Kept as its own
+  // dialog + its own flag rather than folded into `pricesShown`: an admin
+  // checking a margin has no reason to resurface the financed total, and the
+  // two reveals expose different things to different people.
+  const [financingAuthOpen, setFinancingAuthOpen] = useState(false);
+  const handleFinancingAuthSuccess = () => {
+    onFinancingShown(true);
+    setFinancingAuthOpen(false);
   };
 
   return (
@@ -108,9 +143,14 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
             (user-directed): COGS · Gross Margin · MDR allowance · VAT ·
             Direct Purchase Price, with the first four summing EXACTLY to the
             fifth on every line (decomposeDirectPrice puts the rounding
-            residual in the GM cell). Header percentages are live: the GM %
-            is this quote's blended realized margin; the MDR % is the
-            merchantDiscountRate parameter. Misc lines have no COGS basis —
+            residual in the GM cell). v3-194 — the GM header is PLAIN
+            (user-directed, Pat): under per-component margins (v3-191) no
+            single percentage describes the column, so each GM cell carries
+            its OWN realized margin in parentheses — gm ÷ (gm + COGS), the
+            actual margin including the ceiling's rounding residual — and
+            the subtotal/total rows carry the same figure blended. Lines
+            with no COGS basis (misc free-form) show no percentage. The MDR
+            header % remains the merchantDiscountRate parameter. Misc lines have no COGS basis —
             COGS dashes and the whole net revenue books as margin. Same
             gate, same PDF force-hide as v3-117/134. */}
         {(() => {
@@ -123,6 +163,24 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
           }), { cogs: 0, gm: 0, mdrAmt: 0, vat: 0, dp: 0 });
           const netRevTot = tot.gm + tot.cogs;
           const gmPct = netRevTot > 0 ? (tot.gm / netRevTot) * 100 : 0;
+          const gmPctOf = (gm, cogsVal, known) => {
+            if (!known) return null;
+            const base = gm + cogsVal;
+            return base ? (gm / base) * 100 : null;
+          };
+          const gmCell = (gm, cogsVal, known) => {
+            const pv = gmPctOf(gm, cogsVal, known);
+            return (
+              <React.Fragment>
+                {fmt.peso(gm)}
+                {pv != null && (
+                  <span style={{ fontSize: 11, color: '#9CA3AF' }}>
+                    {' '}({pv.toFixed(2)}%)
+                  </span>
+                )}
+              </React.Fragment>
+            );
+          };
           const pct = (v) => {
             const p = v * 100;
             return Number.isInteger(p) ? String(p) : p.toFixed(2);
@@ -136,37 +194,82 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                 <tr>
                   <th style={{ ...styles.th, width: pricesShown ? '28%' : '100%' }}>Description</th>
                   {pricesShown && <th style={numTh}>COGS (pre-VAT)</th>}
-                  {pricesShown && <th style={numTh}>{gmPct.toFixed(2)}% Gross Margin</th>}
+                  {pricesShown && <th style={numTh}>Gross Margin</th>}
                   {pricesShown && <th style={numTh}>{pct(mdrRate)}% Allow. for MDR</th>}
                   {pricesShown && <th style={numTh}>12% VAT</th>}
                   {pricesShown && <th style={numTh}>Direct Purchase Price</th>}
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ it, d }) => (
-                  <tr key={it.key}>
-                    <td style={it.informational ? { ...styles.td, fontStyle: 'italic', color: '#6B7280' } : styles.td}>{it.description}</td>
-                    {pricesShown && it.informational ? (
-                      <>
-                        <td style={mutedTd}>{'\u2014'}</td>
-                        <td style={mutedTd}>{'\u2014'}</td>
-                        <td style={mutedTd}>{'\u2014'}</td>
-                        <td style={mutedTd}>{'\u2014'}</td>
-                        <td style={numTd}>{'\u2014'}</td>
-                      </>
-                    ) : (
-                      <>
-                        {pricesShown && (
-                          <td style={mutedTd}>{d.cogsKnown ? fmt.peso(d.cogs) : '\u2014'}</td>
-                        )}
-                        {pricesShown && <td style={mutedTd}>{fmt.peso(d.gm)}</td>}
-                        {pricesShown && <td style={mutedTd}>{fmt.peso(d.mdrAmt)}</td>}
-                        {pricesShown && <td style={mutedTd}>{fmt.peso(d.vat)}</td>}
-                        {pricesShown && <td style={numTd}>{fmt.peso(d.dp)}</td>}
-                      </>
-                    )}
-                  </tr>
-                ))}
+                {/* v3-150 — line items are GROUPED into the three Quote Summary
+                    categories (user-directed assignment; see LINE_ITEM_CATEGORY
+                    in calculations.js and the per-item `category` on Anjon's 2F
+                    catalog). Render order is PACKAGE_CATEGORIES order (A→B→C),
+                    NOT engine emission order. An empty category is omitted
+                    entirely — header and subtotal both — per Pat: a solar-only
+                    quote should not show a ₱0 Battery Package block. Each
+                    subtotal carries all five waterfall columns when prices are
+                    unlocked, summed within the group, so the four components
+                    still reconcile to that group's Direct Purchase Price the
+                    same way the grand total does. */}
+                {PACKAGE_CATEGORIES.map(cat => {
+                  const catRows = rows.filter(({ it }) => it.category === cat.id);
+                  if (catRows.length === 0) return null;
+                  const sub = catRows.reduce((a, { it, d }) => ({
+                    cogs: a.cogs + (d.cogsKnown ? d.cogs : 0), gm: a.gm + d.gm,
+                    mdrAmt: a.mdrAmt + d.mdrAmt, vat: a.vat + d.vat, dp: a.dp + d.dp,
+                    direct: a.direct + it.directPrice,
+                  }), { cogs: 0, gm: 0, mdrAmt: 0, vat: 0, dp: 0, direct: 0 });
+                  const subTd = { ...styles.td, fontWeight: 700 };
+                  const subNum = { ...mutedTd, fontWeight: 700 };
+                  return (
+                    <React.Fragment key={cat.id}>
+                      <tr>
+                        <td colSpan={pricesShown ? 6 : 2} style={styles.categoryHeader}>
+                          {cat.letter} &middot; {cat.label}
+                        </td>
+                      </tr>
+                      {/* v3-175 — an expansion order states what it plugs
+                          into. Rendered as a note row (zero-priced engine
+                          items are filtered, so this cannot be a line item);
+                          the PDF picks it up through the page-4 snapshot. */}
+                      {cat.id === 'solar' && model.expansionActive && (
+                        <tr>
+                          <td colSpan={pricesShown ? 6 : 2}
+                              style={{ ...styles.td, fontSize: 11.5, color: '#075985',
+                                       fontStyle: 'italic' }}>
+                            Connects to the customer&rsquo;s existing{' '}
+                            {state.existingInverterKw
+                              ? `${fmt.num(state.existingInverterKw, 1)} kW `
+                              : ''}inverter — no inverter included in this order.
+                          </td>
+                        </tr>
+                      )}
+                      {catRows.map(({ it, d }) => (
+                        <tr key={it.key}>
+                          <td style={styles.td}>{it.description}</td>
+                          {pricesShown && (
+                            <td style={mutedTd}>{d.cogsKnown ? fmt.peso(d.cogs) : '\u2014'}</td>
+                          )}
+                          {pricesShown && <td style={mutedTd}>{gmCell(d.gm, d.cogs, d.cogsKnown)}</td>}
+                          {pricesShown && <td style={mutedTd}>{fmt.peso(d.mdrAmt)}</td>}
+                          {pricesShown && <td style={mutedTd}>{fmt.peso(d.vat)}</td>}
+                          {pricesShown && <td style={numTd}>{fmt.peso(d.dp)}</td>}
+                        </tr>
+                      ))}
+                      <tr style={styles.subtotalRow}>
+                        <td style={subTd}>{cat.label} Subtotal</td>
+                        {pricesShown && <td style={subNum}>{fmt.peso(sub.cogs)}</td>}
+                        {pricesShown && <td style={subNum}>{gmCell(sub.gm, sub.cogs, sub.cogs > 0)}</td>}
+                        {pricesShown && <td style={subNum}>{fmt.peso(sub.mdrAmt)}</td>}
+                        {pricesShown && <td style={subNum}>{fmt.peso(sub.vat)}</td>}
+                        <td style={{ ...styles.td, ...styles.tdNum, fontWeight: 700 }}>
+                          {fmt.peso(pricesShown ? sub.dp : sub.direct)}
+                        </td>
+                      </tr>
+                    </React.Fragment>
+                  );
+                })}
                 <tr style={styles.totalRow}>
                   <td style={{ ...styles.td, fontWeight: 700 }}>
                     Total Package Price <span style={styles.muted}>(VAT Inclusive)</span>
@@ -175,7 +278,14 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                     <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.cogs)}</td>
                   )}
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.gm)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700 }}>
+                      {fmt.peso(tot.gm)}
+                      {netRevTot > 0 && (
+                        <span style={{ fontSize: 11, color: '#9CA3AF' }}>
+                          {' '}({gmPct.toFixed(2)}%)
+                        </span>
+                      )}
+                    </td>
                   )}
                   {pricesShown && (
                     <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.mdrAmt)}</td>
@@ -204,6 +314,20 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
           acceptedPasswords={acceptedPasswords}
           onAuth={handleAuthSuccess}
           onCancel={() => setAuthOpen(false)}
+        />
+      )}
+
+      {/* v3-177 — modal AuthDialog for the FINANCING-DETAIL gate. Same accepted
+          password list and the same v3-122 title/subtitle suppression as the
+          price gate: the dialog explains nothing. */}
+      {financingAuthOpen && (
+        <AuthDialog
+          modal
+          customTitle=""
+          customSubtitle=""
+          acceptedPasswords={acceptedPasswords}
+          onAuth={handleFinancingAuthSuccess}
+          onCancel={() => setFinancingAuthOpen(false)}
         />
       )}
 
@@ -260,7 +384,13 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
             {terms.promo && Math.abs(terms.discountAmount) >= 0.5 && (
               <tr>
                 <td style={styles.td3}>
-                  Less: {(terms.promoDiscount * 100).toFixed(1)}% {terms.promo.label || terms.promo.code} Discount
+                  {/* v3-151 — a peso code has no percentage worth printing:
+                      "Less: 12.4% Launch Promo" on a flat PHP 25,000 code is a
+                      number the customer cannot reconcile against anything. The
+                      amount is already in the column to the right. */}
+                  Less: {normalizePromoType(terms.promo.type) === 'percent'
+                    ? `${(terms.promoDiscount * 100).toFixed(1)}% ` : ''}
+                  {terms.promo.label || terms.promo.code} Discount
                 </td>
                 <td style={{ ...styles.td3, ...styles.tdNum }}>
                   −{fmt.peso(Math.abs(terms.discountAmount))}
@@ -313,14 +443,31 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                   : `${state.tenor} ${state.tenor === 1 ? 'Month' : 'Months'}`}
               </td>
             </tr>
+            {/* v3-177 — the customer-facing rate row is now the MONTHLY ADD-ON
+                RATE (user-directed). The EIR row it replaced is preserved
+                verbatim below, behind the financing gate. Same helper and same
+                base (terms.amountForFinancing) the compare table uses, so the
+                row and the table's selected row always agree. */}
             <tr>
               <td style={styles.td3}>
-                Interest Rate <span style={styles.muted}>(per annum)</span>
+                Monthly Add-On Rate <span style={styles.muted}>(per month)</span>
               </td>
               <td style={{ ...styles.td3, ...styles.tdNum }}>
-                {terms.rtoRate > 0 ? `${(terms.rtoRate * 100).toFixed(3)}%` : 'Interest-free'}
+                {`${(monthlyAddOnRate(terms.customerMonthlyPmt,
+                                      terms.amountForFinancing || 0,
+                                      state.tenor) * 100).toFixed(3)}%`}
               </td>
             </tr>
+            {financingShown && (
+              <tr>
+                <td style={styles.td3}>
+                  Interest Rate <span style={styles.muted}>(EIR, per annum)</span>
+                </td>
+                <td style={{ ...styles.td3, ...styles.tdNum }}>
+                  {terms.rtoRate > 0 ? `${(terms.rtoRate * 100).toFixed(3)}%` : 'Interest-free'}
+                </td>
+              </tr>
+            )}
 
             {/* Monthly Payment — AH15. v3-100: for a Direct Purchase the
                 "monthly" IS the full balance, labelled per AG15's
@@ -338,21 +485,26 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
 
             {/* Post-Installation Balance — AH16. The (₱X × N months) suffix is
                 hidden on a Direct Purchase, mirroring AG16's empty-suffix
-                branch for "Direct Purch". */}
-            <tr>
-              <td style={styles.td3}>
-                Post-Installation Balance{' '}
-                {!terms.isDirectPurchase && (
-                  <span style={styles.muted}>
-                    ({fmt.peso(terms.customerMonthlyPmt)} × {state.tenor}{' '}
-                    {state.tenor === 1 ? 'month' : 'months'})
-                  </span>
-                )}
-              </td>
-              <td style={{ ...styles.td3, ...styles.tdNum }}>
-                {fmt.peso(terms.finalPostInstallBalance)}
-              </td>
-            </tr>
+                branch for "Direct Purch".
+                v3-177 — behind the financing gate: monthly × tenor IS the
+                financed total under another name, so leaving it visible would
+                have defeated the removal of the TOTAL AMOUNT DUE row below. */}
+            {financingShown && (
+              <tr>
+                <td style={styles.td3}>
+                  Post-Installation Balance{' '}
+                  {!terms.isDirectPurchase && (
+                    <span style={styles.muted}>
+                      ({fmt.peso(terms.customerMonthlyPmt)} × {state.tenor}{' '}
+                      {state.tenor === 1 ? 'month' : 'months'})
+                    </span>
+                  )}
+                </td>
+                <td style={{ ...styles.td3, ...styles.tdNum }}>
+                  {fmt.peso(terms.finalPostInstallBalance)}
+                </td>
+              </tr>
+            )}
 
             {/* Documentary Stamp Tax — SUMMARY!G14/H14 (= CALCULATOR!AH13).
                 v3-100: hidden when ₱0 (Direct Purchase / 100% DP), per user —
@@ -371,15 +523,19 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
             {/* TOTAL AMOUNT DUE — SUMMARY!H20 = H18 + H14 + H11 (balance +
                 DST + DP). v3-100: DST-INCLUSIVE via summaryTotalDue — the
                 on-screen total had been AG29 (DST-exclusive) and understated
-                by the DST. */}
-            <tr>
-              <td style={{ ...styles.td3, ...styles.totalAmountDueLabel }}>
-                TOTAL AMOUNT DUE
-              </td>
-              <td style={{ ...styles.td3, ...styles.tdNum, ...styles.totalAmountDueAmount }}>
-                {fmt.peso(terms.summaryTotalDue)}
-              </td>
-            </tr>
+                by the DST.
+                v3-177 — behind the financing gate (user-directed). The figure
+                and its source are UNCHANGED; only who sees it moved. */}
+            {financingShown && (
+              <tr>
+                <td style={{ ...styles.td3, ...styles.totalAmountDueLabel }}>
+                  TOTAL AMOUNT DUE
+                </td>
+                <td style={{ ...styles.td3, ...styles.tdNum, ...styles.totalAmountDueAmount }}>
+                  {fmt.peso(terms.summaryTotalDue)}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </section>
@@ -412,25 +568,87 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
            format — printing it on both pages was redundant, and the user
            prefers the payment-options rendering. */
         <section style={styles.section} className="no-pdf-capture">
-          <h2 style={{ ...styles.sectionTitle, margin: '0 0 4px' }}>Compare your payment terms</h2>
-          <div style={styles.tenorCaption}>
-            At your {(state.downPaymentPct * 100).toFixed(0)}% down payment of{' '}
-            <strong>{fmt.peso(terms.dpTotalCharge)}</strong>, financing{' '}
-            <strong>{fmt.peso(terms.amountForFinancing)}</strong>.{' '}
-            <em>Totals include documentary stamp tax.</em>
+          {/* v3-177 — financing-detail gate. Mirrors the v3-119 price-reveal
+              button exactly: LOCKED is a bare padlock with no label and no
+              tooltip (a customer must not learn what the control is for);
+              UNLOCKED carries a label, which only an admin who just
+              authenticated ever sees. .no-pdf-capture keeps the control itself
+              out of the page-4 snapshot. */}
+          <div style={styles.sectionTitleRow}>
+            <h2 style={{ ...styles.sectionTitle, margin: '0 0 4px' }}>Compare your payment terms</h2>
+            <button
+              className="no-pdf-capture"
+              onClick={financingShown ? () => onFinancingShown(false) : () => setFinancingAuthOpen(true)}
+              style={styles.priceRevealBtn}
+              title={financingShown ? 'Hide financing detail' : undefined}
+            >
+              {financingShown ? 'Hide financing detail' : '\u{1F512}'}
+            </button>
+          </div>
+          {/* v3-155 — the v3-153 inline caption selector becomes a CONTROL BAR.
+              The prose form ("At your 30% down payment of PHP 154,322,
+              financing PHP 360,085") read well but buried the only two figures
+              a customer actually compares, and a 12px inline <select> did not
+              look like a lever worth pulling. Same state field, same shared
+              option set as Step 3A — this is presentation only.
+
+              100% is still excluded here: the whole section is gated behind
+              !terms.isFullyPaid, so choosing it would remove the very control
+              that set it. Step 3A keeps the full range. */}
+          <div style={styles.termsBar}>
+            <div>
+              <div style={styles.termsBarLabel}>Your down payment</div>
+              <select
+                value={state.downPaymentPct}
+                onChange={e => updateState({ downPaymentPct: Number(e.target.value) })}
+                style={styles.dpSelect}
+                aria-label="Down payment percentage"
+              >
+                {allowedDpOptions(summaryMinDpPct, true).map(p => (
+                  <option key={p} value={p}>{`${(p * 100).toFixed(0)}%`}</option>
+                ))}
+              </select>
+            </div>
+            <div style={styles.termsBarFig}>
+              <div style={styles.termsBarFigLabel}>Due at signing</div>
+              <div style={styles.termsBarFigValue}>{fmt.peso(terms.dpTotalCharge)}</div>
+            </div>
+            <div>
+              <div style={styles.termsBarFigLabel}>Financed</div>
+              <div style={styles.termsBarFigValue}>{fmt.peso(terms.amountForFinancing)}</div>
+            </div>
+          </div>
+
+          {/* v3-155 — lifted OUT of the footnote, where it was the first
+              sentence of a paragraph that ran on into the EIR definition and
+              the add-on formula. Reference material and an affordance hint have
+              opposite reading patterns; merged, neither got read. Phrased as
+              the next step rather than an instruction, because that is the
+              real sequence: set the down payment, then pick a term. */}
+          <div style={styles.tenorPrompt}>
+            <span style={styles.tenorPromptArrow} aria-hidden="true">&#8595;</span>
+            Now select a row below to choose your term
           </div>
           <table style={styles.table}>
             <thead>
-              <tr>
+              <tr role="radiogroup" aria-label="Payment tenor">
+                {/* v3-155 — selection-indicator column. Unlabelled on purpose:
+                    "Select" in the header added noise and the dots explain
+                    themselves. This is what actually makes the table read as a
+                    chooser; the prompt above is the belt to its braces. */}
+                <th style={{ ...styles.th, width: 30 }} aria-hidden="true" />
                 {/* v3-117 — user-specified columns + order:
                     TENOR · EIR · MONTHLY ADD-ON RATE · MONTHLY PAYMENT ·
                     TOTAL AMOUNT DUE. 'EIR' renames the old 'Your Rate'
-                    (values unchanged — decision D). */}
+                    (values unchanged — decision D).
+                    v3-177 — the EIR and TOTAL AMOUNT DUE columns render only
+                    behind the financing gate. Customers now compare terms on
+                    add-on rate and monthly payment alone. */}
                 <th style={{ ...styles.th, width: '24%' }}>Tenor</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>EIR</th>
+                {financingShown && <th style={{ ...styles.th, textAlign: 'right' }}>EIR</th>}
                 <th style={{ ...styles.th, textAlign: 'right' }}>Monthly Add-On Rate</th>
                 <th style={{ ...styles.th, textAlign: 'right' }}>Monthly Payment</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Total Amount Due</th>
+                {financingShown && <th style={{ ...styles.th, textAlign: 'right' }}>Total Amount Due</th>}
               </tr>
             </thead>
             <tbody>
@@ -444,7 +662,31 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                   ? { ...styles.td, ...styles.tenorSelCell }
                   : styles.td;
                 return (
-                  <tr key={row.tenor} style={isSel ? styles.tenorSelRow : undefined}>
+                  /* v3-153 — rows select their tenor. The table already
+                     highlighted the selection; making it clickable turns a
+                     read-only comparison into the control the customer was
+                     already reading it as. Keyboard-reachable and announced as
+                     a radio so the highlight has a meaning assistive tech can
+                     convey. */
+                  <tr key={row.tenor}
+                      role="radio"
+                      aria-checked={isSel}
+                      tabIndex={0}
+                      onClick={() => updateState({ tenor: row.tenor })}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          updateState({ tenor: row.tenor });
+                        }
+                      }}
+                      className="tenor-row"
+                      style={{ ...(isSel ? styles.tenorSelRow : undefined),
+                               ...styles.tenorRowClickable }}>
+                    <td style={cell}>
+                      <span className="tenor-dot"
+                            style={{ ...styles.tenorDot,
+                                     ...(isSel ? styles.tenorDotOn : null) }} />
+                    </td>
                     {/* v3-101 — the 1-month row is out and Direct Purchase
                         (tenor 0) is in; the selected tenor is spliced into the
                         base set by popularTenorsTable, so this highlight always
@@ -455,12 +697,16 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                         : `${row.tenor} ${row.tenor === 1 ? 'month' : 'months'}`}
                       {isSel && <span style={styles.muted}> · your selection</span>}
                     </td>
-                    <td style={{ ...cell, ...styles.tdNum }}>{row.rate > 0 ? `${(row.rate * 100).toFixed(3)}%` : 'Interest-free'}</td>
+                    {financingShown && (
+                      <td style={{ ...cell, ...styles.tdNum }}>{row.rate > 0 ? `${(row.rate * 100).toFixed(3)}%` : 'Interest-free'}</td>
+                    )}
                     <td style={{ ...cell, ...styles.tdNum }}>
                       {`${(monthlyAddOnRate(row.monthlyPmt, addOnBase, row.tenor) * 100).toFixed(3)}%`}
                     </td>
                     <td style={{ ...cell, ...styles.tdNum }}>{fmt.peso(row.monthlyPmt)}</td>
-                    <td style={{ ...cell, ...styles.tdNum }}>{fmt.peso(row.totalDue)}</td>
+                    {financingShown && (
+                      <td style={{ ...cell, ...styles.tdNum }}>{fmt.peso(row.totalDue)}</td>
+                    )}
                   </tr>
                 );
                 });
@@ -468,9 +714,25 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
             </tbody>
           </table>
           <div style={styles.tenorFoot}>
-            A longer tenor lowers your monthly payment but raises your rate — and your total.
-            {' '}EIR — Annual Effective Interest Rate: the per-annum rate implied by your
-            payment schedule. Monthly Add-On Rate = ((Monthly Payment × Tenor − Amount for
+            {/* v3-155 — "Select any row…" moved above the table. The Monthly
+                Add-On Rate formula further down is DELIBERATELY RETAINED: it
+                discloses how a rate shown to the customer is derived, and with
+                RA 3765 and counsel's review of the financing section still
+                outstanding, that is not mine to drop on readability grounds.
+                Revisit with counsel, not in a styling pass. */}
+            {/* v3-177 — the EIR sentence, and the "raises your rate — and your
+                total" clause, describe columns the customer can no longer see;
+                both move behind the gate. The Monthly Add-On Rate formula is
+                RETAINED in BOTH states — it discloses how a rate shown to the
+                customer is derived, which is exactly the v3-155 reasoning, and
+                it is now the ONLY rate on the page. */}
+            {financingShown
+              ? <>Totals include documentary stamp tax. A longer tenor lowers your monthly
+                  payment but raises your rate — and your total.{' '}
+                  EIR — Annual Effective Interest Rate: the per-annum rate implied by your
+                  payment schedule.{' '}</>
+              : <>Includes documentary stamp tax. A longer tenor lowers your monthly payment.{' '}</>}
+            Monthly Add-On Rate = ((Monthly Payment × Tenor − Amount for
             Financing) ÷ Tenor) ÷ Amount for Financing; Direct Purchase is interest-free (0%).
           </div>
         </section>
@@ -586,6 +848,68 @@ const styles = {
     textAlign: 'right',
     fontVariantNumeric: 'tabular-nums',
   },
+  // v3-150 — category band above each group of line items. Deliberately quiet:
+  // the subtotal row below carries the visual weight, and the customer view
+  // has no per-line prices, so a loud header would dominate the whole table.
+  categoryHeader: {
+    padding: '14px 12px 6px',
+    fontSize: 11,
+    fontWeight: 700,
+    color: COLORS.brandGreen,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    borderBottom: `1px solid ${COLORS.divider}`,
+  },
+  // v3-153 — DP selector sitting inline in a sentence: it has to read as part
+  // of the prose, not as a form field dropped into it.
+  // v3-155 — control bar above the tenor table.
+  termsBar: {
+    display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap',
+    background: COLORS.brandCream,
+    border: `1px solid ${COLORS.divider}`,
+    borderRadius: 9,
+    padding: '13px 16px',
+    marginBottom: 2,
+  },
+  termsBarLabel: {
+    fontSize: 10, letterSpacing: 0.5, fontWeight: 700,
+    textTransform: 'uppercase', color: COLORS.textMuted, marginBottom: 5,
+  },
+  dpSelect: {
+    font: 'inherit', fontSize: 21, fontWeight: 700,
+    color: COLORS.brandGreen,
+    background: COLORS.surfaceCard,
+    border: `1px solid ${COLORS.inputBorder}`,
+    borderRadius: 7,
+    padding: '6px 10px',
+    cursor: 'pointer',
+  },
+  // Divider rule sits on the first figure so the selector reads as the control
+  // and the two figures as its consequences.
+  termsBarFig: { borderLeft: `1px solid ${COLORS.divider}`, paddingLeft: 18 },
+  termsBarFigLabel: { fontSize: 11, color: COLORS.textMuted },
+  termsBarFigValue: { fontSize: 16, fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
+  tenorPrompt: {
+    display: 'flex', alignItems: 'center', gap: 7,
+    color: COLORS.brandGreen, fontSize: 12.5, fontWeight: 700,
+    padding: '12px 0 8px',
+  },
+  tenorPromptArrow: { fontSize: 15, lineHeight: 1 },
+  // Selection indicator. Hover/focus states live in index.html — React inline
+  // styles cannot express :hover.
+  tenorDot: {
+    width: 13, height: 13, borderRadius: '50%',
+    border: `1.5px solid ${COLORS.inputBorder}`,
+    display: 'inline-block', verticalAlign: 'middle',
+    transition: 'border-color 120ms ease',
+  },
+  // Same gold as tenorSelCell below — one selected-state colour across the
+  // row text, the row tint and the dot, not three near-misses.
+  tenorDotOn: {
+    borderColor: '#854F0B',
+    background: 'radial-gradient(circle, #854F0B 0 45%, transparent 46%)',
+  },
+  tenorRowClickable: { cursor: 'pointer' },
   subtotalRow: {
     backgroundColor: COLORS.brandCream,
   },

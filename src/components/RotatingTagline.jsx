@@ -24,7 +24,7 @@
 
 import React, { useState, useEffect } from 'react';
 
-const TAGLINES = [
+export const TAGLINES = [
   'Turn sunshine into savings.',
   "Your roof is sitting on a goldmine. Let's tap it.",
   'From bill payer to power producer.',

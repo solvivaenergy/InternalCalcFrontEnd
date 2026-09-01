@@ -6,6 +6,12 @@
   <title>Solviva Solar Calculator</title>
   <link rel="icon" type="image/png" href="/favicon-v2.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon-v2.png" />
+  <!-- v3-157 — Mulish for the Mobile Flow: the Brand Book's approved alternate
+       typeface (PolySans is the primary but is a paid license). Scoped to the
+       .mfl root in MobileFlow.jsx; the desktop view's typography is untouched. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
   <meta name="description" content="Solviva Energy solar quote calculator. Estimate your savings, monthly payment, and payback period." />
   <meta name="x-solviva-build" content="v3-13 — Logo asset cache-bust: renamed to *-v2.png so browsers holding the old (JPEG-as-PNG) logos in cache fetch the new transparent ones (May 2026)" />
   <style>
@@ -14,6 +20,28 @@
       margin: 0; padding: 0;
       font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
       background-color: #F7F4ED;
+    }
+
+    /* ─────────────────────────────────────────────────────────────────
+       v3-155 · Summary "Compare your payment terms" tenor rows.
+       The rows became clickable in v3-153, but nothing INVITED the click —
+       no hover feedback and no per-row selection indicator, so the table
+       still read as a static comparison. Hover lives here rather than in the
+       inline style objects because React inline styles cannot express :hover.
+       Excluded from the PDF by the surrounding .no-pdf-capture section, so
+       these states can never reach the proposal.
+       ───────────────────────────────────────────────────────────────── */
+    .tenor-row { transition: background-color 120ms ease; }
+    .tenor-row:hover { background-color: #F0EDE3; }
+    .tenor-row:hover .tenor-dot { border-color: #25543A; }
+    .tenor-row:focus-visible {
+      outline: 2px solid #25543A;
+      outline-offset: -2px;
+    }
+    /* Coarse pointers have no hover; the tint would latch on after a tap and
+       read as a second selection alongside the real one. */
+    @media (hover: none) {
+      .tenor-row:hover { background-color: transparent; }
     }
 
     /* ─────────────────────────────────────────────────────────────────
@@ -204,17 +232,18 @@
        a cell has a right-hand neighbour (structural, via nth-child). */
     .live-total-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr); /* v3-161: IRR is the fifth cell */
       row-gap: 7px;
     }
     .live-total-cell { border-right: 1px solid rgba(255,255,255,0.18); }
-    .live-total-cell:nth-child(4n) { border-right: none; }
+    .live-total-cell:nth-child(5n) { border-right: none; }
     .live-total-spacer { height: 56px; }
     @media (max-width: 560px) {
       .live-total-grid { grid-template-columns: repeat(2, 1fr); }
       .live-total-cell { border-right: none; }
       .live-total-cell:nth-child(odd) { border-right: 1px solid rgba(255,255,255,0.18); }
-      .live-total-spacer { height: 104px; }
+      /* v3-161: five cells wrap to three rows at 2-col */
+      .live-total-spacer { height: 156px; }
     }
     @media print {
       header, nav, footer, button { -webkit-print-color-adjust: exact; }

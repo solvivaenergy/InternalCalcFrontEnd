@@ -24,9 +24,9 @@
 // =============================================================================
 
 import React, { useEffect } from 'react';
-import { availableInverters, directFromCogs, grossMarginForCapacity } from '../lib/calculations.js';
+import { availableInverters, directFromCogs, signedDirectFromCogs, buildMarginResolver } from '../lib/calculations.js';
 import { availableDeliveryLocations, availableMiscCatalog,
-         findMiscCatalogItem, MISC_CATALOG_OTHER } from '../data/adminParams.js';
+         findMiscCatalogItem, MISC_CATALOG_OTHER, racksNeeded } from '../data/adminParams.js';
 import { INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
          LUZON_FREE_TRAVEL_KM, LUZON_REGIONS } from '../config.js';
 import {
@@ -100,10 +100,16 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
     if (Array.isArray(state.miscMaterials)
         && state.miscMaterials.some(m => m && (m.description || m.unitPrice
              || (m.catalogId && m.catalogId !== MISC_CATALOG_OTHER)))) {
-      patch.miscMaterials = [
-        { catalogId: MISC_CATALOG_OTHER, description: '', count: 1, unitPrice: 0 },
-      ];
+      // v3-149 — clears to EMPTY (was one blank 'other' row), matching the new
+      // App.jsx initial state. The "has data" predicate above is unchanged.
+      patch.miscMaterials = [];
     }
+    // v3-151 — the battery component checkboxes are REP-ONLY (user decision).
+    // Switching to the customer/public view restores all three to included, so
+    // a public quote can never silently carry a rep's exclusion.
+    if (state.batteryRackIncluded === false) patch.batteryRackIncluded = true;
+    if (state.batteryAtsIncluded === false) patch.batteryAtsIncluded = true;
+    if (state.batteryCritLoadsIncluded === false) patch.batteryCritLoadsIncluded = true;
     if (Object.keys(patch).length > 0) {
       updateState(patch);
     }
@@ -133,7 +139,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.panelCount, model.recommended?.minPanelsFloor, model.recPanelCount, model.panelsAvailable]);
-  const { recommended, recPanelCount, panelCount, recInverters, effectiveInverters,
+  const { recommended, recPanelCount, panelCount, recInverters, effectiveInverters, expansionActive,
           sizing, recBatteryKwh, batteryKwh, activeBatteryPackage,
           autoBatteryPackage, activeRecBatteryKwh,
           panelsAvailable, anyBatteryInStock, rsdInStock,
@@ -150,11 +156,18 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
   const ratioWarn = sizing.totalInverterKw > 0 && sizing.ratioExceeded;
 
   // ─── 2F misc catalog (v3-138) ──────────────────────────────────────────
-  // THIS quote's capacity margin — the same value buildPackageLineItems
-  // resolves before re-pricing every COGS-derived line (v3-92). Computing it
-  // here means the unit price the rep reads in 2F is the identical number the
-  // Summary bills, and both move together as panel count changes.
-  const quoteMargin = grossMarginForCapacity(sizing.systemKwp, panelCount, adminParams);
+  // THIS quote's misc-catalog margin — the same value buildPackageLineItems
+  // resolves before re-pricing every COGS-derived line. Computing it here
+  // means the unit price the rep reads in 2F is the identical number the
+  // Summary bills, and both move together as the order shape changes.
+  // v3-191 — misc rows bill at the L COMPONENT margin (Follow/Fixed on a
+  // full system, Otherwise on any order missing panels or an inverter), so
+  // this display resolves through the same buildMarginResolver the engine
+  // uses, with the same order-shape inputs (v3-176 has-inverter flag
+  // included). The old capacity-scalar call would show a price 2F never
+  // bills whenever L is set to Fixed or the order is not a full system.
+  const miscDisplayMargin = buildMarginResolver(adminParams, sizing.systemKwp, panelCount,
+    effectiveInverters.some(i => i), phase)('L');
   // Only IN-STOCK items are offerable. A row already holding a now-hidden id
   // re-injects it below so the Select never renders blank.
   const miscCatalogOptions = availableMiscCatalog(adminParams).map(m => ({
@@ -329,45 +342,6 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
               installation — or contact your Solviva representative about
               panel availability.
             </CalloutBox>
-          </div>
-        )}
-
-        {/* v3-143 — Battery-only shortcut (rep-only). One click zeroes the
-            solar array for a storage-only order and pins the battery the rep
-            is seeing so it survives the loss of the solar-excess battery
-            recommendation (which drops to 0 without solar). Unchecking
-            restores the full auto solar + battery recommendation. */}
-        {!isCustomer && panelsAvailable && anyBatteryInStock && (
-          <div style={styles.consvBlock}>
-            <label style={styles.consvRow}>
-              <input
-                type="checkbox"
-                checked={panelCount === 0}
-                onChange={e => {
-                  if (e.target.checked) {
-                    const patch = { panelCount: 0 };
-                    // Pin the current battery so a storage-only order doesn't
-                    // silently drop to ₱0 (rec can't size storage w/o solar).
-                    if (state.batteryKwh == null && batteryKwh > 0) {
-                      patch.batteryKwh = batteryKwh;
-                    }
-                    updateState(patch);
-                  } else {
-                    updateState({ panelCount: null, batteryKwh: null });
-                  }
-                }}
-                style={styles.consvCheckbox}
-              />
-              <span>
-                <span style={styles.consvLabel}>Battery-only order (no solar panels)</span>
-                <span style={styles.consvHint}>
-                  Storage-only quote: zeroes the solar array and prices the
-                  battery package on its own (standalone labor, plus ATS &amp;
-                  critical-loads materials unless unbundled below). The inverter
-                  is treated as client-supplied unless you add one in 2C.
-                </span>
-              </span>
-            </label>
           </div>
         )}
 
@@ -562,16 +536,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             // standalone retrofit path).
                             const floor = recommended?.minPanelsFloor || 0;
                             const c = (v > 0 && v < floor) ? floor : v;
-                            const patch = { panelCount: c === recPanelCount ? null : c };
-                            // Going standalone (0 panels) zeroes the solar-excess
-                            // battery recommendation; pin the battery the rep is
-                            // seeing so a battery-only order doesn't silently drop
-                            // to ₱0 (the recommendation can't size storage without
-                            // solar — it must be an explicit choice).
-                            if (c === 0 && state.batteryKwh == null && batteryKwh > 0) {
-                              patch.batteryKwh = batteryKwh;
-                            }
-                            updateState(patch);
+                            updateState({ panelCount: c === recPanelCount ? null : c });
                           }}
                           min={0}
                           step={1}
@@ -595,7 +560,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                         // Package overridden (possibly with a kWh override
                         // too): one link resets BOTH back to the optimizer.
                         ? { label: `Use recommended package (${autoBatteryPackage?.label})`,
-                            onClick: () => updateState({ batteryPackageId: null, batteryKwh: null }) }
+                            onClick: () => updateState({ batteryPackageId: null, batteryKwh: null, batteryRackIncluded: true, batteryAtsIncluded: true, batteryCritLoadsIncluded: true }) }
                         : batteryOverridden
                         ? { label: `Use recommended (${activeRecBatteryKwh} kWh)`,
                             onClick: () => updateState({ batteryKwh: null }) }
@@ -637,7 +602,13 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                                      p.id === state.batteryPackageId && p.available !== false)
                                    ? state.batteryPackageId : ''}
                             onChange={v => {
-                              updateState({ batteryPackageId: v || null, batteryKwh: null });
+                              // v3-151 — switching packages restores all three component
+                              // checkboxes to included: a new package is a new
+                              // set of components, and a stale uncheck carried
+                              // across a switch is exactly the kind of thing
+                              // nobody notices until a quote goes out wrong.
+                              updateState({ batteryPackageId: v || null, batteryKwh: null,
+                                            batteryRackIncluded: true, batteryAtsIncluded: true, batteryCritLoadsIncluded: true });
                             }}
                             width={190}
                             amber={packageOverridden}
@@ -691,17 +662,58 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                           is engineering detail the rep walks through.
                           v3-54: unit size and rack capacity now read from
                           the active battery package, not hardcoded 5/3. */}
+                      {/* v3-151 — component checkboxes. The rep can drop any
+                          bundled component from the quote; unchecking zeroes
+                          that line in the engine and it disappears from the
+                          Summary rather than printing at ₱0. The RACK row
+                          appears only when the package actually quotes one:
+                          racksNeeded() applies the rackRequiredFromUnits
+                          threshold (5 kWh pack = 3, so 1-2 units get no rack),
+                          AND the package must price a rack — the 16 kWh unit
+                          is free-standing at threshold 0, so an empty rack row
+                          can never show. Same helper the engine uses, so the
+                          checkbox and the price cannot disagree. */}
                       {batteryKwh > 0 && (() => {
                         const pkg = activeBatteryPackage || { batteryUnitKwh: 5, batteryRackCapacity: 3 };
                         const battCount = Math.ceil(batteryKwh / pkg.batteryUnitKwh);
-                        const rackCount = Math.ceil(battCount / pkg.batteryRackCapacity);
+                        const rackCount = racksNeeded(pkg, battCount);
+                        const showRack = rackCount > 0 && (pkg.batteryRackPrice || 0) !== 0;
+                        const boxes = [
+                          showRack && ['batteryRackIncluded', 'Battery Rack'],
+                          ['batteryAtsIncluded', 'Automatic Transfer Switch'],
+                          ['batteryCritLoadsIncluded', 'Materials for Critical Loads'],
+                        ].filter(Boolean);
                         return (
-                          <div style={selectedTileStyles.packComposition}>
-                            {battCount} × {pkg.batteryUnitKwh} kWh batteries
-                            {' · '}
-                            {rackCount} battery rack{rackCount > 1 ? 's' : ''}
-                            {' · '}includes ATS &amp; critical-loads materials
-                          </div>
+                          <>
+                            <div style={selectedTileStyles.componentsWrap}>
+                              <div style={selectedTileStyles.componentsHead}>
+                                Included in this package
+                              </div>
+                              {boxes.map(([field, label]) => (
+                                <label key={field} style={selectedTileStyles.componentRow}>
+                                  <input
+                                    type="checkbox"
+                                    checked={state[field] !== false}
+                                    onChange={e => updateState({ [field]: e.target.checked })}
+                                  />
+                                  <span>{label}</span>
+                                </label>
+                              ))}
+                              <div style={selectedTileStyles.componentsHint}>
+                                Uncheck to remove from the package price. Battery labor is unaffected.
+                              </div>
+                            </div>
+                            <div style={selectedTileStyles.packComposition}>
+                              {battCount} × {pkg.batteryUnitKwh} kWh batteries
+                              {showRack && state.batteryRackIncluded !== false
+                                ? ` · ${rackCount} battery rack${rackCount > 1 ? 's' : ''}` : ''}
+                              {(state.batteryAtsIncluded !== false || state.batteryCritLoadsIncluded !== false)
+                                ? ` · includes ${[
+                                    state.batteryAtsIncluded !== false && 'ATS',
+                                    state.batteryCritLoadsIncluded !== false && 'critical-loads materials',
+                                  ].filter(Boolean).join(' & ')}` : ''}
+                            </div>
+                          </>
                         );
                       })()}
                       </>
@@ -807,45 +819,6 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             </>
           )}
         </div>
-
-        {/* v3-143 — battery component unbundling (rep-only). Shown only when a
-            battery is on the quote. Unchecking excludes that component from
-            the price and prints an explicit "not included (client-supplied)"
-            line on the quote/PDF instead of silently dropping it. */}
-        {!isCustomer && anyBatteryInStock && batteryKwh > 0 && (
-          <div style={styles.battUnbundleBlock}>
-            <div style={styles.battUnbundleHeader}>
-              Battery components &mdash; uncheck any the client supplies themselves
-            </div>
-            <label style={styles.battUnbundleRow}>
-              <input
-                type="checkbox"
-                checked={state.batteryIncludeRack !== false}
-                onChange={e => updateState({ batteryIncludeRack: e.target.checked })}
-                style={styles.consvCheckbox}
-              />
-              <span style={styles.consvLabel}>Include battery rack(s)</span>
-            </label>
-            <label style={styles.battUnbundleRow}>
-              <input
-                type="checkbox"
-                checked={state.batteryIncludeAts !== false}
-                onChange={e => updateState({ batteryIncludeAts: e.target.checked })}
-                style={styles.consvCheckbox}
-              />
-              <span style={styles.consvLabel}>Include Automatic Transfer Switch (ATS)</span>
-            </label>
-            <label style={styles.battUnbundleRow}>
-              <input
-                type="checkbox"
-                checked={state.batteryIncludeCriticalLoads !== false}
-                onChange={e => updateState({ batteryIncludeCriticalLoads: e.target.checked })}
-                style={styles.consvCheckbox}
-              />
-              <span style={styles.consvLabel}>Include critical-loads materials</span>
-            </label>
-          </div>
-        )}
       </Subsection>
 
       {/* ─── Slot for "Visualizing your system" block ───
@@ -908,7 +881,105 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
       {(
         <Subsection title="2C · Inverters"
                     hint="Solviva uses only BNEF Tier-1 inverters">
-          {phaseInverters.length === 0 ? (
+          {/* ── v3-175 · panels-only expansion (user-directed, Pat; mockup
+              approved). PUBLIC — customers expanding an existing install can
+              zero out the inverter, which the "— None —" option never could:
+              a per-slot null already means "use the recommendation" in
+              App.jsx's fallback, so removal always snapped back. This is a
+              deliberate FLAG instead. When active, App forces all three
+              effective slots empty, the engine prices cabling MARGINALLY
+              (C(existing+new) − C(existing), safe since the v3-174
+              interpolation), and no standalone-inverter mobilization applies
+              (panels present). The DC/AC check moves to the customer's OWN
+              hardware: (existing + new panels) × panelWatts ÷ existing kW
+              against the same maxDcAcRatio — a WARNING, not a block (Pat),
+              with site inspection as the guard for the same-wattage
+              assumption. Unchecking restores normal inverter selection; the
+              typed inputs keep their values but lose all effect. ── */}
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start',
+                          cursor: 'pointer', marginBottom: 12 }}>
+            <input type="checkbox"
+              checked={!!state.expansionMode}
+              onChange={e => updateState({ expansionMode: e.target.checked })}
+              style={{ marginTop: 3, width: 16, height: 16, accentColor: COLORS.brandGreen }} />
+            <span>
+              <div style={{ fontWeight: 600 }}>
+                Panels only — I already have an inverter with spare capacity
+              </div>
+              <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2, lineHeight: 1.5 }}>
+                For expanding an existing solar installation. Your new panels connect to your
+                current inverter, so this quote includes no inverter. We&rsquo;ll check that your
+                inverter can handle the combined array.
+              </div>
+            </span>
+          </label>
+
+          {state.expansionMode ? (() => {
+            // v3-204 (D4) — the DC/AC check is now EXACT: the customer states
+            // the existing array's RATED kWp directly, so combined DC is
+            // existingKwp + new kWp with no per-panel wattage assumption.
+            const exKwp = state.existingKwp || 0;
+            const exKw = state.existingInverterKw || 0;
+            const watts = recommended?.panelWatts || 0;
+            const combinedKwp = exKwp + (panelCount * watts) / 1000;
+            const maxRatio = sizing.maxRatio;
+            const ratio = exKw > 0 ? combinedKwp / exKw : null;
+            const ratioBad = ratio != null && ratio > maxRatio;
+            const inputsReady = exKwp > 0 && exKw > 0;
+            return (
+              <div>
+                <div style={{ background: COLORS.surfaceCard, border: `1px solid ${COLORS.divider}`,
+                              borderRadius: 8, padding: '14px 16px', maxWidth: 620 }}>
+                  <Field label="Existing kWp rated capacity of the solar panels you already have" inline>
+                    <NumberInput value={state.existingKwp}
+                      onChange={v => updateState({ existingKwp: v })}
+                      min={0.1} step={0.1} width={90} suffix="kWp" />
+                  </Field>
+                  <div style={{ height: 8 }} />
+                  <Field label="Existing inverter capacity (total, from its label)" inline>
+                    <NumberInput value={state.existingInverterKw}
+                      onChange={v => updateState({ existingInverterKw: v })}
+                      min={0.1} step={0.1} width={90} suffix="kW AC" />
+                  </Field>
+                  <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 10, lineHeight: 1.5 }}>
+                    Your Solviva Representative will verify capacity during site inspection —
+                    every expansion order is confirmed on site before installation.
+                  </div>
+                  {inputsReady && (
+                    <div style={{ marginTop: 12 }}>
+                      <CalloutBox kind={ratioBad ? 'warn' : 'info'}>
+                        Combined array: <strong>{fmt.num(combinedKwp, 2)} kWp</strong> · your inverter:{' '}
+                        <strong>{fmt.num(exKw, 1)} kW</strong> → DC/AC ratio{' '}
+                        <strong>{fmt.num(ratio, 2)}</strong> (max {fmt.num(maxRatio, 1)}).{' '}
+                        {ratioBad ? (
+                          <>
+                            <strong>Your inverter is too small for the combined array.</strong>{' '}
+                            Reduce the number of new panels or plan an inverter upgrade — your
+                            Solviva Representative will confirm capacity on site inspection before
+                            any installation.
+                          </>
+                        ) : 'Your existing inverter can handle the combined array.'}
+                      </CalloutBox>
+                    </div>
+                  )}
+                  {!inputsReady && (
+                    <div style={{ marginTop: 12 }}>
+                      <CalloutBox kind="info">
+                        Enter your existing capacity and inverter capacity to check the
+                        combined DC/AC ratio.
+                      </CalloutBox>
+                    </div>
+                  )}
+                </div>
+                <div style={{ marginTop: 10, fontSize: 12.5, color: '#075985',
+                              background: '#F0F9FF', border: '1px solid #BAE6FD',
+                              borderRadius: 6, padding: '10px 14px', maxWidth: 620 }}>
+                  ℹ Inverter selection is hidden for a panels-only order — no inverter, and no
+                  standalone-inverter mobilization fee, will appear on your quote.
+                </div>
+              </div>
+            );
+          })() : phaseInverters.length === 0 ? (
             <CalloutBox kind="warn">
               No inverters are currently in stock for this phase. Please contact
               your Solviva agent to discuss alternatives.
@@ -989,7 +1060,6 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             value={state.roofMaterial}
             onChange={v => updateState({ roofMaterial: v })}
             width={300}
-            disabled={panelCount === 0}
             options={[
               // Order: default first, then alphabetical
               { value: 'metal',    label: 'Metal — no roof prep needed' },
@@ -999,22 +1069,16 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           />
         </Field>
         <div style={styles.roofHint}>
-          {panelCount === 0 ? (
-            <span>Roof type doesn’t affect a battery-only order — no panels to mount.</span>
-          ) : (
-            <>
-              {state.roofMaterial === 'metal' && (
-                <span>Metal roofs need no prep work — no additional charge.</span>
-              )}
-              {state.roofMaterial === 'asphalt' && (
-                <span>Asphalt/shingles/tiled roofs require additional mounting prep
-                  at <strong>{fmt.peso(adminParams.roofAsphaltPerKwp)}/kWp</strong>.</span>
-              )}
-              {state.roofMaterial === 'concrete' && (
-                <span>Concrete roofs require the most prep work
-                  at <strong>{fmt.peso(adminParams.roofConcretePerKwp)}/kWp</strong>.</span>
-              )}
-            </>
+          {state.roofMaterial === 'metal' && (
+            <span>Metal roofs need no prep work — no additional charge.</span>
+          )}
+          {state.roofMaterial === 'asphalt' && (
+            <span>Asphalt/shingles/tiled roofs require additional mounting prep,
+              included in your package price.</span>
+          )}
+          {state.roofMaterial === 'concrete' && (
+            <span>Concrete roofs require the most prep work,
+              included in your package price.</span>
           )}
         </div>
       </Subsection>
@@ -1058,10 +1122,14 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           const cities = region.cities;
           const city   = cities.find(c => c.name === state.locationCity) || cities[0];
           const km     = city ? city.km : 0;
+          // v3-199 — the free radius is the luzonFreeTravelKm param; the
+          // config constant is only the fallback for a params object that
+          // predates the key.
+          const freeKm = adminParams.luzonFreeTravelKm ?? LUZON_FREE_TRAVEL_KM;
           // v3-115 — excess-km only, mirroring the corrected AA38 formula.
-          const surcharge = km > LUZON_FREE_TRAVEL_KM
+          const surcharge = km > freeKm
             ? adminParams.luzonOver30FixedFee
-              + (km - LUZON_FREE_TRAVEL_KM) * adminParams.luzonOver30PerKm
+              + (km - freeKm) * adminParams.luzonOver30PerKm
             : 0;
           return (
             <div style={{ marginTop: 10 }}>
@@ -1092,10 +1160,11 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
               </div>
               <div style={styles.locationHint}>
                 {surcharge === 0 ? (
-                  <span>{city ? city.name : '—'} — within {LUZON_FREE_TRAVEL_KM} km of our Parañaque logistics hub. <strong>No delivery charge</strong>.</span>
+                  <span>{city ? city.name : '—'} — within {freeKm} km of our Parañaque logistics hub. <strong>No delivery charge</strong>.</span>
                 ) : (
-                  <span>{city.name} — approx. {km} km from our Parañaque logistics hub. Adds <strong>{fmt.peso(adminParams.luzonOver30FixedFee)}</strong> fixed
-                    + <strong>{fmt.peso(adminParams.luzonOver30PerKm)}/km</strong> beyond {LUZON_FREE_TRAVEL_KM} km, totaling <strong>{fmt.peso(surcharge)}</strong>.</span>
+                  <span>{city.name} — approx. {km} km from our Parañaque logistics hub.
+                    A delivery charge for the distance beyond {freeKm} km
+                    is <strong>included in your package price</strong>.</span>
                 )}
               </div>
             </div>
@@ -1111,8 +1180,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           if (!row) return null;
           return (
             <div style={styles.locationHint}>
-              {row.label} delivery: <strong>{fmt.peso(row.fixedFee)}</strong> fixed
-              + <strong>{fmt.peso(row.perPanel)}/panel</strong>.
+              {row.label} delivery is <strong>included in your package price</strong>.
             </div>
           );
         })()}
@@ -1144,8 +1212,14 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
       {/* Rep mode only — adds free-form line items the rep negotiates with
           the customer (e.g. roof reinforcement). Hidden from customer view. */}
       {!isCustomer && (
-        <Subsection title="2F · Add MISCELLANEOUS MATERIALS, LABOR &amp; OTHER SERVICES"
+        <Subsection title="2F · Add MISCELLANEOUS MATERIALS, LABOR, SERVICES &amp; OTHER ADJUSTMENTS"
                     hint="optional — pick from the standing catalog, or specify your own">
+          {/* v3-149 — the whole table, THEAD included, is suppressed when the
+              section is empty. Rendering a DESCRIPTION/COUNT/UNIT PRICE/TOTAL
+              header over a zero-row tbody reads as a broken widget rather than
+              an untouched optional section; the add button alone is the empty
+              state. */}
+          {state.miscMaterials.length > 0 && (
           <div style={miscStyles.tableWrap}>
             <table className="step2g-misc-table" style={miscStyles.table}>
               <thead>
@@ -1159,6 +1233,10 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
               </thead>
               <tbody>
                 {state.miscMaterials.map((row, i) => {
+                  // v3-149 — MISC_MIN_ROWS is 0, so this shared Step-1 idiom now
+                  // evaluates true for every rendered row. Kept in formula form
+                  // rather than hardcoded `true` so raising the floor back is a
+                  // one-line change at the const.
                   const canRemove = state.miscMaterials.length > MISC_MIN_ROWS && i >= MISC_MIN_ROWS;
                   // v3-138 — a row is either CATALOG-backed or free-form. A row
                   // restored from a pre-v3-138 session has no catalogId at all,
@@ -1173,9 +1251,13 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                   // Catalog unit price is LIVE at THIS quote's capacity margin —
                   // the identical call the engine makes, so 2F and the Summary
                   // can never disagree. It moves with panel count by design.
+                  // v3-146 — signedDirectFromCogs (was raw directFromCogs,
+                  // whose c<=0 guard priced REVERSAL rows at ₱0 here while the
+                  // engine priced them negative). Same helper the engine's
+                  // derive loop uses — 2F and the Summary cannot disagree.
                   const unitPrice = isOther
                     ? (row.unitPrice || 0)
-                    : (stale ? 0 : directFromCogs(item.cogs, adminParams, quoteMargin));
+                    : (stale ? 0 : signedDirectFromCogs(item.cogs, adminParams, miscDisplayMargin));
                   const total = (row.count || 0) * unitPrice;
                   return (
                     <tr key={i}>
@@ -1246,13 +1328,20 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                         ) : (
                           // Read-only by instruction: a catalog price is Anjon's
                           // to set. A rep who needs a different number uses Other.
-                          <span style={miscStyles.catalogPrice}>
-                            {unitPrice > 0 ? fmt.peso(unitPrice) : '—'}
-                          </span>
+                          // v3-147 — per Pat: do NOT display the unit price for
+                          // catalog rows at all (only "Other" shows a price
+                          // field). The engine still prices the line — the
+                          // amount surfaces in the TOTAL column and the
+                          // Summary; only this cell is blanked.
+                          <span style={miscStyles.catalogPrice}>—</span>
                         )}
                       </td>
                       <td style={{ ...miscStyles.td, textAlign: 'right', fontWeight: 600, verticalAlign: 'top' }}>
-                        {total > 0 ? fmt.peso(total) : '—'}
+                        {/* v3-148 — per Pat: catalog rows hide the TOTAL too;
+                            only "Other" rows (rep-entered price) show amounts
+                            in 2F. Engine pricing unchanged — amounts surface
+                            in the Summary equipment table and all totals. */}
+                        {isOther && total !== 0 ? fmt.peso(total) : '—'}
                       </td>
                       <td style={{ ...miscStyles.removeCell, verticalAlign: 'top' }}>
                         {canRemove && (
@@ -1277,6 +1366,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
               </tbody>
             </table>
           </div>
+          )}
           {state.miscMaterials.length < MISC_MAX_ROWS ? (
             <button
               type="button"
@@ -1639,28 +1729,6 @@ const styles = {
     borderRadius: 8,
     marginBottom: 10,
   },
-  battUnbundleBlock: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 7,
-    padding: '10px 12px',
-    background: COLORS.brandCream,
-    border: `1px solid ${COLORS.divider}`,
-    borderRadius: 8,
-    margin: '4px 0 10px',
-  },
-  battUnbundleHeader: {
-    fontSize: 12,
-    fontWeight: 700,
-    color: COLORS.textBody,
-    marginBottom: 2,
-  },
-  battUnbundleRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 9,
-    cursor: 'pointer',
-  },
   consvRow: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -1823,10 +1891,29 @@ const inverterStyles = {
 };
 
 // 2F misc line items — dynamic add/remove, mirroring the Step 1 DeviceTable
-// pattern. Floor of 1 (row 0 never gets a ✕); cap of 6 protects the
-// fixed-size PDF quote-summary snapshot from overflow.
-const MISC_MIN_ROWS = 1;
+// pattern. Cap of 12 protects the fixed-size PDF quote-summary snapshot from
+// overflow.
+//
+// v3-149 — the floor drops 1 → 0 per Pat: 2F is optional, and the guaranteed
+// blank row made an untouched section look like it was asking for input. Every
+// row now carries a ✕ (including row 0), the section defaults to EMPTY, and
+// the table + its header are hidden entirely at length 0 — a bare header over
+// an empty tbody reads as broken. The engine's misc loop is
+// `(miscMaterials || []).forEach`, so an empty array simply contributes no
+// line items; nothing downstream reaches for a `misc0` key.
+const MISC_MIN_ROWS = 0;
 const MISC_MAX_ROWS = 12;   // v3-138 — was 6; the standing catalog makes multi-line quotes routine
+
+// v3-151 — battery component checkbox block, inside the Selected Battery tile.
+const componentStyleAdditions = {
+  componentsWrap: { marginTop: 10, paddingTop: 10, borderTop: `1px solid ${COLORS.divider}` },
+  componentsHead: { fontSize: 10, fontWeight: 700, letterSpacing: 0.4,
+                    textTransform: 'uppercase', color: COLORS.textMuted, marginBottom: 7 },
+  componentRow:   { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12,
+                    marginBottom: 6, cursor: 'pointer' },
+  componentsHint: { fontSize: 10, fontStyle: 'italic', color: COLORS.textMuted, marginTop: 6 },
+};
+Object.assign(selectedTileStyles, componentStyleAdditions);
 
 const miscStyles = {
   tableWrap: { overflowX: 'auto', maxWidth: '100%', minWidth: 0 },

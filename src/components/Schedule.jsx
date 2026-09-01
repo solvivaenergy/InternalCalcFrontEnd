@@ -108,10 +108,16 @@ export default function Schedule({ model, state, contact, generatedDate }) {
       </table>
       </div>
 
+      {/* v3-189 — the first sentence was removed (Pat). It had two problems
+          beyond being unwanted: it cited "Admin C28", an internal workbook cell
+          reference on a customer-facing tab, and it HARDCODED "8% per annum"
+          while the rate it described is `earlyPayoffDiscountRate` — FinCo-
+          editable since v3-180. The moment FinCo moved that rate the sentence
+          would have stated a false figure beside a column computed from the
+          real one. What remains is the definition that is always true. */}
       <p style={styles.disclaimer}>
-        <strong>Note:</strong> Early Payoff Amount is the present value of all
-        remaining payments, discounted at 8% per annum (as defined in Admin C28).
-        Savings from Early Payoff = total of remaining payments minus Early Payoff Amount.
+        <strong>Note:</strong> Savings from Early Payoff = total of remaining
+        payments minus Early Payoff Amount.
       </p>
     </div>
   );

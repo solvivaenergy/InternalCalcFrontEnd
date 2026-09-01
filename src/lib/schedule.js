@@ -382,6 +382,14 @@ export function computeCashFlows(state, adminParams, schedule, terms, recommende
   const baseMaint = adminParams.preventiveMaintenancePerVisit
                   + adminParams.preventiveMaintenancePerPanel * panelCount;
   const baseSavings = monthlyDuSavings * 12;
+  // v3-181 — DU tariff inflation (Solviva_Calc_v_B_5_3.xlsm CALCULATOR!AF53).
+  // Customer-set in Step 4 / the mobile returns view, seeded from the FinCo
+  // param `duRateInflationDefault`. Clamped HERE as well as at both input
+  // sites: this is the engine's own floor, so a hand-edited sessionStorage
+  // record or a stale blob cannot drive a negative rate into the compounding.
+  // 0 reproduces every pre-v3-181 figure exactly — see smoke Group 8.
+  const duRateInflation = Math.min(0.10, Math.max(0,
+    Number.isFinite(state.duRateInflation) ? state.duRateInflation : 0));
   const cashflows = [];
 
   for (let i = 0; i < NUM_YEARS; i++) {
@@ -397,9 +405,19 @@ export function computeCashFlows(state, adminParams, schedule, terms, recommende
     // Maintenance (Z): base in year 1, inflating thereafter.
     const maintCost = -baseMaint
                     * Math.pow(1 + adminParams.maintenanceInflationRate, i);
-    // DU savings (AB): base in year 1, degrading thereafter.
+    // DU savings (AB): base in year 1; thereafter EACH year multiplies the
+    // previous by (1 - degradation) x (1 + duRateInflation), which is
+    // Schedule!AB9:AB37 of v_B_5_3 verbatim:
+    //     AB(n) = AB(n-1) * (1 - ENGINEERING!B61) * (1 + CALCULATOR!AF53)
+    // Year 1 (AB8 = J45*12) carries NO inflation — the rate compounds from
+    // year 2, exactly as degradation does. Written as a closed-form power of
+    // the COMBINED factor rather than two separate powers: the workbook
+    // compounds them together inside one multiplication, and (1-d)^i (1+f)^i
+    // is identically ((1-d)(1+f))^i, so this is the same number with one
+    // rounding path instead of two.
     const duSavings = baseSavings
-                    * Math.pow(1 - adminParams.panelAnnualDegradation, i);
+                    * Math.pow((1 - adminParams.panelAnnualDegradation)
+                               * (1 + duRateInflation), i);
     const totalCost = invPmts + maintCost;
     const netCf = totalCost + duSavings;
     cashflows.push({ year: i + 1, invPmts, maintCost, totalCost, duSavings, netCf });
@@ -420,8 +438,20 @@ export function computeCashFlows(state, adminParams, schedule, terms, recommende
   // it equals -(dpTotalCharge + monthlyPmt * tenor) = -(AH35 in Excel).
   // We compute it identically by summing the cashflow `invPmts` column.
   const totalInvPmts = cashflows.reduce((s, cf) => s + cf.invPmts, 0);  // matches Y6 (NEGATIVE)
+  // v3-181 — v_B_5_3 changed X3's rate argument from `ENGINEERING!B61/12` to
+  //     (1 - (1 - ENGINEERING!$B$61) * (1 + CALCULATOR!$AF$53)) / 12
+  // X3 does not decay the payment stream; it holds J45 flat and uses the rate
+  // argument to GROW the balance, so that argument IS the annual net decay.
+  // Net decay = 1 - (1-degradation)(1+inflation), i.e. the same combined factor
+  // the AB column compounds — NOT (degradation - inflation), which would treat
+  // the two as additive and drift from the column at higher rates.
+  // At inflation 0 this collapses to `panelAnnualDegradation / 12` exactly, so
+  // the payback of every existing quote is unchanged (gate 8.4 pins 92 months
+  // on the workbook fixture).
+  const paybackNetDecay =
+    1 - (1 - adminParams.panelAnnualDegradation) * (1 + duRateInflation);
   const paybackMonths = Math.round(NPER(
-    adminParams.panelAnnualDegradation / 12,
+    paybackNetDecay / 12,              // annual net decay, monthly
     monthlyDuSavings,                  // pmt = monthly savings (positive)
     totalInvPmts,                      // pv  = total inv pmts (negative)
     0,
@@ -483,6 +513,11 @@ export function computeCashFlows(state, adminParams, schedule, terms, recommende
     paybackLabel,
     irr,
     lcoe,
+    // v3-181 — J45 itself. Step 4 and the mobile view render it as "Estimated
+    // Savings per Month"; it is the UNINFLATED base month (AB8 / 12), since
+    // the rate compounds only from year 2.
+    monthlyDuSavings,
+    duRateInflation,
     totalDuSavings,
   };
 }

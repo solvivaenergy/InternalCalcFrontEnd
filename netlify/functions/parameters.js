@@ -11,7 +11,7 @@
 //
 // PUT    → updates the saved parameter overrides. Requires:
 //          • Header  x-solviva-edit-password  — the role's password
-//          • Header  x-solviva-role           — 'edit' | 'engineering' | 'product'
+//          • Header  x-solviva-role           — 'edit' | 'engineering' | 'product' | 'finco'
 //
 //          The supplied password is matched against the corresponding env var
 //          for the claimed role. After authentication, the request body's
@@ -24,11 +24,23 @@
 //            'edit'         → VITE_SUPERADMIN_PASSWORD         → all fields
 //            'engineering'  → VITE_ENGINEERING_PASSWORD  → see ALLOWLIST below
 //            'product'      → VITE_PRODUCT_PASSWORD      → see ALLOWLIST below
+//            'finco'        → VITE_FINCO_PASSWORD        → financingTerms + interestRates
+//                             (v3-180 — FinCo/OpCo entity separation)
 //
 // Storage:
 //   Netlify Blobs key-value store, store name "solviva-config",
 //   key "parameters". Persists across deployments and is global to the site.
 //
+// v3-150 — mirrors PACKAGE_CATEGORY_IDS in src/data/adminParams.js. Netlify
+// functions cannot import from src/, so this is a hand-kept copy; it is three
+// string literals that change only if the Quote Summary grouping itself
+// changes, and the release smoke suite asserts both lists agree.
+const MISC_CATEGORY_IDS = ['solar', 'battery', 'misc'];
+
+// v3-151 — mirrors PROMO_TYPE_IDS in src/data/adminParams.js. Hand-kept for
+// the same reason as above; the release smoke suite diffs the two lists.
+const PROMO_TYPE_IDS = ['percent', 'peso'];
+
 // IMPORTANT: This file mirrors src/lib/permissions.js. Netlify functions can't
 // import from src/, so any change to the role→sections mapping must be made
 // in BOTH places. The allowlist below is the authoritative security boundary
@@ -47,7 +59,7 @@ const cors = {
 };
 
 // Roles that can carry edits. 'view' and 'none' are explicitly NOT here.
-const EDIT_ROLES = new Set(['edit', 'engineering', 'product']);
+const EDIT_ROLES = new Set(['edit', 'engineering', 'product', 'finco']);
 
 // Per-role admin-section allowlist. Mirrors src/lib/permissions.js.
 // 'edit' (Super Admin) is wildcard, handled separately.
@@ -72,11 +84,18 @@ const ROLE_ADMIN_SECTIONS = {
                         // so they never validated AND never saved. Two role maps exist;
                         // BOTH must be kept in sync, not just PARAM_KEY_TO_SECTION.
     'quoteValidity',
-    'quoteLimits',      // v3-68 — min system size / min DP / max tenor
+    'quoteLimits',      // v3-180 — minSystemKwp ONLY; min DP + max tenor left
+                        // for 'financingTerms' (FinCo) at the entity split
     'step1Defaults',    // v3-70 — default utility rate / monthly bill
-    'interestRates',
+    'step3Defaults',
     'promoCodes',
     'maintenance',
+  ]),
+  finco: new Set([
+    'financingTerms',      // v3-180 — minimum down payment tiers + maximum tenor
+    'interestRates',       // v3-180 — moved wholesale off the Product tab
+    'returnsAssumptions',  // v3-181 — DU tariff inflation default
+    'duInflationReference',// v3-183 — historical reference calculator (advisory)
   ]),
 };
 
@@ -84,6 +103,7 @@ const ROLE_INVENTORY_ACCESS = {
   // Wildcard for 'edit' handled separately.
   engineering: true,
   product: false,
+  finco: false,
 };
 
 // ADMIN_PARAMS key → section. Mirrors src/lib/permissions.js.
@@ -97,7 +117,16 @@ const PARAM_KEY_TO_SECTION = {
   grossMarginMin:                'margins',
   grossMarginMid:                'margins',
   grossMarginMax:                'margins',
-  grossMarginReference:          'margins',
+  grossMarginMinKwpTp:           'margins',   // v3-191 — three-phase curve anchors
+  grossMarginMidKwpTp:           'margins',
+  grossMarginMaxKwpTp:           'margins',
+  grossMarginMinTp:              'margins',
+  grossMarginMidTp:              'margins',
+  grossMarginMaxTp:              'margins',
+  grossMarginNoInverterSp:       'margins',   // v3-191 — panels-without-inverter margins
+  grossMarginNoInverterTp:       'margins',
+  componentMargins:              'margins',   // v3-191 — per-component margin table (B–Q)
+  grossMarginReference:          'returnsAssumptions',  // v3-190 — moved to FinCo; UI label renamed, key kept
   merchantDiscountRate:          'margins',
   rateAnchorMax:                 'interestRates',
   rateAnchorMid:                 'interestRates',
@@ -123,6 +152,7 @@ const PARAM_KEY_TO_SECTION = {
   miscCatalog:                     'miscCatalog',
   // Location / Delivery
   deliveryLocations:               'location',   // v3-116 — replaces the 4 Cebu/Siargao scalars
+  luzonFreeTravelKm:               'location',   // v3-199 — free-delivery radius
   luzonOver30FixedFeeCogs:         'location',
   luzonOver30PerKmCogs:            'location',
   // Cabling
@@ -147,8 +177,8 @@ const PARAM_KEY_TO_SECTION = {
   maxDailySpillKwh:              'scheduleConstants',   // v3-132 — Mode-1 spill tolerance
   batteryDepthOfDischarge:       'scheduleConstants',
   panelAnnualDegradation:        'scheduleConstants',
-  lcoeNpvDiscountRate:           'scheduleConstants',
-  maintenanceInflationRate:      'scheduleConstants',
+  lcoeNpvDiscountRate:           'returnsAssumptions',  // v3-190 — moved from Engineering to FinCo
+  maintenanceInflationRate:      'returnsAssumptions',  // v3-190 — moved from Engineering to FinCo
   netMeteringEfficiency:         'scheduleConstants',
   preventiveMaintenancePerPanelCogs: 'scheduleConstants',
   preventiveMaintenancePerVisitCogs: 'scheduleConstants',
@@ -159,11 +189,22 @@ const PARAM_KEY_TO_SECTION = {
   quoteValidityDays:             'quoteValidity',
   // Quote Limits (v3-68)
   minSystemKwp:                  'quoteLimits',
-  minDpTiers:                    'quoteLimits',   // v3-75 — replaces scalar minDownPaymentPct
-  maxTenorMonths:                'quoteLimits',
+  // Financing Limits (v3-180) — FinCo-owned; both were 'quoteLimits' through v3-179.
+  minDpTiers:                    'financingTerms',
+  maxTenorMonths:                'financingTerms',
+  irrYearsDefault:               'returnsAssumptions',
+  duRateInflationDefault:        'returnsAssumptions',
+  duInflationSourceName:         'duInflationReference',
+  duInflationSourceUrl:          'duInflationReference',
+  duInflationBasis:              'duInflationReference',
+  duInflationDate1:              'duInflationReference',
+  duInflationRate1:              'duInflationReference',
+  duInflationDate2:              'duInflationReference',
+  duInflationRate2:              'duInflationReference',
   // Step 1 Defaults (v3-70)
   defaultUtilityRate:            'step1Defaults',
   defaultMonthlyBill:            'step1Defaults',
+  defaultDownPaymentPct:         'step3Defaults',
   // Maintenance Mode
   gateAuthEnabled:               'maintenance',
 };
@@ -183,6 +224,7 @@ function envVarForRole(role) {
   if (role === 'edit')        return 'VITE_SUPERADMIN_PASSWORD';
   if (role === 'engineering') return 'VITE_ENGINEERING_PASSWORD';
   if (role === 'product')     return 'VITE_PRODUCT_PASSWORD';
+  if (role === 'finco')       return 'VITE_FINCO_PASSWORD';   // v3-180
   return null;
 }
 
@@ -394,6 +436,31 @@ export default async (request, context) => {
         error: 'Refusing to save: cablingTiersThreePhase cannot be empty.',
       });
     }
+    // ─── v3-174 · cabling tier MONOTONICITY (hand-mirror of calculations.js
+    // findCablingTierViolation — functions cannot import from src/; the smoke
+    // suite diffs the two). Cabling costs pct × panels × panelPrice, so no
+    // tier may price a larger system CHEAPER than the tier before it:
+    //     total[i] × minPanels[i] ≥ total[i-1] × minPanels[i-1]
+    // The Engineering console enforces the same floor per field and blocks
+    // Save; this is the backstop for a hand-crafted PUT or a client skew.
+    for (const key of ['cablingTiers', 'cablingTiersThreePhase']) {
+      const tbl = merged.adminParams?.[key];
+      if (!Array.isArray(tbl) || tbl.length === 0) continue;
+      const tierTotal = (t) => (t.dcCablePct || 0) + (t.acCablePct || 0)
+                             + (t.conduitsPct || 0) + (t.panelBoardPct || 0);
+      const sorted = [...tbl].sort((a, b) => (a.minPanels || 0) - (b.minPanels || 0));
+      for (let i = 1; i < sorted.length; i++) {
+        const prev = sorted[i - 1];
+        const required = tierTotal(prev) * (prev.minPanels || 1) / (sorted[i].minPanels || 1);
+        if (tierTotal(sorted[i]) < required - 1e-9) {
+          return json(400, {
+            error: `Refusing to save: ${key} tier at ${sorted[i].minPanels} panels prices a `
+              + `larger system cheaper cabling than the ${prev.minPanels}-panel tier before it — `
+              + `its total must be at least ${(Math.ceil(required * 10000) / 100).toFixed(2)}%.`,
+          });
+        }
+      }
+    }
     // Battery packages: at least one package must exist; calculations.js
     // assumes there's always an active package to compute costs from.
     if (Array.isArray(merged.adminParams?.batteryPackages)
@@ -404,8 +471,9 @@ export default async (request, context) => {
     }
     // v3-138 — misc catalog: 0-40 rows (an EMPTY array is valid — Step 2F then
     // offers "Other (please specify)" only); labels non-empty and unique; COGS
-    // finite and >= 0. Centavos are ACCEPTED here (Anjon's sheet carries them);
-    // only the sign and finiteness are enforced.
+    // finite. Centavos are ACCEPTED here (Anjon's sheet carries them).
+    // v3-144 — NEGATIVE COGS accepted (reversal/credit items priced
+    // sign-symmetrically by the engine); only finiteness is enforced now.
     if (merged.adminParams && Array.isArray(merged.adminParams.miscCatalog)) {
       const rows = merged.adminParams.miscCatalog;
       if (rows.length > 40) {
@@ -422,8 +490,33 @@ export default async (request, context) => {
         }
         seenMisc.add(lbl.toLowerCase());
         const v = Number(r?.cogs);
-        if (!Number.isFinite(v) || v < 0) {
+        if (!Number.isFinite(v)) {
           return json(400, { error: `Refusing to save: misc catalog item "${lbl}" has an invalid cost.` });
+        }
+        // v3-150 — Quote Summary category. ABSENT is valid and means 'misc':
+        // every row in a pre-v3-150 blob predates the field, and rejecting
+        // those would block the first post-deploy save of an otherwise
+        // untouched catalog. A PRESENT but unrecognized value is rejected —
+        // that can only come from a hand-edited blob or a client/server
+        // version skew, and silently coercing it would put a line in the
+        // wrong package subtotal with no signal that anything was wrong.
+        if (r?.category !== undefined
+            && !MISC_CATEGORY_IDS.includes(r.category)) {
+          return json(400, { error: `Refusing to save: misc catalog item "${lbl}" has an unknown Summary category "${r.category}".` });
+        }
+      }
+    }
+    // v3-151 — battery packages: the rack threshold must be a non-negative
+    // integer. 0 = this package never takes a rack; 1 = always one (the
+    // pre-v3-151 behaviour, and what an ABSENT field reads as). A fractional
+    // or negative threshold would make racksNeeded() behave unpredictably at
+    // the boundary rather than failing loudly.
+    if (merged.adminParams && Array.isArray(merged.adminParams.batteryPackages)) {
+      for (const b of merged.adminParams.batteryPackages) {
+        const lbl = String(b?.label || '').trim() || '(unnamed)';
+        if (b?.rackRequiredFromUnits !== undefined
+            && (!Number.isInteger(b.rackRequiredFromUnits) || b.rackRequiredFromUnits < 0)) {
+          return json(400, { error: `Refusing to save: battery package "${lbl}" rack threshold must be a whole number, 0 or more.` });
         }
       }
     }
@@ -487,6 +580,24 @@ export default async (request, context) => {
           return json(400, { error: `Refusing to save: duplicate promo code "${c}".` });
         }
         seen.add(c);
+        // v3-151 — type is optional and ABSENT reads as 'percent', so every
+        // code saved before this release still saves. A present-but-unknown
+        // type is rejected rather than coerced: silently reading a peso code
+        // as a percentage would turn a PHP 25,000 discount into 2,500,000%.
+        if (p?.type !== undefined && !PROMO_TYPE_IDS.includes(p.type)) {
+          return json(400, { error: `Refusing to save: promo code "${c}" has an unknown type "${p.type}".` });
+        }
+        const d = Number(p?.discount);
+        if (!Number.isFinite(d) || d < 0) {
+          return json(400, { error: `Refusing to save: promo code "${c}" has an invalid discount.` });
+        }
+        // A percentage is a FRACTION; anything above 1 is a mis-entered
+        // percentage (15 meaning 15%) that would zero out every quote it
+        // touches. Peso amounts are unbounded here — the engine clamps them
+        // to the package price at quote time.
+        if ((p?.type === undefined || p.type === 'percent') && d > 1) {
+          return json(400, { error: `Refusing to save: promo code "${c}" percentage must be a fraction between 0 and 1.` });
+        }
       }
     }
     // quoteValidityDays must be a positive integer ≥ 1. Zero, negatives, and
@@ -546,10 +657,85 @@ export default async (request, context) => {
         });
       }
     }
+    // v3-191 — the three-phase curve anchors: identical monotonicity rules to
+    // the single-phase set above, validated independently.
+    if (['grossMarginMinTp','grossMarginMidTp','grossMarginMaxTp'].some(k => k in ap_)) {
+      const q1 = ap_.grossMarginMinTp, q2 = ap_.grossMarginMidTp, q3 = ap_.grossMarginMaxTp;
+      if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 < q2 && q2 < q3)) {
+        return json(400, {
+          error: 'Refusing to save: three-phase gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.',
+        });
+      }
+    }
+    if (['grossMarginMinKwpTp','grossMarginMidKwpTp','grossMarginMaxKwpTp'].some(k => k in ap_)) {
+      const x1 = ap_.grossMarginMinKwpTp, x2 = ap_.grossMarginMidKwpTp, x3 = ap_.grossMarginMaxKwpTp;
+      if (![x1, x2, x3].every(v => Number.isFinite(v) && v > 0) || !(x1 < x2 && x2 < x3)) {
+        return json(400, {
+          error: 'Refusing to save: three-phase gross-margin capacity breakpoints must be positive, strictly increasing kWp: MinKwp < MidKwp < MaxKwp.',
+        });
+      }
+    }
+    // v3-191 — the per-phase panels-without-inverter margins. Same [0,1)
+    // fraction rule as every other margin: a value >= 1 divides by zero and
+    // blanks every panels-only price.
+    for (const k of ['grossMarginNoInverterSp', 'grossMarginNoInverterTp']) {
+      if (k in ap_) {
+        const v = ap_[k];
+        if (!Number.isFinite(v) || v < 0 || v >= 1) {
+          return json(400, {
+            error: 'Refusing to save: the panels-without-inverter margin must be a fraction between 0% and (strictly) 100% for each phase.',
+          });
+        }
+      }
+    }
+    // v3-191 — the componentMargins table (B–Q). A malformed entry doesn't
+    // degrade one number — the resolver would price an entire component group
+    // at NaN or a >=1 margin, blanking or exploding its lines on every quote.
+    // Validate shape and range on every entry present; ids beyond the known
+    // set are refused so a typo'd key can't sit silently in the blob.
+    if ('componentMargins' in ap_) {
+      const KNOWN = ['B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q'];
+      const cm = ap_.componentMargins;
+      if (!cm || typeof cm !== 'object' || Array.isArray(cm)) {
+        return json(400, { error: 'Refusing to save: componentMargins must be an object keyed by component letter (B–Q).' });
+      }
+      for (const [id, row] of Object.entries(cm)) {
+        if (!KNOWN.includes(id)) {
+          return json(400, { error: `Refusing to save: componentMargins has an unknown component id "${id}" — allowed ids are B through Q.` });
+        }
+        if (!row || typeof row !== 'object') {
+          return json(400, { error: `Refusing to save: componentMargins.${id} must be an object.` });
+        }
+        const marginOk = (v) => Number.isFinite(v) && v >= 0 && v < 1;
+        if (!marginOk(row.otherwise)) {
+          return json(400, { error: `Refusing to save: componentMargins.${id}.otherwise must be a fraction between 0% and (strictly) 100%.` });
+        }
+        if (id !== 'N') {
+          if (row.mode !== 'follow' && row.mode !== 'fixed') {
+            return json(400, { error: `Refusing to save: componentMargins.${id}.mode must be "follow" or "fixed".` });
+          }
+          if (!marginOk(row.fixed)) {
+            return json(400, { error: `Refusing to save: componentMargins.${id}.fixed must be a fraction between 0% and (strictly) 100%.` });
+          }
+        }
+      }
+    }
+    // v3-199 — the free-delivery radius: a non-positive or non-finite radius
+    // makes every Luzon quote chargeable from km 0 (or NaNs the charge), and
+    // the T&C would print the same broken number via {{LUZON_FREE_KM}}.
+    if ('luzonFreeTravelKm' in ap_) {
+      const v = ap_.luzonFreeTravelKm;
+      if (!Number.isFinite(v) || v <= 0 || v > 500) {
+        return json(400, {
+          error: 'Refusing to save: the Luzon free-delivery radius must be a positive number of kilometers (at most 500).',
+        });
+      }
+    }
     if ('grossMarginReference' in ap_) {
       const v = ap_.grossMarginReference;
       if (!Number.isFinite(v) || v < 0 || v >= 1) {
-        return json(400, { error: 'Refusing to save: reference gross margin must be a fraction between 0% and (strictly) 100%.' });
+        // v3-190 — same rule; message renamed with the param's move to FinCo.
+        return json(400, { error: 'Refusing to save: assumed gross margin for preventive maintenance must be a fraction between 0% and (strictly) 100%.' });
       }
     }
     if ('merchantDiscountRate' in ap_) {
@@ -659,6 +845,61 @@ export default async (request, context) => {
         }
       }
     }
+    // v3-181 — DU tariff inflation default. Same bounds the engine clamps to
+    // and the two input steppers enforce: 0 <= r <= 0.10, on the 0.25% grid.
+    // A value off the grid is accepted rather than rejected (an admin typing
+    // 1.3% is expressing intent, and the engine is grid-agnostic) but the
+    // BOUNDS are hard: a negative rate would compound savings downward past
+    // degradation, and an unbounded one would produce a payback of months.
+    if ('duRateInflationDefault' in (merged.adminParams || {})) {
+      const v = merged.adminParams.duRateInflationDefault;
+      if (!Number.isFinite(v) || v < 0 || v > 0.10) {
+        return json(400, {
+          error: 'Refusing to save: duRateInflationDefault must be a fraction between 0 and 0.10 (0% and 10%).',
+        });
+      }
+    }
+    // v3-187 — IRR/LCOE horizon default. MUST be one of the options the Step 4
+    // dropdown offers: a default outside that set would leave the customer
+    // looking at a horizon their own selector cannot reproduce, and the
+    // <select> would render with no matching option.
+    // This list is duplicated from src/data/adminParams.js because netlify
+    // functions cannot import from src/; check-param-sync.sh diffs the two.
+    const IRR_YEARS_OPTIONS = [10, 15, 20, 25, 30];
+    if ('irrYearsDefault' in (merged.adminParams || {})) {
+      const v = merged.adminParams.irrYearsDefault;
+      if (!IRR_YEARS_OPTIONS.includes(v)) {
+        return json(400, {
+          error: `Refusing to save: irrYearsDefault must be one of ${IRR_YEARS_OPTIONS.join(', ')}.`,
+        });
+      }
+    }
+    // v3-183 — DU inflation reference inputs. Bounds are loose by design (any
+    // published tariff point is legitimate), but the SHAPE is enforced: a
+    // malformed date or a non-positive rate would otherwise reach the customer
+    // surface, which resolves it to "no note" and silently drops the guidance.
+    for (const k of ['duInflationDate1', 'duInflationDate2']) {
+      if (k in (merged.adminParams || {})) {
+        const v = merged.adminParams[k];
+        if (v !== '' && !(typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v))) {
+          return json(400, { error: `Refusing to save: ${k} must be a YYYY-MM month, e.g. 2016-07.` });
+        }
+      }
+    }
+    for (const k of ['duInflationRate1', 'duInflationRate2']) {
+      if (k in (merged.adminParams || {})) {
+        const v = merged.adminParams[k];
+        if (v !== null && v !== '' && (!Number.isFinite(v) || v <= 0 || v > 1000)) {
+          return json(400, { error: `Refusing to save: ${k} must be a rate per kWh greater than 0.` });
+        }
+      }
+    }
+    if ('duInflationSourceUrl' in (merged.adminParams || {})) {
+      const v = merged.adminParams.duInflationSourceUrl;
+      if (v && !/^https?:\/\//i.test(String(v))) {
+        return json(400, { error: 'Refusing to save: duInflationSourceUrl must start with http:// or https://.' });
+      }
+    }
     if ('maxTenorMonths' in (merged.adminParams || {})) {
       const v = merged.adminParams.maxTenorMonths;
       if (!Number.isInteger(v) || v < 1 || v > 60) {
@@ -683,6 +924,19 @@ export default async (request, context) => {
       if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) {
         return json(400, {
           error: 'Refusing to save: defaultMonthlyBill must be a number greater than 0 (₱).',
+        });
+      }
+    }
+    // Step 3 Default (v3-159). Must sit on the 5% DP grid in [0, 1] — an
+    // off-grid default would leave Step 3A's selector with no matching
+    // option and the Mobile Flow slider between detents.
+    if ('defaultDownPaymentPct' in (merged.adminParams || {})) {
+      const v = merged.adminParams.defaultDownPaymentPct;
+      const onGrid = typeof v === 'number' && Number.isFinite(v)
+        && v >= 0 && v <= 1 && Math.abs(v * 20 - Math.round(v * 20)) < 1e-9;
+      if (!onGrid) {
+        return json(400, {
+          error: 'Refusing to save: defaultDownPaymentPct must be a fraction between 0 and 1 on the 5% grid (e.g. 0.30).',
         });
       }
     }

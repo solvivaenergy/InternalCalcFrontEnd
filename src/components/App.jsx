@@ -7,8 +7,7 @@ import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
          availableBatteryPackages, availableDeliveryLocations } from '../data/adminParams.js';
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
-         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_FREE_TRAVEL_KM } from '../config.js';
+         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS } from '../config.js';
 import {
   computeRecommendedPanels, recommendInverters, buildPackageLineItems,
   computePaymentTerms, popularTenorsTable, systemSizing,
@@ -32,11 +31,14 @@ import Calculator from './Calculator.jsx';
 import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
+import MobileFlow from './MobileFlow.jsx';
+// ── Supabase user management (this deployment's replacement for upstream
+// v3-207's shared-password AuthDialog sign-in). Identity and role come from
+// Supabase Auth + public.user_roles; the staff-key password dialog is gone.
 import Login from './Login.jsx';
 import ChangePasswordDialog from './ChangePasswordDialog.jsx';
 import ResetPassword from './ResetPassword.jsx';
 import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS } from '../lib/supabaseClient.js';
-import { visibleAdminTabs, canAccessAdminTab } from '../lib/permissions.js';
 import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
 
 // v3-70: Step 1 defaults are now Product-settable (ADMIN_PARAMS
@@ -49,6 +51,21 @@ import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
 // the shipped default" from "user typed something".
 const BUNDLED_DEFAULT_RATE = ADMIN_PARAMS.defaultUtilityRate;
 const BUNDLED_DEFAULT_BILL = ADMIN_PARAMS.defaultMonthlyBill;
+const BUNDLED_DEFAULT_DP   = ADMIN_PARAMS.defaultDownPaymentPct;  // v3-159
+// v3-188 — BUGFIX, two of them, same cause. v3-181 (duRateInflation) and v3-187
+// (irrYears) both seeded from ADMIN_PARAMS inside makeInitialState and assumed
+// the live blob was already overlaid by then. IT IS NOT: makeInitialState runs
+// in the useState initialiser on FIRST RENDER, while paramsService.load() is an
+// effect that resolves afterwards. Both therefore read the BUNDLED value and
+// ignored whatever FinCo had saved — reported by Pat for the IRR horizon
+// (set to 20, still showed 25). duRateInflation had the identical defect and
+// was merely invisible, because its seed is 0 and nobody had moved it yet.
+//
+// The v3-159 comment cited as precedent describes the OPPOSITE idiom to the one
+// assumed: capture the bundled value here, then reconcile in the boot-race snap
+// below once the fetch resolves. These two constants complete that pattern.
+const BUNDLED_DEFAULT_IRR_YEARS = ADMIN_PARAMS.irrYearsDefault;        // v3-188
+const BUNDLED_DEFAULT_DU_INFL   = ADMIN_PARAMS.duRateInflationDefault; // v3-188
 
 export function makeInitialState(kind = 'all') {
   const step1 = {
@@ -90,22 +107,32 @@ export function makeInitialState(kind = 'all') {
     rsdEnabled: false,
     rsdStandalonePanelCount: 3,
     selectedInverters: [null, null, null],
+    // v3-175 — panels-only expansion (user-directed, Pat): new panels connect
+    // to an inverter the customer already owns.
+    // v3-204 — existingPanelCount REPLACED by existingKwp (Pat: homeowners
+    // know their rated capacity; older panels had lower wattages, so a count
+    // misprices the existing side). Field RENAME = schema break: a restored
+    // session carrying the old count would merge into a state that no longer
+    // reads it and silently disarm expansion mode → STATE_RECORD_VERSION
+    // bumped 9→10 this release.
+    expansionMode: false,
+    existingKwp: null,
+    existingInverterKw: null,
     batteryKwh: null,
+    // v3-151 — the three bundled battery components the rep can drop from a
+    // quote (Step 2A checkboxes). Default INCLUDED. New booleans with a safe
+    // default, so a restored session picks them up through the
+    // {...defaults, ...rest} merge and STATE_RECORD_VERSION stays put
+    // (v3-110 precedent).
+    batteryRackIncluded: true,
+    batteryAtsIncluded: true,
+    batteryCritLoadsIncluded: true,
     // v3-54: synthetic uuid identifying the active battery package from
     // adminParams.batteryPackages[]. null = use packages[0] (customer
     // default, math-parity with v3-53). Only the rep-mode Step 2 selector
     // sets a non-null value. Falls back to first available package if the
     // chosen id is later deleted by admin.
     batteryPackageId: null,
-    // v3-143 — battery component unbundling (rep-only, Step 2B). Default true =
-    // include (byte-identical to prior behavior). A rep can drop the rack, ATS,
-    // and/or critical-loads materials from the quote when the client already
-    // owns them / supplies their own. Additive with safe defaults, so restored
-    // pre-v3-143 sessions read as "include everything" → no STATE_RECORD_VERSION
-    // bump. Only affect line-item emission — never the recommendation/sizing.
-    batteryIncludeRack: true,
-    batteryIncludeAts: true,
-    batteryIncludeCriticalLoads: true,
     netMeteringEnabled: false,
     // Roof Material (v3 — Excel CALCULATOR M36):
     //   'metal'    → ₱0 charge (no roof prep needed) — DEFAULT
@@ -113,7 +140,7 @@ export function makeInitialState(kind = 'all') {
     //   'concrete' → ₱17,000/kWp
     roofMaterial: 'metal',
     // Location (v3 — Excel CALCULATOR M37 + Y39):
-    //   'luzon'   → free if locationKm ≤ LUZON_FREE_TRAVEL_KM, else fixed + per-km — DEFAULT
+    //   'luzon'   → free if locationKm ≤ adminParams.luzonFreeTravelKm (v3-199), else fixed + per-km — DEFAULT
     //   'cebu'    → fixed + per-panel
     //   'siargao' → fixed + per-panel
     location: 'luzon',
@@ -136,9 +163,14 @@ export function makeInitialState(kind = 'all') {
     // restored from a pre-v3-138 session has no catalogId at all, which reads
     // as free-form and keeps its typed description + price — so this is NOT a
     // sessionStorage schema break and STATE_RECORD_VERSION stays put.
-    miscMaterials: [
-      { catalogId: 'other', description: '', count: 1, unitPrice: 0 },
-    ],
+    // v3-149 — was a single blank 'other' row. 2F is optional and now starts
+    // EMPTY: the rep sees only the "+ Add line item" button until they choose
+    // to add something. An empty array is a valid value of the existing
+    // variable-length schema (same rationale as the v3-74 five-rows-to-one
+    // change), so STATE_RECORD_VERSION is unchanged and a session restored
+    // from an older build keeps whatever rows it was carrying — those rows are
+    // now individually removable.
+    miscMaterials: [],
   };
   const step3 = {
     // v3-32: defaults flipped from {tenor: 60, downPaymentPct: 0.10}
@@ -154,13 +186,33 @@ export function makeInitialState(kind = 'all') {
     // (v5.1 "Direct Purch"); the default customer scenario is STILL a
     // Direct Purchase — only its encoding changed. Tenor 1 is now a real
     // interest-bearing 1-month term.
-    tenor: 0, downPaymentPct: 0.50,
+    // v3-159: the DP default is Product-settable (ADMIN_PARAMS
+    // .defaultDownPaymentPct, shipped at 0.30 — supersedes the v3-32
+    // hardcoded 0.50). Read LIVE for the same reason as the Step 1
+    // defaults: Reset after boot uses the server value. If a quote's
+    // minDpTiers floor exceeds it, the Step-3/Mobile clamp effects snap
+    // the session up — the default never undercuts a tier minimum.
+    // NO STATE_RECORD_VERSION bump: a defaults change is not a schema
+    // change (locked rule); restored v3-158 sessions keep their 0.50.
+    tenor: 0, downPaymentPct: ADMIN_PARAMS.defaultDownPaymentPct,
     promoCode: '',
   };
   if (kind === 'step1') return step1;
   if (kind === 'step2') return step2;
   if (kind === 'step3') return step3;
-  return { ...step1, ...step2, ...step3, irrYears: 25 };
+  // v3-181 — duRateInflation seeds from the FinCo default (ADMIN_PARAMS is
+  // already overlaid with the live blob by the time makeInitialState runs, the
+  // defaultDownPaymentPct idiom from v3-159). A customer's own adjustment then
+  // rides in state for the session; Reset returns it to the FinCo default.
+  return {
+    ...step1, ...step2, ...step3,
+    // v3-187 — seeded from the FinCo default rather than hardcoded. The
+    // customer can still change it in Step 4; a restored session keeps
+    // whatever THEY chose. No STATE_RECORD_VERSION bump: irrYears has been in
+    // the record since v1 and only its starting value moves.
+    irrYears: ADMIN_PARAMS.irrYearsDefault ?? 25,
+    duRateInflation: ADMIN_PARAMS.duRateInflationDefault ?? 0,
+  };
 }
 
 // ─── sessionStorage persistence keys & schema sentinel ────────────────────────
@@ -170,6 +222,46 @@ export function makeInitialState(kind = 'all') {
 const CONTACT_STORAGE_KEY = 'solviva_contact';
 const STATE_STORAGE_KEY   = 'solviva_state';
 const GENERATED_DATE_KEY  = 'solviva_generated_date';
+// v3-203 — the four admin tab ids, valid as activeTab values only while
+// adminAccess !== 'none'. Shared by App (content mount, bounce effect,
+// LiveTotalBar suppression) and Tabs (strip composition). Order here IS the
+// strip order after the divider.
+const ADMIN_TAB_IDS = ['inventory', 'engineering', 'product', 'finco'];
+// Labels for the admin half of the v3-203 tab strip. Order here IS the strip
+// order. EVERY admin tier sees all four (v3-203 D2) — the read/write split is
+// per-section inside each tab, not per-tab.
+const ADMIN_TAB_META = [
+  { id: 'inventory',   label: 'Inventory',   admin: true },
+  { id: 'engineering', label: 'Engineering', admin: true },
+  { id: 'product',     label: 'Product',     admin: true },
+  { id: 'finco',       label: 'FinCo',       admin: true },
+];
+
+// v3-203 — Staff Sign-in key glyph (approved option E): the Solviva radiant
+// sun simplified to eight rays as the key head (the logo's twelve V-chevrons
+// don't survive 12px rendering), open center per the logo, toothed shaft, no
+// closed bow. Hand-authored inline SVG — deliberately NOT the logo PNG, so
+// it inherits currentColor like the other header stroke icons. Brand mark on
+// a public surface → in Lili's v3-203 review bundle.
+function StaffKeyIcon({ height = 13 }) {
+  const width = Math.round(height * 48 / 30);
+  return (
+    <svg width={width} height={height} viewBox="0 0 48 30" fill="none"
+         stroke="currentColor" strokeWidth="2.6"
+         strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="22" y1="15" x2="26.5" y2="15" />
+      <line x1="19.66" y1="20.66" x2="22.84" y2="23.84" />
+      <line x1="14" y1="23" x2="14" y2="27.5" />
+      <line x1="8.34" y1="20.66" x2="5.16" y2="23.84" />
+      <line x1="6" y1="15" x2="1.5" y2="15" />
+      <line x1="8.34" y1="9.34" x2="5.16" y2="6.16" />
+      <line x1="14" y1="7" x2="14" y2="2.5" />
+      <line x1="19.66" y1="9.34" x2="22.84" y2="6.16" />
+      <path d="M29 15h17m-5 0v5m-5-5v4" />
+    </svg>
+  );
+}
+
 // `solviva_mode` is sessionStorage-persisted so a rep who reloads stays in
 // rep mode, but a tab/browser close drops them back to customer mode (right
 // default for shared-laptop scenarios). Schema-versioned for forward-compat.
@@ -210,7 +302,16 @@ const CONTACT_RECORD_VERSION = 2;   // v3-61: added installAddress
 // most common saved scenario into a ~17–22% 1-month loan; the version wipe
 // returns them to the new defaults (tenor 0 — the same Direct Purchase
 // intent, correctly encoded).
-const STATE_RECORD_VERSION   = 8;
+// v3-181 — 8 -> 9. A GENUINE schema change, unlike v3-151/v3-159: the record
+// gains `duRateInflation`, a customer-set field that CHANGES THE RETURNS SHOWN.
+// A restored v8 session has no such key, and the `{...defaults, ...rest}` merge
+// would leave the new default in place — harmless today, since the seed is 0
+// and 0 reproduces v3-180 exactly. The bump is nonetheless correct and
+// deliberate: the moment FinCo raises the default above 0, a v8 session
+// restored WITHOUT the wipe would show returns computed at one rate beside a
+// note describing another. Bumping now costs one reset; not bumping costs a
+// silent contradiction on a customer's screen later.
+const STATE_RECORD_VERSION   = 10;  // v3-204: existingPanelCount → existingKwp rename
 
 // ─── PDF proposal requirements (v3-61) ───────────────────────────────────────
 // The PDF proposal is rep-mode-only and prints both parties' details plus an
@@ -231,10 +332,11 @@ function pdfDetailsComplete(contact, agent) {
 }
 
 // ─── Auth wrapper (default export) ────────────────────────────────────────────
-// The landing page is now a Supabase login form. Until a session exists we
-// render <Login/>. Once authenticated we read the user's role from
-// public.user_roles and hand it to CalculatorApp, which routes admin roles to
-// the AdminShell editor and rep/customer roles to the Calculator.
+// THIS DEPLOYMENT DIVERGES FROM UPSTREAM v3-207 HERE, and only here.
+// Upstream gates staff access behind a shared-password AuthDialog (the "staff
+// key"). This build uses Supabase instead: the landing page is a login form,
+// and once a session exists the user's role comes from public.user_roles.
+// Everything below the wrapper — every v3-143…v3-207 feature — is unchanged.
 export default function App() {
   // session: undefined = still checking; null = signed out; object = signed in
   const [session, setSession] = useState(undefined);
@@ -321,19 +423,12 @@ function BootSplash() {
 }
 
 function CalculatorApp({ role, repIdentity, onSignOut }) {
-  // Role → calculator routing. Admin-tier roles land in the AdminShell editor
-  // (accessLevel maps DB 'admin' → the calculator's internal 'edit' Super
-  // Admin level); 'rep' opens the full sales-rep calculator; everyone else
-  // (incl. 'customer') gets the simplified customer calculator.
+  // Role → access routing. ADMIN_ROLE_TO_ACCESS maps the DB role ('admin',
+  // 'engineering', 'product', 'inventory', 'finco') onto the calculator's
+  // internal access levels; 'rep' opens the full sales-rep calculator and
+  // everyone else gets the customer view.
   const initialAdminAccess = ADMIN_ROLE_TO_ACCESS[role] || 'none';
   const isAdminRole = initialAdminAccess !== 'none';
-  const initialAdminPage = isAdminRole
-    ? (role === 'product' ? 'product'
-       : role === 'engineering' ? 'engineering'
-       : 'inventory')
-    : null;
-  const initialMode = role === 'rep' ? 'rep' : 'customer';
-
   // Customer contact — persisted to sessionStorage so a page reload preserves
   // it (the customer skips re-entering their details), but a browser close
   // clears it (so a shared device doesn't leak the previous customer's info
@@ -390,9 +485,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // the same browser session but is cleared automatically when the tab/
     // browser closes — handles the shared-laptop case where one agent's
     // info shouldn't carry into another agent's later session.
+    // DEPLOYMENT DIVERGENCE: record version 3 (upstream ships 2). When a sales
+    // rep is signed in, their own name/email/mobile become the default agent
+    // identity, pulled from their Supabase account rather than typed in. The
+    // stored record also carries the rep's uid so one rep's edits never leak
+    // into another rep's session on a shared device.
     const AGENT_RECORD_VERSION = 3;
-    // When a sales rep is signed in, their own name/email/mobile become the
-    // default agent identity (pulled from their account, no manual entry).
     const repDefault = repIdentity
       ? {
           name:  repIdentity.name || '',
@@ -409,14 +507,13 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       if (saved) {
         const parsed = JSON.parse(saved);
         // Reuse a saved record only when it matches the current format AND the
-        // signed-in rep (uid) — so one rep's edits never leak into another
-        // rep's session on a shared device. For non-rep views (no repIdentity)
-        // any current-format record is fine.
+        // signed-in rep (uid). For non-rep views (no repIdentity) any
+        // current-format record is fine.
         const sameUser = !repIdentity || parsed.uid === repIdentity.uid;
         if (parsed._v === AGENT_RECORD_VERSION && sameUser) {
-          // Use saved values as-stored; do NOT use `||` fallback to defaults,
-          // because that would resurrect old defaults whenever the agent
-          // intentionally clears a field.
+          // Use saved values as-stored; do NOT use `||` fallback to AGENT
+          // defaults, because that would resurrect old defaults whenever
+          // the agent intentionally clears a field.
           return {
             name:  parsed.name  ?? repDefault.name,
             email: parsed.email ?? repDefault.email,
@@ -474,6 +571,24 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         if (s.monthlyBill === BUNDLED_DEFAULT_BILL
             && ADMIN_PARAMS.defaultMonthlyBill !== BUNDLED_DEFAULT_BILL) {
           patch.monthlyBill = ADMIN_PARAMS.defaultMonthlyBill;
+        }
+        // v3-159 — same snap for the Step 3 DP default.
+        if (s.downPaymentPct === BUNDLED_DEFAULT_DP
+            && ADMIN_PARAMS.defaultDownPaymentPct !== BUNDLED_DEFAULT_DP) {
+          patch.downPaymentPct = ADMIN_PARAMS.defaultDownPaymentPct;
+        }
+        // v3-188 — the two FinCo-owned defaults need the same snap. Without it
+        // makeInitialState's seed is permanently the bundled value and the
+        // FinCo setting never reaches a customer. Same "untouched field only"
+        // rule: a session already holding something else — a restored session,
+        // or a customer who has moved the control — is left alone.
+        if (s.irrYears === BUNDLED_DEFAULT_IRR_YEARS
+            && ADMIN_PARAMS.irrYearsDefault !== BUNDLED_DEFAULT_IRR_YEARS) {
+          patch.irrYears = ADMIN_PARAMS.irrYearsDefault;
+        }
+        if (s.duRateInflation === BUNDLED_DEFAULT_DU_INFL
+            && ADMIN_PARAMS.duRateInflationDefault !== BUNDLED_DEFAULT_DU_INFL) {
+          patch.duRateInflation = ADMIN_PARAMS.duRateInflationDefault;
         }
         return Object.keys(patch).length ? { ...s, ...patch } : s;
       });
@@ -563,15 +678,48 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // show the component-price breakdown (user directive). Not persisted:
   // resets on reload, privacy-conservative.
   const [summaryPricesShown, setSummaryPricesShown] = useState(false);
+  // v3-177 — financing-detail reveal on the Summary tab (EIR row + column,
+  // Post-Install Balance row, TOTAL AMOUNT DUE row + column). Same four admin
+  // passwords, same lifted-state reason: Generate PDF FORCES it hidden for the
+  // snapshot, so a proposal can never carry the financed total or the EIR
+  // whatever an admin has toggled on screen. Not persisted — resets on reload.
+  const [summaryFinancingShown, setSummaryFinancingShown] = useState(false);
+  // v3-203 — adminPage is GONE. The four admin surfaces are now tabs inside
+  // the ONE tab strip (activeTab ∈ calculator/summary/schedule/inventory/
+  // engineering/product/finco); adminAccess !== 'none' is what reveals the
+  // admin group.
+  //
+  // DEPLOYMENT DIVERGENCE: upstream seeds this to 'none' and raises it when a
+  // staff password is accepted. Here the Supabase role decides it at sign-in,
+  // so it is seeded from the role and never re-entered in-app. Sign-out (not a
+  // password prompt) is the way out.
   const [adminAccess, setAdminAccess] = useState(initialAdminAccess);
-  const [adminPage, setAdminPage] = useState(initialAdminPage);
 
   // ─── Mode: 'customer' (default, simplified public view) | 'rep' (full sales-
-  //     rep view with all overrides). Initialised from the authenticated
-  //     user's role (rep → 'rep', everyone else → 'customer'). A rep can still
-  //     drop to the customer view via the header pill; that choice is
-  //     persisted to sessionStorage for the tab's lifetime.
-  const [mode, setMode] = useState(initialMode);
+  //     rep view with all overrides). Persisted to sessionStorage so a reload
+  //     keeps a rep in rep mode; tab close clears it (shared-laptop safe).
+  //
+  // The rep-mode lock lives in the footer (separate from the Admin entry).
+  // When a user clicks it, we open AuthDialog in rep-only mode; on success
+  // we flip to 'rep' and persist. The header shows a small "Rep mode" pill
+  // with a "Lock" button to return to customer mode.
+  // DEPLOYMENT DIVERGENCE: a signed-in rep or admin starts in 'rep' (the full
+  // view) because Supabase already established who they are — upstream had to
+  // wait for a password. A signed-in staff user can still drop to the customer
+  // view via the header pill's Lock, and that choice persists in
+  // sessionStorage exactly as upstream.
+  const [mode, setMode] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem(MODE_STORAGE_KEY);
+      if (!raw) return (role === 'rep' || isAdminRole) ? 'rep' : 'customer';
+      const parsed = JSON.parse(raw);
+      if (parsed._v !== MODE_RECORD_VERSION) {
+        sessionStorage.removeItem(MODE_STORAGE_KEY);
+        return (role === 'rep' || isAdminRole) ? 'rep' : 'customer';
+      }
+      return parsed.mode === 'rep' ? 'rep' : 'customer';
+    } catch (_) { return (role === 'rep' || isAdminRole) ? 'rep' : 'customer'; }
+  });
   // Persist mode through every change. 'customer' is the default so we clear
   // the key entirely rather than write the default value — keeps storage clean.
   const updateMode = (next) => {
@@ -586,6 +734,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       }
     } catch (_) { /* ignore */ }
   };
+
+  // v3-203 — unified Staff Sign-in dialog visibility. Opens from the sun-key
+  // glyph (header, footer, and the maintenance gate's fixed corner). One
+  // dialog for every tier: rep/maintenance passwords flip mode to 'rep';
+  // admin passwords flip mode to 'rep' AND set adminAccess to their level
+  // (Pat's ruling: Audit included — every staff tier sees all seven tabs).
 
   // Lock-confirm dialog visibility — opens when a rep clicks the "Lock"
   // button on the rep-mode pill in the header. On confirm, we reset the
@@ -606,9 +760,40 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // enters a password (the readGatePass() check would still return false
   // on the same render that called writeGatePass without this).
   const [gateUnlocked, setGateUnlocked] = useState(false);
+
+  // ─── Mobile Flow detection (v3-157) ────────────────────────────────────────
+  // The phone-first public view activates when BOTH hold:
+  //   1. narrow viewport (< 640px — tablets land above this and keep the
+  //      full UI, user decision 2) AND a coarse primary pointer (a resized
+  //      desktop window keeps the full UI), OR the ?view=mobile QA override
+  //      (user decision 3 — lets desktop reviewers walk the flow).
+  //   2. mode === 'customer' — an authenticated rep keeps the full UI even
+  //      on a phone (user decision 1); the check lives at the render site.
+  // Width half re-evaluates on resize/orientation; the pointer media query
+  // and the query param are stable for the life of the page.
+  const detectPhoneViewport = () => {
+    if (typeof window === 'undefined') return false;
+    try {
+      if (new URLSearchParams(window.location.search).get('view') === 'mobile') return true;
+    } catch (_) { /* fine */ }
+    const coarse = typeof window.matchMedia === 'function'
+      && window.matchMedia('(pointer: coarse)').matches;
+    return coarse && window.innerWidth < 640;
+  };
+  const [phoneViewport, setPhoneViewport] = useState(detectPhoneViewport);
+  useEffect(() => {
+    const onResize = () => setPhoneViewport(detectPhoneViewport());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
   const handleLockConfirm = () => {
     setState(makeInitialState('all'));   // wipe Steps 1-4 to defaults
     updateMode('customer');               // flip mode (clears solviva_mode in storage)
+    setAdminAccess('none');               // v3-203 — locking drops admin access too
     setLockConfirmOpen(false);
   };
 
@@ -706,14 +891,21 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       // v3-117 — force the component-price reveal OFF for the snapshot: the
       // PDF never shows the per-line price breakdown, whatever an admin has
       // toggled on screen. Restored with the other state after capture.
+      // v3-177 — the financing-detail reveal is force-hidden for the snapshot
+      // for the same reason: page 4 must match the customer-facing Summary, so
+      // the EIR and TOTAL AMOUNT DUE can never reach a proposal through an
+      // admin who happened to be unlocked on screen.
       const originalPricesShown = summaryPricesShown;
+      const originalFinancingShown = summaryFinancingShown;
       setSummaryPricesShown(false);
+      setSummaryFinancingShown(false);
       setActiveTab('summary');
       await sleep(450);
       const summaryPng = await captureByAttr('summary');
 
       // Step 7: Restore
       setSummaryPricesShown(originalPricesShown);
+      setSummaryFinancingShown(originalFinancingShown);
       setActiveTab(originalTab);
 
       // Step 8: Build PDF
@@ -831,12 +1023,22 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // own `available` field is stale; match by ratedKw against the LIVE
     // in-stock list instead, and fall back to the slot's recommendation.
     const inStockKw = new Set(availableInverters(phase).map(i => i.ratedKw));
-    const effectiveInverters = state.selectedInverters.map((sel, i) => {
-      const chosen = sel ?? recInverters[i] ?? null;
-      return (chosen && !inStockKw.has(chosen.ratedKw))
-        ? (recInverters[i] ?? null)
-        : chosen;
-    });
+    // v3-175 — a panels-only EXPANSION order carries no inverter at all: the
+    // three slots are forced empty regardless of any earlier pick, so the
+    // quote can never price an inverter the customer told us they don't need.
+    // This is a FLAG, not a per-slot null — null already means "use the
+    // recommendation" (the fallback below), which is precisely why "— None —"
+    // in the 2C dropdown could never zero a slot before this release.
+    const expansionActive = !!state.expansionMode
+      && (state.existingKwp || 0) > 0 && panelCount > 0;
+    const effectiveInverters = expansionActive
+      ? [null, null, null]
+      : state.selectedInverters.map((sel, i) => {
+          const chosen = sel ?? recInverters[i] ?? null;
+          return (chosen && !inStockKw.has(chosen.ratedKw))
+            ? (recInverters[i] ?? null)
+            : chosen;
+        });
     const sizing = systemSizing(panelCount, recommended.panelWatts, effectiveInverters, phase);
     const recommendedObj = { ...recommended, systemKwp, recommendedPanelCount: recPanelCount };
     const stateForBattRec = { ...inputs, panelCount, selectedInverters: effectiveInverters, batteryKwh: 0 };
@@ -967,7 +1169,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     const annex = buildAnnex(fullState, ADMIN_PARAMS, terms, installDate);
     return {
       recommended, recPanelCount, panelCount, systemKwp,
-      recInverters, effectiveInverters, sizing,
+      recInverters, effectiveInverters, sizing, expansionActive,
       recBatteryKwh, batteryKwh, activeBatteryPackage,
       autoBatteryPackage, activeRecBatteryKwh,
       // v3-110 — the Step 2A objective + the sweep's feasibility verdict
@@ -1000,12 +1202,22 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // v3-117 — Summary + Schedule are PUBLIC (user decision 1): the
   // customer-mode trigger is gone; only the negativeBalance bounce remains
   // (the tabs still hide when the math would render nonsense).
+  // v3-203 — a THIRD trigger: the four admin tab ids are valid activeTab
+  // values only while adminAccess !== 'none'. If access drops while an admin
+  // tab is showing (admin Sign out, or the header Lock), land on Calculator.
   useEffect(() => {
     if (model.terms.negativeBalance &&
         (activeTab === 'summary' || activeTab === 'schedule')) {
       setActiveTab('calculator');
     }
-  }, [activeTab, model.terms.negativeBalance]);
+    // Bounce off the admin tabs only when the user holds no admin access at
+    // all. Per-tab gating is deliberately absent (v3-203 D2): every admin tier
+    // may OPEN every admin tab; what differs is whether its sections are
+    // editable or read-only.
+    if (adminAccess === 'none' && ADMIN_TAB_IDS.includes(activeTab)) {
+      setActiveTab('calculator');
+    }
+  }, [activeTab, model.terms.negativeBalance, adminAccess]);
 
   const resetStep1 = () => setState(s => ({ ...s, ...makeInitialState('step1') }));
   const resetStep2 = () => setState(s => ({ ...s, ...makeInitialState('step2') }));
@@ -1015,9 +1227,21 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   const today = new Date();
   const quoteExpired = today > validUntil;
 
-  // Admin entry is now driven by the authenticated role (see CalculatorApp
-  // routing above), not by an in-app password dialog. handleAdminLogout signs
-  // the user out entirely and returns them to the login page.
+  // v3-203 — one sign-in path for every staff tier (D1). v3-205 remade it
+  // as a VIEW SWITCHER (Pat): the key is always visible and whichever
+  // password is submitted is the view you get. 'rep' also CLEARS admin
+  // access — entering the rep password from an admin view is the
+  // return-to-rep-view path with all calculator inputs intact.
+  // v3-207 — the v3-205 empty-submit → public exit is REMOVED (Pat): the
+  // retained "Go back to Public View" pill is the sole public exit, so the
+  // key switches between staff views only and the dialog never reports
+  // 'public'. Admin "Sign out" (AdminShell) still drops admin access and
+  // keeps rep mode; the bounce effect walks the user off a hidden admin tab.
+  // DEPLOYMENT DIVERGENCE: upstream's staff-key password dialog
+  // (handleStaffKeyClick / handleStaffAuth) is removed — Supabase decides the
+  // tier at sign-in, so there is nothing to re-enter. AdminShell's "Sign out"
+  // therefore signs the user out of Supabase entirely rather than merely
+  // dropping adminAccess in memory.
   const handleAdminLogout = () => { onSignOut(); };
 
   // Show a brief loading screen while parameters fetch on first load.
@@ -1038,52 +1262,10 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     );
   }
 
-  // Admin-tier roles are routed straight into the AdminShell editor by the
-  // authenticated role (no in-app password dialog). The legacy env-password
-  // AuthDialog flows (admin entry + rep unlock) have been removed — Supabase
-  // auth is now the single access boundary.
-  if (adminPage && adminAccess !== 'none') {
-    // v3-54: 3-tab admin (inventory / engineering / product) with
-    // MaintenanceModeBlock rendered above the tabs (always visible).
-    // v3-143: tabs are role-gated. Clamp the requested tab to one the role may
-    // see — an out-of-scope adminPage (e.g. a stale 'product' for an
-    // Engineering user) falls back to the role's first visible tab.
-    const allowedTabs = visibleAdminTabs(adminAccess);
-    const requestedTab =
-      adminPage === 'inventory' ? 'inventory' :
-      adminPage === 'engineering' ? 'engineering' :
-      adminPage === 'product' ? 'product' :
-      null;
-    const normalizedTab =
-      requestedTab && allowedTabs.includes(requestedTab)
-        ? requestedTab
-        : (allowedTabs[0] || 'engineering');
-    return (
-      <div style={styles.app}>
-        <Header brand={BRAND} contact={contact} setContact={setContact}
-                agent={agent} updateAgent={updateAgent}
-                generatedDate={generatedDate} validUntil={validUntil}
-                quoteExpired={quoteExpired}
-                editing={editingContacts} setEditing={setEditingContacts}
-                onSignOut={onSignOut} leadState={state} leadModel={model} />
-        <main className="app-main" style={styles.main}>
-          <MaintenanceModeBlock
-            accessLevel={adminAccess}
-            savingDisabled={!paramsLoadedFromServer}
-          />
-          <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} accessLevel={adminAccess} />
-          <AdminShell
-            tab={normalizedTab}
-            accessLevel={adminAccess}
-            onLogout={handleAdminLogout}
-            savingDisabled={!paramsLoadedFromServer}
-          />
-          <AdminTabs activeTab={normalizedTab} setActiveTab={setAdminPage} accessLevel={adminAccess} position="bottom" />
-        </main>
-        <Footer brand={BRAND} />
-      </div>
-    );
-  }
+  // DEPLOYMENT DIVERGENCE: upstream v3-203's unified staff sign-in dialog is
+  // removed here — <Login /> in the auth wrapper above is the single sign-in
+  // surface, and admin content still renders as tabs inside the main layout
+  // (v3-203 D2/D3), so Calculator / Summary / Schedule stay visible throughout.
 
   // Maintenance-mode gate (v3-51). Three-signal activation, same as v3-50
   // ContactGate's passwordRequired derivation:
@@ -1095,10 +1277,17 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // is off. The Header's "Edit contact details" button stays available so
   // a rep can capture customer info later if needed (defaults to empty).
   // gateUnlocked state is declared at the top of App alongside other hooks.
+  // v3-203 — adminAccess bypass: the old admin branch rendered BEFORE this
+  // gate, so an authenticated admin always reached the admin pages during
+  // maintenance. Same reach now that admin lives inside the main layout.
+  // No security delta: every admin password is already in the gate's own
+  // accept set. Plain rep mode does NOT bypass (unchanged — reps unlock the
+  // gate itself, which takes the same passwords).
   const passwordRequired = !!AUTH.testingPassword
                         && (ADMIN_PARAMS.gateAuthEnabled ?? true)
                         && !readGatePass()
-                        && !gateUnlocked;
+                        && !gateUnlocked
+                        && adminAccess === 'none';
   if (passwordRequired) {
     return (
       <>
@@ -1112,6 +1301,24 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     );
   }
 
+  // ─── Mobile Flow (v3-157) — the phone-first public view ────────────────────
+  // Customer mode only: an authenticated rep keeps the full UI on any device
+  // (user decision 1). Sits AFTER the maintenance gate and admin routes so
+  // both still apply on phones, and after the staffAuthOpen early return so
+  // the flow's "Sales rep? Sign in" link opens the same AuthDialog.
+  if (mode === 'customer' && phoneViewport) {
+    return (
+      <MobileFlow
+        state={state}
+        updateState={updateState}
+        model={model}
+        adminParams={ADMIN_PARAMS}
+        contact={contact}
+        setContact={setContact}
+      />
+    );
+  }
+
   return (
     <div style={styles.app}>
       <Header brand={BRAND} contact={contact} setContact={setContact}
@@ -1120,11 +1327,13 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               quoteExpired={quoteExpired}
               editing={editingContacts} setEditing={setEditingContacts}
               requireForPdf={pdfGateRequired}
-              onSignOut={onSignOut}
               mode={mode} onLockMode={() => setLockConfirmOpen(true)}
+              adminAccess={adminAccess}
+              onSignOut={onSignOut}
               leadState={state} leadModel={model} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
+            adminAccess={adminAccess}
             negativeBalance={model.terms.negativeBalance}
             onGeneratePdf={handleGeneratePdf} pdfGenerating={pdfGenerating} />
       <main className="app-main" style={styles.main}>
@@ -1146,17 +1355,42 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         )}
         {activeTab === 'summary' && !model.terms.negativeBalance && (
           <Summary state={state} model={model} adminParams={ADMIN_PARAMS}
+                   updateState={updateState}
                    contact={contact} agent={agent}
                    generatedDate={generatedDate} validUntil={validUntil}
                    pricesShown={summaryPricesShown}
-                   onPricesShown={setSummaryPricesShown} />
+                   onPricesShown={setSummaryPricesShown}
+                   financingShown={summaryFinancingShown}
+                   onFinancingShown={setSummaryFinancingShown} />
         )}
         {activeTab === 'schedule' && !model.terms.negativeBalance && (
           <Schedule model={model} state={state}
                     contact={contact} generatedDate={generatedDate} />
         )}
+        {/* v3-203 (D3) — the four admin surfaces render HERE, inside the same
+            main container as the calculator tabs, instead of the deleted
+            full-page admin branch. MaintenanceModeBlock stays visible on all
+            four admin tabs (v3-54 placement, one level down). AdminShell
+            props carried over unchanged, incl. the v3-178 RESOLVED panel
+            count (model.panelCount, never state.panelCount). */}
+        {adminAccess !== 'none' && ADMIN_TAB_IDS.includes(activeTab) && (
+          <>
+            <MaintenanceModeBlock
+              accessLevel={adminAccess}
+              savingDisabled={!paramsLoadedFromServer}
+            />
+            <AdminShell
+              tab={activeTab}
+              accessLevel={adminAccess}
+              onLogout={handleAdminLogout}
+              savingDisabled={!paramsLoadedFromServer}
+              calcPanelCount={model.panelCount}
+            />
+          </>
+        )}
       </main>
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
+            adminAccess={adminAccess}
             negativeBalance={model.terms.negativeBalance}
             position="bottom" />
       {/* v3-123 — spacer keeps the tab strip + page end visible above the
@@ -1164,8 +1398,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           v3-124 — the bar now shows on ALL tabs (user-directed; was
           Calculator-only). On Summary/Schedule a tap first switches back to
           the Calculator, then scrolls to Step 3 once the anchor exists.
-          Still hidden under negativeBalance and from PDF snapshots. */}
-      {!model.terms.negativeBalance && (
+          Still hidden under negativeBalance and from PDF snapshots.
+          v3-203 — hidden on the four ADMIN tabs (parity with the deleted
+          admin branch, which never had the bar; a quote total floating over
+          parameter editors would also collide with AdminShell's own save
+          affordances). */}
+      {!model.terms.negativeBalance && !ADMIN_TAB_IDS.includes(activeTab) && (
         <>
           <div className="live-total-spacer" aria-hidden="true" />
           <LiveTotalBar
@@ -1188,13 +1426,15 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           />
         </>
       )}
-      <Footer brand={BRAND} />
+      <Footer brand={BRAND}
+              mode={mode} adminAccess={adminAccess}
+              onSignOut={onSignOut} />
       {lockConfirmOpen && (
         <ConfirmDialog
           title="Return to customer view?"
           message="This will reset the calculator (Steps 1–4) so the customer view starts from scratch. Customer contact details and agent info will be kept."
           confirmLabel="Reset & lock"
-          cancelLabel="Stay in rep mode"
+          cancelLabel="Stay in staff mode"
           onConfirm={handleLockConfirm}
           onCancel={() => setLockConfirmOpen(false)}
         />
@@ -1203,11 +1443,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   );
 }
 
-function Header({ brand, contact, setContact, agent, updateAgent,
+function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
                   generatedDate, validUntil, quoteExpired,
-                  editing, setEditing, requireForPdf, onAgentClick,
-                  mode, onLockMode, onRepLockClick, onSignOut, leadState, leadModel }) {
+                  editing, setEditing, requireForPdf,
+                  mode, onLockMode, onSignOut, leadState, leadModel }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+  // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
 
   if (editing) {
@@ -1278,26 +1519,26 @@ function Header({ brand, contact, setContact, agent, updateAgent,
               Go back to Public View
             </button>
           )}
-          {/* Rep unlock — also exposed at the top of the page so reps don't
-              have to scroll all the way down to the footer to access the
-              full calculator view. Mirrors the footer Rep button and only
-              shown in customer mode. */}
-          {mode === 'customer' && onRepLockClick && (
+          {/* DEPLOYMENT DIVERGENCE: upstream v3-203/205 put a staff-key glyph
+              here that opened the shared-password dialog. Under Supabase the
+              tier is already known, so the slot carries account controls —
+              change password and sign out — instead of a view switcher. */}
+          {onSignOut && (
             <button
-              onClick={onRepLockClick}
-              style={styles.repLockBtn}
-              className="desktop-only-admin"
-              title="Sales rep? Click to unlock the full calculator view."
-              aria-label="Sales rep access"
+              onClick={() => setShowChangePw(true)}
+              style={styles.signOutBtn}
+              title="Change password"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" strokeWidth="2"
-                   strokeLinecap="round" strokeLinejoin="round"
-                   aria-hidden="true">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-              <span>Rep</span>
+              Change password
+            </button>
+          )}
+          {onSignOut && (
+            <button
+              onClick={onSignOut}
+              style={styles.signOutBtn}
+              title="Sign out"
+            >
+              Sign out
             </button>
           )}
           <button onClick={() => setEditing(true)} style={styles.editBtn}>
@@ -1315,29 +1556,6 @@ function Header({ brand, contact, setContact, agent, updateAgent,
               <>✎ Edit contact details</>
             )}
           </button>
-          {onAgentClick && (
-            <button
-              onClick={onAgentClick}
-              style={styles.adminBtn}
-              className="desktop-only-admin"
-            >
-              Admin
-            </button>
-          )}
-          {onSignOut && (
-            <button
-              onClick={() => setShowChangePw(true)}
-              style={styles.signOutBtn}
-              title="Change password"
-            >
-              Change password
-            </button>
-          )}
-          {onSignOut && (
-            <button onClick={onSignOut} style={styles.signOutBtn} title="Sign out">
-              Sign out
-            </button>
-          )}
         </div>
       </div>
       {showChangePw && <ChangePasswordDialog onClose={() => setShowChangePw(false)} />}
@@ -1643,6 +1861,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   );
 }
 
+// v3-177 — the bar's first cell is now TOTAL PRICE, not Total Amount Due.
+// Everything below about placement, visibility and the other four cells still
+// holds; only the leading figure and its label changed.
 // v3-123 — live Total Amount Due bar (user-approved mockup + decisions A-D):
 // pinned to the BOTTOM viewport edge on the Calculator tab in BOTH modes;
 // shows the DST-inclusive summaryTotalDue ALONE (no monthly subtext); tap
@@ -1658,11 +1879,19 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
 // Step 4 displays, over the same customer-adjustable horizon. Both reprice
 // on every input change.
 function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing }) {
+  // v3-161 — FIVE live figures: IRR added between Payback and Cost/kWh,
+  // mirroring Step 4's Payback → IRR → LCOE ordering (user-directed).
   // v3-129 — FOUR live figures (user-approved mockup incl. the bold utility
   // rate): Total Amount Due · Payback Period · System Cost/kWh vs the
   // customer's OWN utility rate (1B, not hardcoded) · Savings over the
   // Step-4 horizon. 2×2 on narrow viewports via .live-total-grid CSS.
-  const total = terms.summaryTotalDue ?? terms.totalAmountDue;
+  // v3-177 — the first cell was the DST-inclusive Total Amount Due. It is now
+  // the TOTAL PRICE, reading `terms.netDirectPrice` for the same reason the
+  // Step 3E card does: netDirectPrice === totalDirect when no promo code is
+  // applied, and IS the discounted figure when one is, so user decision 1(b)
+  // needs no branch. There is no sub-line here to name a discount — the number
+  // simply moves when a code is entered, which is the correct behaviour.
+  const total = terms.netDirectPrice;
   if (!(total > 0)) return null;
   const pm = cashFlows?.paybackMonths;
   const payback = Number.isFinite(pm)
@@ -1674,6 +1903,7 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
       })()
     : '\u2014';
   const lcoe = cashFlows?.lcoe;
+  const irr = cashFlows?.irr;   // v3-161 — fifth cell, mirroring Step 4's order
   const savings = cashFlows?.totalDuSavings;
   const rate = Number(utilityRate);
   return (
@@ -1687,12 +1917,16 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
       style={styles.liveTotalBar}
     >
       <span className="live-total-cell" style={styles.liveTotalCell}>
-        <span style={styles.liveTotalLabel}>Your Total<br />Amount Due</span>
+        <span style={styles.liveTotalLabel}>Your Total<br />Price</span>
         <span style={styles.liveTotalValue}>{fmt.peso(total)}</span>
       </span>
       <span className="live-total-cell" style={styles.liveTotalCell}>
         <span style={styles.liveTotalLabel}>Your Payback<br />Period</span>
         <span style={styles.liveTotalValue}>{payback}</span>
+      </span>
+      <span className="live-total-cell" style={styles.liveTotalCell}>
+        <span style={styles.liveTotalLabel}>Your Annual<br />Return (IRR)</span>
+        <span style={styles.liveTotalValue}>{irr != null ? fmt.pct(irr, 1) : '\u2014'}</span>
       </span>
       <span className="live-total-cell" style={styles.liveTotalCell}>
         <span style={styles.liveTotalLabel}>
@@ -1715,6 +1949,7 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
 }
 
 function Tabs({ activeTab, setActiveTab, mode, position = 'top',
+                adminAccess = 'none',
                 negativeBalance, onGeneratePdf, pdfGenerating }) {
   // Summary AND Schedule tabs are rep-only — in customer mode the formal
   // line-item quote (Summary) AND the year-by-year payment schedule are both
@@ -1730,16 +1965,33 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   // negativeBalance guard hides them now. Generate PDF stays REP-ONLY
   // (user decision A) via showPdfBtn below.
   const quoteTabsAvailable = !negativeBalance;
+  // v3-203 (D2) — ONE strip for everything. The four admin tabs join the
+  // three calculator tabs (after a hairline divider) whenever ANY admin tier
+  // is signed in — deliberately not role-gated, same visibility model as the
+  // deleted AdminTabs (v3-54: every admin role sees all four tabs; the
+  // sections gate themselves read-only). Labels render in the brand gold so
+  // the settings group reads apart from the quote group at a glance.
   const tabs = [
     { id: 'calculator', label: 'Calculator' },
     ...(quoteTabsAvailable ? [
       { id: 'summary', label: 'Summary' },
       { id: 'schedule', label: 'Schedule of Payments' },
     ] : []),
+    // v3-203 (D2) — every admin tier sees ALL FOUR admin tabs; the strip is
+    // deliberately NOT role-gated (same model as the deleted AdminTabs, v3-54).
+    // Access control happens one level down: each tab renders every section,
+    // and sections outside the role's allowlist come up READ-ONLY via
+    // canEditAdminSection() / canEditInventory(). So Engineering can read the
+    // Product and FinCo tabs but not edit them, and vice versa. The backend
+    // re-enforces the same allowlist on PUT /api/parameters, so read-only here
+    // is a UI affordance over a real server-side boundary, not the boundary.
+    ...(adminAccess !== 'none' ? ADMIN_TAB_META : []),
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
   const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;
   const tabActiveStyle = position === 'bottom' ? styles.tabActiveBottom : styles.tabActive;
+  const tabAdminActiveStyle = position === 'bottom'
+    ? styles.tabAdminActiveBottom : styles.tabAdminActive;
   // Generate PDF button is rep-only and rendered only on the TOP tab bar
   // (not duplicated at the bottom — would clutter and the top is where the
   // rep's eye returns when navigating between tabs). v3-56 — disabled when
@@ -1750,15 +2002,27 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   const pdfTitle = negativeBalance
     ? 'PDF unavailable — adjust the Step 3 down payment or tenor so the balance is positive.'
     : 'Generate a PDF proposal compiling all three tabs plus the standard Terms & Conditions and Warranties';
+  const firstAdminIdx = tabs.findIndex(t => t.admin);
   return (
     <nav style={navStyle}>
       <div className="tabs-inner" style={styles.tabsInner}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-                  className="tab-btn"
-                  style={{ ...tabBaseStyle, ...(activeTab === t.id ? tabActiveStyle : {}) }}>
-            {t.label}
-          </button>
+        {tabs.map((t, i) => (
+          <React.Fragment key={t.id}>
+            {i === firstAdminIdx && (
+              <span style={styles.tabGroupDivider} aria-hidden="true" />
+            )}
+            <button onClick={() => setActiveTab(t.id)}
+                    className="tab-btn"
+                    style={{
+                      ...tabBaseStyle,
+                      ...(t.admin ? styles.tabAdmin : {}),
+                      ...(activeTab === t.id
+                        ? (t.admin ? tabAdminActiveStyle : tabActiveStyle)
+                        : {}),
+                    }}>
+              {t.label}
+            </button>
+          </React.Fragment>
         ))}
         {showPdfBtn && (
           <button onClick={onGeneratePdf}
@@ -1780,33 +2044,9 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   );
 }
 
-function AdminTabs({ activeTab, setActiveTab, accessLevel, position = 'top' }) {
-  // v3-54: 3-tab admin (Inventory / Engineering / Product). The previous
-  // 'admin' tab id (the unified Admin Parameters page) is gone.
-  // v3-143: only tabs the role may see are rendered (canAccessAdminTab).
-  const allTabs = [
-    { id: 'inventory',   label: 'Inventory' },
-    { id: 'engineering', label: 'Engineering' },
-    { id: 'product',     label: 'Product' },
-  ];
-  const tabs = allTabs.filter(t => canAccessAdminTab(accessLevel, t.id));
-  const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
-  const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;
-  const tabActiveStyle = position === 'bottom' ? styles.tabActiveBottom : styles.tabActive;
-  return (
-    <nav style={navStyle}>
-      <div className="tabs-inner" style={styles.tabsInner}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-                  className="tab-btn"
-                  style={{ ...tabBaseStyle, ...(activeTab === t.id ? tabActiveStyle : {}) }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-    </nav>
-  );
-}
+// v3-203 — AdminTabs is GONE: the four admin tabs are composed inside Tabs
+// above (see the D2 comment there), which preserved its v3-54 not-role-gated
+// visibility model.
 
 // LandscapeReminder — a subtle bar shown only on small viewports in portrait
 // orientation. Reacts dynamically to orientation changes (rotating the phone
@@ -1962,32 +2202,24 @@ const confirmStyles = {
   },
 };
 
-function Footer({ brand, mode, onRepLockClick }) {
+function Footer({ brand, mode, adminAccess = 'none', onSignOut }) {
   return (
     <footer style={styles.footer}>
       <div className="footer-inner" style={styles.footerInner}>
         <div style={{ opacity: 0.7, fontSize: 12 }}>
           © 2026 {brand.legalEntity}. An AboitizPower Company.
         </div>
-        {/* Rep-mode lock — only shown in customer mode. Once a rep has
-            authenticated, they exit rep mode via the header pill's Lock
-            button instead, so there's no need for a duplicate control here. */}
-        {mode === 'customer' && onRepLockClick && (
+        {/* DEPLOYMENT DIVERGENCE: upstream's footer staff key is replaced by a
+            plain sign-out, shown only in the customer view (in rep/admin views
+            the header already carries the account controls). */}
+        {mode === 'customer' && adminAccess === 'none' && onSignOut && (
           <button
-            onClick={onRepLockClick}
-            style={styles.repLockBtn}
+            onClick={onSignOut}
+            style={styles.signOutBtn}
             className="desktop-only-admin"
-            title="Sales rep? Click to unlock the full calculator view."
-            aria-label="Sales rep access"
+            title="Sign out"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" strokeWidth="2"
-                 strokeLinecap="round" strokeLinejoin="round"
-                 aria-hidden="true">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
-            <span>Rep</span>
+            Sign out
           </button>
         )}
       </div>
@@ -1995,14 +2227,15 @@ function Footer({ brand, mode, onRepLockClick }) {
   );
 }
 
-// FooterFixed is shown on the contact gate to provide an Admin entry without
-// a full header. Used when the customer hasn't filled in their info yet but
-// an agent needs to access the admin panel. Reps can also unlock rep mode
-// from here (a rep visiting the public URL won't have entered customer info).
+// FooterFixed is shown on the maintenance gate to provide a staff entry
+// without a full header (v3-203: one key glyph → unified Staff Sign-in; an
+// admin password signs in past the gate, since adminAccess bypasses it).
 //
 // Hidden on mobile via the desktop-only-admin CSS class — admin features
 // are desktop-only per product direction.
 function FooterFixed({ onSignOut }) {
+  // DEPLOYMENT DIVERGENCE: upstream's gate-corner staff key becomes a sign-out
+  // — the maintenance gate is reached only while signed in under Supabase.
   return (
     <div className="desktop-only-admin" style={styles.footerFixed}>
       {onSignOut && (
@@ -2042,18 +2275,7 @@ const styles = {
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     flexShrink: 0,
   },
-  adminBtn: {
-    background: '#25543A', border: '1px solid #25543A', borderRadius: 6,
-    padding: '6px 14px', fontSize: 12, fontWeight: 600, color: '#FFFFFF',
-    cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-    flexShrink: 0, letterSpacing: 0.3,
-  },
-  signOutBtn: {
-    background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
-    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',
-    cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-    flexShrink: 0,
-  },
+
   // Rep-mode pill in the header — small, muted, with an inline Lock button.
   // Uses an amber treatment so it reads as "you're in a privileged state"
   // without being alarming. The Lock button inside the pill returns to
@@ -2102,9 +2324,18 @@ const styles = {
     fontFamily: 'inherit',
     marginLeft: 2,
   },
-  // Rep lock button in the main footer — discreet, neutral, with the lock
-  // glyph + "Rep" label. Same visual weight as the Admin link in FooterFixed.
-  repLockBtn: {
+  // Supabase account controls (Change password / Sign out) — this deployment's
+  // replacement for the upstream staff-key glyph. Same discreet treatment.
+  signOutBtn: {
+    background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
+    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',
+    cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  // v3-203 — Staff Sign-in key button (header + footer). Same discreet
+  // treatment the old Rep lock had: hairline border, muted stroke; glyph
+  // only per Pat — the title/aria-label carry the words.
+  staffKeyBtn: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 6,
@@ -2173,7 +2404,11 @@ const styles = {
     borderTop: '1px solid #E5E1D6',
     marginTop: 32,
   },
-  tabsInner: { maxWidth: 1200, margin: '0 auto', padding: '0 24px', display: 'flex', gap: 4 },
+  // v3-203 — flexWrap added: seven tabs + the Generate PDF pill can exceed
+  // 1200px; wrapping to a second row beats horizontal clipping. Sub-1200px
+  // customer view is unaffected (three tabs never wrapped anyway).
+  tabsInner: { maxWidth: 1200, margin: '0 auto', padding: '0 24px',
+               display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'stretch' },
   tab: {
     background: 'transparent', border: 'none', padding: '14px 22px',
     fontSize: 14, fontWeight: 500, color: '#6B7280', cursor: 'pointer',
@@ -2187,6 +2422,19 @@ const styles = {
     borderTop: '3px solid transparent', transition: 'all 150ms',
   },
   tabActiveBottom: { color: '#25543A', borderTop: '3px solid #25543A', fontWeight: 600 },
+  // v3-203 — admin tab variants (D2): brand-gold label so the settings group
+  // reads apart from the green-accented quote tabs. Active state deepens the
+  // gold and moves the same 3px indicator into gold. Slightly tighter
+  // horizontal padding so the seven-tab strip fits one row on most desktops.
+  tabAdmin: { color: '#A97E22', padding: '14px 16px' },
+  tabAdminActive: { color: '#8A6516', borderBottom: '3px solid #A97E22', fontWeight: 600 },
+  tabAdminActiveBottom: { color: '#8A6516', borderTop: '3px solid #A97E22', fontWeight: 600 },
+  // Hairline between the quote group and the admin group. Self-stretching in
+  // the flex row; 1px divider color matches the strip borders.
+  tabGroupDivider: {
+    width: 1, alignSelf: 'stretch', margin: '8px 8px',
+    backgroundColor: '#E5E1D6', flexShrink: 0,
+  },
   // Generate PDF pill button — rep-only, sits at the right edge of the top
   // tab bar (marginLeft: auto pushes it past the left-aligned tab buttons).
   // Visual treatment: solid Solviva green pill, white text, slight hover/

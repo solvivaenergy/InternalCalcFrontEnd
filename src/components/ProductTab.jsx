@@ -1,25 +1,43 @@
 // =============================================================================
-// PRODUCT TAB — third of three admin tabs (v3-54)
+// PRODUCT TAB — third of four admin tabs (v3-54; fourth tab added v3-180)
 // -----------------------------------------------------------------------------
-// Section order (per spec):
+// Section order:
 //   1. Quote Validity
-//   2. Interest Rates
-//   3. CC Post-Install Tenors
-//   4. Promo Codes
+//   2. Quote Limits            (minSystemKwp ONLY since v3-180)
+//   3. Step 1 Defaults
+//   4. Step 3 Default
+//   5. Gross Margin & Merchant Discount
+//   6. Promo Codes
+//
+// v3-180 — WHAT LEFT THIS FILE. Ahead of the FinCo/OpCo entity separation, the
+// financing entity's parameters moved to FinCoTab.jsx:
+//   • the ENTIRE Interest Rates section, and RateSurfacePreview with it
+//   • minDpTiers + maxTenorMonths, out of Quote Limits into 'financingTerms'
+// minSystemKwp deliberately STAYED — it floors system size, an engineering
+// concern, not a financing term — so Quote Limits survives holding one control.
+// defaultDownPaymentPct also stayed (Pat: it is a pre-fill, not a floor), even
+// though it snaps up to FinCo's minimum at quote time.
+// `niceAxis` and `rsStyles` moved to AdminShared.jsx: GrossMarginPreview below
+// still needs them and so does the relocated RateSurfacePreview, and one shared
+// definition cannot drift where two copies would.
 //
 // All edits flow through props from AdminShell. Edit gating per section is
-// read from permissions.js — Product + Super Admin can edit; Engineering +
-// Audit see read-only.
+// read from permissions.js — Product + Super Admin can edit; Engineering,
+// FinCo + Audit see read-only.
 // =============================================================================
 
 import React from 'react';
-import { COLORS } from './ui.jsx';
-import { rtoRate, packageMarginForCapacity } from '../lib/calculations.js';
+import { COLORS, NumberInput, Select } from './ui.jsx';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceDot,
+  grossMarginCurve, grossMarginNoInverter, componentMarginFor, directFromCogs,
+  cablingTotalPct, availableInverters, recommendInverters, COMPONENT_MARGIN_IDS,
+} from '../lib/calculations.js';
+import { PANEL_SETTINGS } from '../data/inventory.js';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot, Legend,
 } from 'recharts';
 import {
-  Section, Param, WeightSlider, PromoCodesTable, MinDpTiersTable, PackageMarginMatrix, adminStyles,
+  Section, Param, MarginAnchorRow, PromoCodesTable, niceAxis, rsStyles, adminStyles,
 } from './AdminShared.jsx';
 import {
   canEditAdminSection, hasAnyEditAccess,
@@ -51,7 +69,11 @@ export default function ProductTab({
                hint={`A quote generated today would be valid until ${validUntilPreview}.`} />
       </Section>
 
-      {/* ─── Quote Limits (v3-68) ───────────────────────────────────── */}
+      {/* ─── Quote Limits (v3-68; minSystemKwp only since v3-180) ───────
+          The tiered minimum down payment and the maximum tenor moved to the
+          FinCo tab's Financing Limits section at the entity split. What is
+          left is a system-SIZE floor, which is an engineering constraint on
+          what may be quoted at all, not a term of the financing. */}
       <Section title="Quote Limits"
                canEdit={canEditSection('quoteLimits')}
                anyEditRole={anyEdit}>
@@ -61,30 +83,13 @@ export default function ProductTab({
                canEdit={canEditSection('quoteLimits')}
                min={0} max={50}
                hint="Floors the Step 2A recommendation and the Selected-panels override. 0 = no minimum. Retrofit-only orders (0 panels) are unaffected." />
-        {/* v3-75: tiered minimum DP replaces the v3-68 scalar. */}
-        <div style={{ margin: '14px 0 6px', fontSize: 13, fontWeight: 600 }}>
-          Minimum down payment — by Net Price (before DP Discount)
-        </div>
-        <MinDpTiersTable tiers={params.minDpTiers}
-                         onChange={v => updateParam('quoteLimits', 'minDpTiers', v)}
-                         canEdit={canEditSection('quoteLimits')} />
         <div style={{
           fontSize: 11.5, color: COLORS.textMuted, fontStyle: 'italic',
           margin: '10px 0 4px',
         }}>
-          Each quote uses the tier matching its Net Price (before DP Discount).
-          Lower Step 3A percentages are hidden; live quotes below the floor snap
-          up to the lowest allowed option. Because the net price moves with the
-          tenor, lengthening a tenor can cross a tier boundary and raise the
-          minimum mid-quote — Step 3A always shows the active minimum in its
-          title.
+          Minimum down payment and maximum tenor are set by the financing
+          entity — see the FinCo tab.
         </div>
-        <Param label="Maximum tenor" suffix="months" step={1}
-               value={params.maxTenorMonths}
-               onChange={v => updateParam('quoteLimits', 'maxTenorMonths', v)}
-               canEdit={canEditSection('quoteLimits')}
-               min={1} max={60}
-               hint="Hides longer Step 3B options. Live quotes above the cap snap down to the highest allowed option. Direct Purchase (tenor 0) is always available." />
       </Section>
 
       {/* ─── Step 1 Defaults (v3-70) ────────────────────────────────── */}
@@ -103,6 +108,18 @@ export default function ProductTab({
                canEdit={canEditSection('step1Defaults')}
                min={100} max={10000000}
                hint="Pre-filled monthly utility bill in Step 1C for new sessions and after Reset. Never overwrites a value the user has already typed." />
+      </Section>
+
+      {/* ─── Step 3 Default (v3-159) ────────────────────────────────── */}
+      <Section title="Step 3 Default"
+               canEdit={canEditSection('step3Defaults')}
+               anyEditRole={anyEdit}>
+        <Param label="Default down payment (3A)" isPct step={0.05}
+               value={params.defaultDownPaymentPct}
+               onChange={v => updateParam('step3Defaults', 'defaultDownPaymentPct', v)}
+               canEdit={canEditSection('step3Defaults')}
+               min={0} max={100}
+               hint="Pre-filled DP share in Step 3A and the mobile flow for new sessions and after Reset, on the 5% grid. If a quote's minimum-DP tier is higher, the session snaps up to the tier floor. Never overwrites a value the user has already chosen." />
       </Section>
 
       {/* ─── Gross Margin & Merchant Discount (v3-83) ──────────────────── */}
@@ -142,115 +159,81 @@ export default function ProductTab({
           </div>
         )}
 
-         {/* v3-142 — margin is now package-granular AND size-granular. The
-             per-system-size (kWp) curve is retained; each package (A. Solar,
-             B. Battery, C. Misc) rides its own curve through the same three kWp
-             breakpoints below. */}
+        {/* v3-191 — PER-PHASE curves + PER-COMPONENT margins (user-directed,
+            Pat). The curve applies ONLY to the Solar Panels line, and ONLY
+            when panels are purchased with at least one inverter; Follow/Fixed
+            for every other component applies on that same full-system shape
+            only, with `otherwise` covering every order missing either leg. */}
         <div style={{ marginBottom: 12, fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
-           Gross margin is set per <strong>package</strong> and per <strong>system size</strong>. Each
-           column below (<strong>A. Solar</strong>, <strong>B. Battery</strong>, <strong>C. Misc</strong>)
-           gets its own margin curve, fitted through the three shared kWp anchors (Min / Med / Max).
-           A quote resolves each package line at the curve value for the order&rsquo;s kWp; an order with
-           <strong> no solar panels</strong> prices every package at its Max anchor (ceiling).
+          Each phase has its own gross-margin curve over rated capacity (kWp), fitted through its
+          Min / Med / Max anchors. A curve applies <strong>only to the Solar Panels line, and only
+          when the panels are purchased with at least one inverter</strong>. A panels-only order —
+          extra panels with no inverter — never rides the curve: it prices at the
+          panels-without-inverter margin below. Every other component carries its own setting in
+          the table: on an order with <strong>both panels and an inverter</strong> it either
+          follows the panels&rsquo; curve (of the order&rsquo;s phase) or uses its own fixed
+          margin; in every other case it uses its Otherwise margin.
         </div>
-        <PackageMarginMatrix params={params} updateParam={updateParam}
-                             canEdit={canEditSection('margins')} />
-        <Param label="Reference gross margin for admin price display" isPct step={0.005} min={0} max={99}
-               value={params.grossMarginReference}
-               onChange={v => updateParam('margins', 'grossMarginReference', v)}
+        <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+                      textTransform: 'uppercase', letterSpacing: '0.03em', margin: '14px 0 2px' }}>
+          Single-phase panels curve
+        </div>
+        <MarginAnchorRow label="Min gross margin (small systems)"
+               hint="Margin floor, applied at and below its capacity."
+               marginValue={params.grossMarginMin} onMargin={v => updateParam('margins', 'grossMarginMin', v)}
+               kwpValue={params.grossMarginMinKwp} onKwp={v => updateParam('margins', 'grossMarginMinKwp', v)}
+               canEdit={canEditSection('margins')} />
+        <MarginAnchorRow label="Med gross margin (mid systems)"
+               hint="Sets the curvature between min and max."
+               marginValue={params.grossMarginMid} onMargin={v => updateParam('margins', 'grossMarginMid', v)}
+               kwpValue={params.grossMarginMidKwp} onKwp={v => updateParam('margins', 'grossMarginMidKwp', v)}
+               canEdit={canEditSection('margins')} />
+        <MarginAnchorRow label="Max gross margin (large systems)"
+               hint="Margin ceiling, applied at and above its capacity."
+               marginValue={params.grossMarginMax} onMargin={v => updateParam('margins', 'grossMarginMax', v)}
+               kwpValue={params.grossMarginMaxKwp} onKwp={v => updateParam('margins', 'grossMarginMaxKwp', v)}
+               canEdit={canEditSection('margins')} />
+        <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+                      textTransform: 'uppercase', letterSpacing: '0.03em', margin: '14px 0 2px' }}>
+          Three-phase panels curve
+        </div>
+        <MarginAnchorRow label="Min gross margin (small systems)"
+               hint="Margin floor, applied at and below its capacity."
+               marginValue={params.grossMarginMinTp} onMargin={v => updateParam('margins', 'grossMarginMinTp', v)}
+               kwpValue={params.grossMarginMinKwpTp} onKwp={v => updateParam('margins', 'grossMarginMinKwpTp', v)}
+               canEdit={canEditSection('margins')} />
+        <MarginAnchorRow label="Med gross margin (mid systems)"
+               hint="Sets the curvature between min and max."
+               marginValue={params.grossMarginMidTp} onMargin={v => updateParam('margins', 'grossMarginMidTp', v)}
+               kwpValue={params.grossMarginMidKwpTp} onKwp={v => updateParam('margins', 'grossMarginMidKwpTp', v)}
+               canEdit={canEditSection('margins')} />
+        <MarginAnchorRow label="Max gross margin (large systems)"
+               hint="Margin ceiling, applied at and above its capacity."
+               marginValue={params.grossMarginMaxTp} onMargin={v => updateParam('margins', 'grossMarginMaxTp', v)}
+               kwpValue={params.grossMarginMaxKwpTp} onKwp={v => updateParam('margins', 'grossMarginMaxKwpTp', v)}
+               canEdit={canEditSection('margins')} />
+        <Param label="Single-phase panels without an inverter" isPct step={0.5} min={0} max={99}
+               value={params.grossMarginNoInverterSp}
+               onChange={v => updateParam('margins', 'grossMarginNoInverterSp', v)}
                canEdit={canEditSection('margins')}
-           hint="The margin used for Inventory/Engineering DP display and boot-time derived prices. Quote math uses the package curves above." />
-        <Param label="Merchant Discount Rate" isPct step={0.01} min={0} max={89}
+               hint="Margin for the single-phase Solar Panels line whenever the order carries no inverter — extra-panels-only purchases, panels-only expansions, panels quoted during an inverter stock-out. The curve never applies to these orders." />
+        <Param label="Three-phase panels without an inverter" isPct step={0.5} min={0} max={99}
+               value={params.grossMarginNoInverterTp}
+               onChange={v => updateParam('margins', 'grossMarginNoInverterTp', v)}
+               canEdit={canEditSection('margins')}
+               hint="Same rule for the three-phase Solar Panels line." />
+        <Param label="Allowance for Merchant Discount Rate" isPct step={0.01} min={0} max={89}
                value={params.merchantDiscountRate}
                onChange={v => updateParam('margins', 'merchantDiscountRate', v)}
                canEdit={canEditSection('margins')}
                hint="The acquirer's cut. Taken from the VAT-inclusive amount the customer is charged, while the full output VAT is still remitted — so the effective retention is 1.12 × (1 − MDR) − 0.12, not (1 − MDR)." />
-        <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 8,
-                      backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB',
-                      fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
-          <div style={{ fontWeight: 600, color: '#111827', marginBottom: 6 }}>
-             Package margin curve preview
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 11.5, minWidth: 320 }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: 'left', padding: '2px 10px 4px 0' }}>kWp</th>
-                  <th style={{ textAlign: 'right', padding: '2px 10px 4px' }}>A. Solar</th>
-                  <th style={{ textAlign: 'right', padding: '2px 10px 4px' }}>B. Battery</th>
-                  <th style={{ textAlign: 'right', padding: '2px 0 4px 10px' }}>C. Misc</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[3, 5, 10, 15, 20, 30].map(kwp => {
-                  const panels = Math.max(1, Math.round((kwp * 1000) / 620));
-                  const s = packageMarginForCapacity(kwp, panels, params, 'solar');
-                  const b = packageMarginForCapacity(kwp, panels, params, 'battery');
-                  const m = packageMarginForCapacity(kwp, panels, params, 'misc');
-                  return (
-                    <tr key={kwp}>
-                      <td style={{ textAlign: 'left', padding: '2px 10px 2px 0' }}>{kwp}</td>
-                      <td style={{ textAlign: 'right', padding: '2px 10px' }}>{(s * 100).toFixed(1)}%</td>
-                      <td style={{ textAlign: 'right', padding: '2px 10px' }}>{(b * 100).toFixed(1)}%</td>
-                      <td style={{ textAlign: 'right', padding: '2px 0 2px 10px' }}>{(m * 100).toFixed(1)}%</td>
-                    </tr>
-                  );
-                })}
-                <tr>
-                  <td style={{ textAlign: 'left', padding: '4px 10px 2px 0', borderTop: '1px solid #E5E7EB' }}>no&nbsp;panels</td>
-                  <td style={{ textAlign: 'right', padding: '4px 10px 2px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'solar')) * 100).toFixed(1)}%</td>
-                  <td style={{ textAlign: 'right', padding: '4px 10px 2px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'battery')) * 100).toFixed(1)}%</td>
-                  <td style={{ textAlign: 'right', padding: '4px 0 2px 10px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'misc')) * 100).toFixed(1)}%</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-           <div style={{ margin: '8px 0 6px' }}>Admin price list shown at <strong>{(params.grossMarginReference * 100).toFixed(1)}%</strong>.</div>
-          Direct Purchase Price = ⌈ COGS × 1.12 ÷ (1 − margin) ÷ {(1.12 * (1 - params.merchantDiscountRate) - 0.12).toFixed(4)} ⌉.
-           COGS is entered pre-VAT because input VAT is creditable — recovered, not spent.
-        </div>
-      </Section>
-
-      {/* ─── Interest Rates (v3-79 — tenor × DP surface) ────────────── */}
-      <Section title="Interest Rates"
-               canEdit={canEditSection('interestRates')}
-               anyEditRole={anyEdit}>
-        <Param label="Max rate — 60 mo, 0% down" isPct step={0.005} min={0} max={99}
-               value={params.rateAnchorMax}
-               onChange={v => updateParam('interestRates', 'rateAnchorMax', v)}
-               canEdit={canEditSection('interestRates')}
-               hint="Top-left corner of the grid. Also the list-price (catalogue) rate." />
-        <Param label="Mid rate — 30 mo, 25% down" isPct step={0.005} min={0} max={99}
-               value={params.rateAnchorMid}
-               onChange={v => updateParam('interestRates', 'rateAnchorMid', v)}
-               canEdit={canEditSection('interestRates')}
-               hint="Sets the curvature. Below the midpoint of the two extremes bends the surface convex." />
-        <Param label="Min rate — 1 mo, 50% down"   /* v3-133 — stale v3-97-era label; the surface re-anchored to tenor 1 at the v3-100 split (TENOR_AXIS_MIN = 1) and the grid outlines the 1-month cell */ isPct step={0.005} min={0} max={99}
-               value={params.rateAnchorMin}
-               onChange={v => updateParam('interestRates', 'rateAnchorMin', v)}
-               canEdit={canEditSection('interestRates')}
-               hint="Bottom-right corner of the grid." />
-        <WeightSlider tenorWeight={params.rateTenorWeight}
-               onChange={v => updateParam('interestRates', 'rateTenorWeight', v)}
-               canEdit={canEditSection('interestRates')} />
-        <Param label="Rate step" isPct step={0.00125} min={0} max={5}
-               value={params.rateStepPct}
-               onChange={v => updateParam('interestRates', 'rateStepPct', v)}
-               canEdit={canEditSection('interestRates')}
-               hint="Every rate snaps to the nearest multiple. 0.125% = one eighth of a point." />
-        <Param label="Early Payoff NPV Discount Rate" isPct step={0.005}
-               value={params.earlyPayoffDiscountRate}
-               onChange={v => updateParam('interestRates', 'earlyPayoffDiscountRate', v)}
-               canEdit={canEditSection('interestRates')}
-               hint="NPV discount applied to the ANNEX early-payoff column" />
-        {/* v3-100 — Documentary Stamp Tax (PRODUCT!C3). Now Product-editable. */}
-        <Param label="Documentary Stamp Tax rate" isPct step={0.0005} min={0} max={99}
-               value={params.documentaryStampTaxRate}
-               onChange={v => updateParam('interestRates', 'documentaryStampTaxRate', v)}
-               canEdit={canEditSection('interestRates')}
-               hint="DST on the financed balance: rate × ₱200 per ₱200 or part thereof (0.750% = ₱1.50 per ₱200), prorated below 12 months. ₱0 on a Direct Purchase." />
-
-        <RateSurfacePreview params={params} />
+        <ComponentMarginsTable componentMargins={params.componentMargins}
+                               canEdit={canEditSection('margins')}
+                               mdr={params.merchantDiscountRate}
+                               onChange={next => updateParam('margins', 'componentMargins', next)} />
+        <GrossMarginPreview params={params} />
+        <FullSystemPerKwpChart params={params} phase="single" />
+        <FullSystemPerKwpChart params={params} phase="three" />
       </Section>
 
       {/* ─── Promo Codes ────────────────────────────────────────────── */}
@@ -265,175 +248,68 @@ export default function ProductTab({
   );
 }
 
-// ─── Rate surface preview (v3-79) ────────────────────────────────────────────
-// Renders the resulting rate for every (tenor, DP) cell, plus the same surface
-// as a chart. Calls the SAME `rtoRate()` the pricing engine calls, so the grid
-// an admin sees can never drift from what a customer is actually charged.
-// v3-109 — mirrors the v3-100 tenor axis (60…2, 1, "Direct Purch"). TENOR 1 is a
-// REAL interest-bearing month priced by the curve's endpoint (min anchor at
-// tenor 1 / 50% DP), NOT the interest-free option. DIRECT PURCHASE IS TENOR 0 —
-// its own rightmost column, rendered "Free" rather than a rate. The v3-97 grid
-// had collapsed tenor 1 into Direct Purchase and pinned the min anchor at tenor
-// 2; both were left stale through the v3-100 engine split until this release.
-const PREVIEW_TENORS = [60, 48, 36, 30, 24, 18, 12, 6, 3, 2, 1, 0];
-const PREVIEW_DPS = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50];
-const CHART_DPS = [0, 0.10, 0.20, 0.30, 0.40, 0.50];
-const CHART_COLORS = ['#2a78d6', '#1baf7a', '#eda100', '#008300', '#4a3aa7', '#e34948'];
 
-function RateSurfacePreview({ params }) {
-  const ok = [params.rateAnchorMin, params.rateAnchorMid, params.rateAnchorMax,
-              params.rateTenorWeight].every(v => Number.isFinite(v))
-    && params.rateAnchorMin < params.rateAnchorMid
-    && params.rateAnchorMid < params.rateAnchorMax;
-
-  if (!ok) {
-    return (
-      <div style={rsStyles.warn}>
-        Anchors must satisfy <strong>min &lt; mid &lt; max</strong> for the curve to be defined.
-        Fix the three rates above to see the resulting grid.
-      </div>
-    );
-  }
-
-  const lo = params.rateAnchorMin, hi = params.rateAnchorMax;
-  const cell = (T, D) => rtoRate(T, D, params);
-  const isAnchor = (T, D) =>
-    (T === 60 && D === 0) || (T === 30 && D === 0.25) || (T === 1 && D === 0.5);
-
-  // Chart spans the interest-bearing range, tenor 1…60. Tenor 0 (Direct Purchase)
-  // is 0% and off the axis — plotting it would drop every line to a false cliff.
-  const chartData = [1, 2, 3, 6, 12, 18, 24, 30, 36, 48, 60].map(T => {
-    const row = { tenor: T };
-    CHART_DPS.forEach(D => { row[`${Math.round(D * 100)}% down`] = +(cell(T, D) * 100).toFixed(2); });
-    return row;
-  });
-
-  return (
-    <div style={rsStyles.wrap}>
-      <div style={rsStyles.caption}>
-        Resulting rate — tenor (months) &times; down payment.
-        Derived from the anchors above; nothing here is stored.
-        The three <span style={rsStyles.anchorNote}>outlined</span> cells are the anchors.
-      </div>
-
-      <div style={rsStyles.scroll}>
-        <table style={rsStyles.table}>
-          <thead>
-            <tr>
-              <th style={rsStyles.thCorner}>DP</th>
-              {PREVIEW_TENORS.map(T => <th key={T} style={rsStyles.th}>{T === 0 ? 'Direct Purch' : T}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {PREVIEW_DPS.map(D => (
-              <tr key={D}>
-                <td style={rsStyles.rowLabel}>{(D * 100).toFixed(0)}%</td>
-                {PREVIEW_TENORS.map(T => {
-                  if (T < 1) {
-                    // Direct Purchase (tenor 0) — interest-free, no rate to shade.
-                    // Tenor 1 falls through to the surface below (a real rate).
-                    return (
-                      <td key={T} style={{
-                        ...rsStyles.td,
-                        backgroundColor: '#E1F5EE', color: '#0F6E56', fontWeight: 500,
-                        border: `0.5px solid ${COLORS.divider}`,
-                      }}>
-                        Free
-                      </td>
-                    );
-                  }
-                  const r = cell(T, D);
-                  const f = hi > lo ? (r - lo) / (hi - lo) : 0;
-                  return (
-                    <td key={T} style={{
-                      ...rsStyles.td,
-                      backgroundColor: `rgba(226, 75, 74, ${(0.04 + f * 0.42).toFixed(3)})`,
-                      border: isAnchor(T, D) ? '1.5px solid #BA7517' : `0.5px solid ${COLORS.divider}`,
-                    }}>
-                      {(r * 100).toFixed(2)}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div style={rsStyles.caption}>Same surface, graphically.</div>
-      <div style={{ height: 260 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={COLORS.divider} />
-            <XAxis dataKey="tenor" tick={{ fontSize: 11 }}
-                   label={{ value: 'Tenor (months)', position: 'insideBottom', offset: -2, fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} width={44} />
-            <Tooltip formatter={v => `${v}%`} labelFormatter={l => `${l} months`} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            {CHART_DPS.map((D, i) => (
-              <Line key={D} type="monotone" dataKey={`${Math.round(D * 100)}% down`}
-                    stroke={CHART_COLORS[i]} strokeWidth={2} dot={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-}
-
-// v3-93 — "nice" axis bounds: round [lo, hi] outward to a clean step so the
-// chart frames the curve tightly with readable ticks. Returns [min, max, step].
-function niceAxis(lo, hi, targetTicks) {
-  const span = Math.max(hi - lo, 1e-6);
-  const raw  = span / Math.max(targetTicks, 1);
-  const mag  = Math.pow(10, Math.floor(Math.log10(raw)));
-  const norm = raw / mag;
-  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
-  return [Math.floor(lo / step) * step, Math.ceil(hi / step) * step, step];
-}
-
-// v3-92/93 — Gross margin vs solar array capacity (kWp). The GENLINV curve the
-// pricing engine actually calls (grossMarginCurve), with the three anchors
-// marked. Axes auto-scale to the current anchors so the curve always reads
-// cleanly, whatever Product sets them to.
+// v3-92/93 → v3-191 — Gross margin vs solar array capacity (kWp), BOTH phases.
+// The GENLINV curves the pricing engine actually calls (grossMarginCurve with
+// each phase), anchors marked per phase. Axes auto-scale to whichever anchor
+// sets are valid; an invalid set hides its curve and says so rather than
+// blanking the whole chart.
 function GrossMarginPreview({ params }) {
-  const q1 = params.grossMarginMin, q2 = params.grossMarginMid, q3 = params.grossMarginMax;
-  const x1 = params.grossMarginMinKwp, x2 = params.grossMarginMidKwp, x3 = params.grossMarginMaxKwp;
-  const ok = [q1, q2, q3, x1, x2, x3].every(Number.isFinite)
-    && q1 < q2 && q2 < q3 && x1 < x2 && x2 < x3;
+  const setOf = (tp) => tp
+    ? { q1: params.grossMarginMinTp, q2: params.grossMarginMidTp, q3: params.grossMarginMaxTp,
+        x1: params.grossMarginMinKwpTp, x2: params.grossMarginMidKwpTp, x3: params.grossMarginMaxKwpTp }
+    : { q1: params.grossMarginMin, q2: params.grossMarginMid, q3: params.grossMarginMax,
+        x1: params.grossMarginMinKwp, x2: params.grossMarginMidKwp, x3: params.grossMarginMaxKwp };
+  const okOf = (s) => [s.q1, s.q2, s.q3, s.x1, s.x2, s.x3].every(Number.isFinite)
+    && s.q1 < s.q2 && s.q2 < s.q3 && s.x1 < s.x2 && s.x2 < s.x3;
+  const sp = setOf(false), tp = setOf(true);
+  const spOk = okOf(sp), tpOk = okOf(tp);
 
-  if (!ok) {
+  if (!spOk && !tpOk) {
     return (
       <div style={rsStyles.warn}>
         Anchors must satisfy <strong>Min &lt; Mid &lt; Max</strong> — for both the margins and the
-        capacities — for the curve to be defined. Fix the anchors above to see it.
+        capacities — for a curve to be defined. Fix the anchors above to see it.
       </div>
     );
   }
 
-  // X: 0 up to a clean value just past the max-kWp anchor (shows the ceiling clamp).
-  const [xMin, xMax] = niceAxis(0, x3 + (x3 - x1) * 0.12, 7);
-  // Y: tight around [min, max] margin with a little headroom, rounded to a clean step.
-  const yPad = (q3 - q1) * 100 * 0.10;
-  const [yMin, yMax, yStep] = niceAxis(q1 * 100 - yPad, q3 * 100 + yPad, 6);
+  const xHi = Math.max(spOk ? sp.x3 + (sp.x3 - sp.x1) * 0.12 : 0,
+                       tpOk ? tp.x3 + (tp.x3 - tp.x1) * 0.12 : 0);
+  const [xMin, xMax] = niceAxis(0, xHi, 7);
+  const qLo = Math.min(spOk ? sp.q1 : Infinity, tpOk ? tp.q1 : Infinity);
+  const qHi = Math.max(spOk ? sp.q3 : -Infinity, tpOk ? tp.q3 : -Infinity);
+  const yPad = (qHi - qLo) * 100 * 0.10 || 1;
+  const [yMin, yMax, yStep] = niceAxis(qLo * 100 - yPad, qHi * 100 + yPad, 6);
   const yTicks = [];
   for (let t = yMin; t <= yMax + 1e-9; t += yStep) yTicks.push(+t.toFixed(2));
 
-  const N = 60;
+  const N = 80;
   const data = Array.from({ length: N + 1 }, (_, i) => {
     const kwp = xMin + (xMax - xMin) * i / N;
-    return { kwp: +kwp.toFixed(3), margin: +(grossMarginCurve(kwp, params) * 100).toFixed(3) };
+    const pt = { kwp: +kwp.toFixed(3) };
+    if (spOk) pt.sp = +(grossMarginCurve(kwp, params, 'single') * 100).toFixed(3);
+    if (tpOk) pt.tp = +(grossMarginCurve(kwp, params, 'three') * 100).toFixed(3);
+    return pt;
   });
+  const noInvSp = grossMarginNoInverter(params, 'single');
+  const noInvTp = grossMarginNoInverter(params, 'three');
 
   return (
     <div style={rsStyles.wrap}>
       <div style={rsStyles.caption}>
-        Gross margin vs solar array capacity. Derived from the anchors above; nothing here is stored.
-        The three <span style={rsStyles.anchorNote}>outlined</span> points are the anchors; the curve is
-        flat at the floor below {(+x1).toFixed(0)} kWp and at the ceiling above {(+x3).toFixed(0)} kWp.
-        Orders with <strong>no solar panels</strong> are priced at the max ({(q3 * 100).toFixed(0)}%).
+        Gross margin vs solar array capacity, per phase. Derived from the anchors above; nothing
+        here is stored. Outlined points are each phase&rsquo;s anchors; each curve is flat at its
+        floor and ceiling. The curve prices the Solar Panels line <strong>only when panels ship
+        with an inverter</strong>; components set to &ldquo;Follow panels curve&rdquo; ride the
+        curve of the order&rsquo;s phase on those orders only. A panels-only order prices at its
+        phase&rsquo;s no-inverter margin ({(noInvSp * 100).toFixed(1)}% single-phase,
+        {' '}{(noInvTp * 100).toFixed(1)}% three-phase); every order missing panels or an inverter
+        uses each component&rsquo;s Otherwise margin.
+        {!spOk && ' (Single-phase anchors invalid — that curve is hidden.)'}
+        {!tpOk && ' (Three-phase anchors invalid — that curve is hidden.)'}
       </div>
-      <div style={{ height: 260 }}>
+      <div style={{ height: 280 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 18, left: 0, bottom: 6 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={COLORS.divider} />
@@ -442,11 +318,19 @@ function GrossMarginPreview({ params }) {
                    label={{ value: 'Solar array capacity (kWp)', position: 'insideBottom', offset: -4, fontSize: 11 }} />
             <YAxis type="number" domain={[yMin, yMax]} ticks={yTicks} tick={{ fontSize: 11 }}
                    tickFormatter={v => `${v}%`} width={44} />
-            <Tooltip formatter={v => `${(+v).toFixed(2)}%`} labelFormatter={l => `${(+l).toFixed(2)} kWp`} />
-            <Line type="monotone" dataKey="margin" stroke="#1b8a5a" strokeWidth={2} dot={false} isAnimationActive={false} />
-            <ReferenceDot x={x1} y={+(q1 * 100).toFixed(2)} r={4.5} fill="#BA7517" stroke="#fff" strokeWidth={1.5} />
-            <ReferenceDot x={x2} y={+(q2 * 100).toFixed(2)} r={4.5} fill="#BA7517" stroke="#fff" strokeWidth={1.5} />
-            <ReferenceDot x={x3} y={+(q3 * 100).toFixed(2)} r={4.5} fill="#BA7517" stroke="#fff" strokeWidth={1.5} />
+            <Tooltip formatter={(v, name) => [`${(+v).toFixed(2)}%`, name === 'sp' ? 'Single-phase' : 'Three-phase']}
+                     labelFormatter={l => `${(+l).toFixed(2)} kWp`} />
+            <Legend formatter={v => (v === 'sp' ? 'Single-phase' : 'Three-phase')} />
+            {spOk && <Line type="monotone" dataKey="sp" stroke="#1b8a5a" strokeWidth={2} dot={false} isAnimationActive={false} />}
+            {tpOk && <Line type="monotone" dataKey="tp" stroke="#B45309" strokeWidth={2} dot={false} isAnimationActive={false} />}
+            {spOk && [[sp.x1, sp.q1], [sp.x2, sp.q2], [sp.x3, sp.q3]].map(([x, q], i) => (
+              <ReferenceDot key={`sp${i}`} x={x} y={+(q * 100).toFixed(2)} r={4.5}
+                            fill="#1b8a5a" stroke="#fff" strokeWidth={1.5} />
+            ))}
+            {tpOk && [[tp.x1, tp.q1], [tp.x2, tp.q2], [tp.x3, tp.q3]].map(([x, q], i) => (
+              <ReferenceDot key={`tp${i}`} x={x} y={+(q * 100).toFixed(2)} r={4.5}
+                            fill="#B45309" stroke="#fff" strokeWidth={1.5} />
+            ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -454,17 +338,291 @@ function GrossMarginPreview({ params }) {
   );
 }
 
-const rsStyles = {
-  wrap:       { marginTop: 20, paddingTop: 16, borderTop: `1px solid ${COLORS.divider}` },
-  caption:    { fontSize: 12, color: COLORS.textMuted, marginBottom: 8, marginTop: 16 },
-  anchorNote: { border: '1.5px solid #BA7517', borderRadius: 3, padding: '0 4px' },
-  scroll:     { overflowX: 'auto' },
-  table:      { width: '100%', borderCollapse: 'collapse', fontSize: 11,
-                fontVariantNumeric: 'tabular-nums', minWidth: 520 },
-  th:         { padding: '4px 2px', fontWeight: 600, color: COLORS.textMuted, textAlign: 'center', whiteSpace: 'nowrap' },
-  thCorner:   { padding: '4px 6px', fontWeight: 600, color: COLORS.textMuted, textAlign: 'left' },
-  rowLabel:   { padding: '3px 6px', fontWeight: 600, color: COLORS.textMuted, whiteSpace: 'nowrap' },
-  td:         { padding: '3px 2px', textAlign: 'center', color: COLORS.text },
-  warn:       { marginTop: 20, padding: '12px 14px', borderRadius: 8,
-                backgroundColor: '#FEF3C7', color: '#92400E', fontSize: 13 },
+// ─── v3-191 · Component gross-margin table (B–Q) ─────────────────────────────
+// Edits ONE structured param (componentMargins). Follow/Fixed applies on
+// full-system orders only (panels + inverter); Otherwise covers every order
+// missing either leg. N never prices on a full system, so it carries a single
+// margin and shows no mode control. Margins are stored as fractions and edited
+// in whole/half percent, clamped to [0, 99] — the [0,1) save rule is enforced
+// by the pre-save validator and the server, this clamp is the input layer.
+const COMPONENT_LABELS = {
+  B: ['Single-Phase Cabling Bundle', '% of panels — notional COGS = tier pct × panels COGS'],
+  C: ['Three-Phase Cabling Bundle',  '% of panels — notional COGS = tier pct × panels COGS'],
+  D: ['Additional DC Cable',         'per metre beyond the included 30 m'],
+  E: ['Additional AC Cable',         'per metre beyond the included 10 m'],
+  F: ['Labor & Installation',        'per kWp'],
+  G: ['RSD — Variable Charge',       'per panel; standalone RSD orders price at Otherwise'],
+  H: ['RSD — Fixed Transmitter',     'standalone RSD orders price at Otherwise'],
+  I: ['Single-Phase Inverters',      'inverter-only orders price at Otherwise'],
+  J: ['Three-Phase Inverters',       'inverter-only orders price at Otherwise'],
+  K: ['Battery Package',             'all six package prices incl. both labor variants'],
+  L: ['Misc Catalog',                'one margin for every row; reversals stay sign-symmetric'],
+  M: ['Location / Delivery',         'Luzon >30 km pair and every dynamic row'],
+  N: ['Standalone Retrofit Charges', 'only prices in no-panel orders — single margin'],
+  O: ['Fixed Overhead',              'all five overhead lines'],
+  P: ['Mounting Support',            'max(floor, 13% of panels) — decided in COGS space, then priced'],
+  Q: ['Roof Preparation',            'asphalt / concrete per kWp'],
 };
+
+function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr }) {
+  const cm = componentMargins || {};
+  const setRow = (id, patch) => {
+    if (!canEdit) return;
+    onChange({ ...cm, [id]: { ...(cm[id] || {}), ...patch } });
+  };
+  const pct = (v) => Number.isFinite(v) ? Number((v * 100).toFixed(4)) : 0;
+  const clampPct = (v) => Math.max(0, Math.min(99, v)) / 100;
+  const th = { textAlign: 'left', padding: '7px 8px', borderBottom: `2px solid ${COLORS.divider}`,
+               fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em',
+               color: COLORS.textMuted, whiteSpace: 'nowrap' };
+  const td = { padding: '7px 8px', borderBottom: `1px solid ${COLORS.divider}`, verticalAlign: 'top' };
+  const retained = (1.12 * (1 - (mdr || 0)) - 0.12);
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, color: '#111827', marginBottom: 4 }}>
+        Component gross margins
+      </div>
+      <div style={{ fontSize: 12, color: '#4B5563', lineHeight: 1.6, marginBottom: 10 }}>
+        <strong>Full system</strong> — the order includes both solar panels and at least one
+        inverter — is the only case where Follow / Fixed applies; &ldquo;Follow&rdquo; rides the
+        curve of the order&rsquo;s phase. <strong>Otherwise</strong> applies whenever either leg
+        is missing: panels without an inverter, inverter-only, battery / RSD standalone. Direct
+        Purchase Price for every line: ⌈ COGS × 1.12 ÷ (1 − margin) ÷ {retained.toFixed(4)} ⌉;
+        for B, C, and P the COGS is <em>notional</em> — the percentage applied to the
+        panels&rsquo; COGS.
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 640 }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, width: 30 }}></th>
+              <th style={th}>Component</th>
+              <th style={{ ...th, width: 180 }}>Full system (panels + inverter)</th>
+              <th style={{ ...th, width: 110 }}>Fixed margin</th>
+              <th style={{ ...th, width: 110 }}>Otherwise</th>
+            </tr>
+          </thead>
+          <tbody>
+            {COMPONENT_MARGIN_IDS.map(id => {
+              const [label, hint] = COMPONENT_LABELS[id] || [id, ''];
+              const r = cm[id] || {};
+              const single = id === 'N';
+              const isFixed = r.mode === 'fixed';
+              return (
+                <tr key={id}>
+                  <td style={{ ...td, fontWeight: 700, color: COLORS.textMuted }}>{id}</td>
+                  <td style={td}>
+                    <div style={{ fontWeight: 600, color: '#111827' }}>{label}</div>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted, lineHeight: 1.5 }}>{hint}</div>
+                  </td>
+                  {single ? (
+                    <td style={{ ...td, fontSize: 11.5, color: '#9CA3AF' }} colSpan={2}>
+                      — never prices on a full system —
+                    </td>
+                  ) : (
+                    <React.Fragment>
+                      <td style={td}>
+                        {canEdit ? (
+                          <Select value={r.mode === 'fixed' ? 'fixed' : 'follow'}
+                                  onChange={v => setRow(id, { mode: v })}
+                                  width={168}
+                                  options={[
+                                    { value: 'follow', label: 'Follow panels curve' },
+                                    { value: 'fixed',  label: 'Fixed margin' },
+                                  ]} />
+                        ) : (
+                          <span>{isFixed ? 'Fixed margin' : 'Follow panels curve'}</span>
+                        )}
+                      </td>
+                      <td style={td}>
+                        {canEdit && isFixed ? (
+                          <NumberInput value={pct(r.fixed)} onChange={v => v != null && setRow(id, { fixed: clampPct(v) })}
+                                       step={0.5} min={0} max={99} suffix="%" width={92} />
+                        ) : (
+                          <span style={{ color: isFixed ? '#111827' : '#C4C8CF' }}>
+                            {pct(r.fixed).toFixed(1)}%
+                          </span>
+                        )}
+                      </td>
+                    </React.Fragment>
+                  )}
+                  <td style={td}>
+                    {canEdit ? (
+                      <NumberInput value={pct(r.otherwise)} onChange={v => v != null && setRow(id, { otherwise: clampPct(v) })}
+                                   step={0.5} min={0} max={99} suffix="%" width={92} />
+                    ) : (
+                      <span>{pct(r.otherwise).toFixed(1)}%</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── v3-191 · Full-system DP-per-kWp chart (one per phase) ───────────────────
+// Plots the Direct Purchase Price PER kWp of the full-system bundle —
+// Panels + Cabling (B/C) + Labor (F) + Fixed Overhead (O) + Mounting (P) +
+// recommended in-stock Inverters (I/J) — one point per whole panel count, so
+// Product can see whether per-kWp pricing runs flat, rising, or falling as
+// systems grow. Everything is computed through the SHIPPED engine functions
+// (grossMarginCurve, componentMarginFor, directFromCogs, cablingTotalPct,
+// recommendInverters) against the LIVE params/inventory, so the chart is a
+// view of the engine, not a reimplementation (v3-172/178 grid precedent).
+//
+// X-axis starts at the Product minimum system size (minSystemKwp, v3-68) —
+// the smallest array a quote can carry — at this phase's panel-count
+// equivalent, exactly as computeRecommendedPanels floors it.
+//
+// STOCK: inverters come from availableInverters(phase) — the same chokepoint
+// the recommendation engine and Step 2C read; out-of-stock SKUs never appear.
+// If the phase has NO in-stock inverters, a full system cannot be quoted, so
+// the chart reprices every point as a PANELS-WITHOUT-INVERTER order (panels at
+// the phase's no-inverter margin, all other components at Otherwise) and says
+// so — charting full-system margins there would show a price no customer can
+// be quoted (approved handling, Pat).
+function FullSystemPerKwpChart({ params, phase }) {
+  const three = phase === 'three';
+  const ps = three ? PANEL_SETTINGS.threePhase : PANEL_SETTINGS.singlePhase;
+  const label = three ? 'Three-Phase' : 'Single-Phase';
+  const cabId = three ? 'C' : 'B';
+  const invId = three ? 'J' : 'I';
+
+  const q1 = three ? params.grossMarginMinTp : params.grossMarginMin;
+  const q2 = three ? params.grossMarginMidTp : params.grossMarginMid;
+  const q3 = three ? params.grossMarginMaxTp : params.grossMarginMax;
+  const x1 = three ? params.grossMarginMinKwpTp : params.grossMarginMinKwp;
+  const x2 = three ? params.grossMarginMidKwpTp : params.grossMarginMidKwp;
+  const x3 = three ? params.grossMarginMaxKwpTp : params.grossMarginMaxKwp;
+  const anchorsOk = [q1, q2, q3, x1, x2, x3].every(Number.isFinite)
+    && q1 < q2 && q2 < q3 && x1 < x2 && x2 < x3;
+  if (!anchorsOk) return null;   // the curve preview above already shows the warning
+  if (ps.available === false) {
+    return (
+      <div style={rsStyles.wrap}>
+        <div style={rsStyles.caption}>
+          <strong>{label} full-system price per kWp</strong> — hidden: the {label.toLowerCase()}
+          {' '}panel is marked out of stock in Inventory, so no {label.toLowerCase()} system can
+          be quoted at all.
+        </div>
+      </div>
+    );
+  }
+
+  const stock = availableInverters(phase);
+  const stockedOut = stock.length === 0;
+  const noInv = grossMarginNoInverter(params, phase);
+  // v3-192 — include/exclude-inverters view toggle (user-directed, Pat; the
+  // rev-4 mockup control, now a first-class option instead of a stock
+  // simulation). UNCHECKED reprices the whole chart as a PANELS-WITHOUT-
+  // INVERTER order — panels at the phase's no-inverter margin, every other
+  // component at Otherwise, no inverter hardware in the bundle — because
+  // that is the only inverter-less shape the engine can actually quote; a
+  // "full-system margin without the inverter" price exists for no customer.
+  // A real stock-out FORCES the excluded view and disables the checkbox: the
+  // included view would chart quotes that cannot be issued.
+  const [inclInverters, setInclInverters] = React.useState(true);
+  const panelsOnly = stockedOut || !inclInverters;
+  const fullSystem = !panelsOnly;
+
+  const watts = ps.panelWatts, cogsEa = ps.panelCogs;
+  const nMin = Math.max(1, Math.ceil(((params.minSystemKwp || 0) * 1000) / watts));
+  const nMax = Math.max(nMin + 4, Math.ceil((x3 * 1.15 * 1000) / watts));
+  const OVERHEAD = ['fixedOverheadDeliveryLogisticsCogs', 'fixedOverheadWarehouseCogs',
+                    'fixedOverheadCustomsCogs', 'fixedOverheadSafetySupervisionCogs',
+                    'fixedOverheadTestingCogs'];
+  const data = [];
+  for (let n = nMin; n <= nMax; n++) {
+    const kwp = (n * watts) / 1000;
+    const gmA = panelsOnly ? noInv : grossMarginCurve(kwp, params, phase);
+    const gmOf = (id) => componentMarginFor(id, params, fullSystem, gmA);
+    const dpA = n * directFromCogs(cogsEa, params, gmA);
+    const dpCab = directFromCogs(cablingTotalPct(n, params, phase) * n * cogsEa, params, gmOf(cabId));
+    const dpF = kwp * directFromCogs(params.laborInstallationPerKwpCogs, params, gmOf('F'));
+    const gmO = gmOf('O');
+    const dpO = OVERHEAD.reduce((s, k) => s + directFromCogs(params[k], params, gmO), 0);
+    const dpP = directFromCogs(
+      Math.max(params.mountingSupportFloorCogs, params.mountingSupportPctOfPanels * n * cogsEa),
+      params, gmOf('P'));
+    const gmInv = gmOf(invId);
+    const slots = panelsOnly ? [] : recommendInverters(kwp, phase).filter(Boolean);
+    const dpInv = slots.reduce((s, inv) => s + directFromCogs(inv.cogs, params, gmInv), 0);
+    data.push({
+      kwp: +kwp.toFixed(2),
+      perKwp: Math.round((dpA + dpCab + dpF + dpO + dpP + dpInv) / kwp),
+      inverters: slots.length ? slots.map(i => `${i.ratedKw} kW`).join(' + ')
+                              : (stockedOut ? 'none in stock' : 'excluded'),
+    });
+  }
+
+  const stroke = three ? '#B45309' : '#1D4ED8';
+  return (
+    <div style={rsStyles.wrap}>
+      <div style={rsStyles.caption}>
+        <strong>{label} {panelsOnly ? 'panels-without-inverter' : 'full-system'} price per kWp</strong>
+        {' '}— Panels + Cabling Bundle + Labor + Fixed Overhead + Mounting
+        {panelsOnly ? '' : ' + recommended in-stock inverters'}, one point per whole panel
+        count ({watts} W panels{params.minSystemKwp > 0
+          ? `; X-axis starts at the ${params.minSystemKwp} kWp minimum system size — ${nMin} panels on this phase`
+          : ''}).{panelsOnly ? '' : ` Inverters are sized by the live recommendation algorithm — hover any point to
+        see the picked units. Steps are inverter SKU jumps; knees are cabling tier anchors and
+        the mounting floor crossover.`}
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12,
+                      color: stockedOut ? '#9CA3AF' : '#374151', marginBottom: 8,
+                      cursor: stockedOut ? 'not-allowed' : 'pointer', userSelect: 'none' }}>
+        <input type="checkbox"
+               checked={inclInverters && !stockedOut}
+               disabled={stockedOut}
+               onChange={e => setInclInverters(e.target.checked)} />
+        Include recommended inverters (full-system pricing)
+      </label>
+      {panelsOnly && !stockedOut && (
+        <div style={{ padding: '8px 12px', borderRadius: 8, backgroundColor: '#F3F4F6',
+                      border: '1px solid #E5E7EB', fontSize: 12, color: '#4B5563',
+                      lineHeight: 1.55, marginBottom: 8 }}>
+          Inverters excluded — the chart prices every point as a
+          {' '}<strong>panels-without-inverter</strong> order, the only inverter-less shape the
+          engine can quote: panels at this phase&rsquo;s no-inverter margin
+          ({(noInv * 100).toFixed(1)}%), all other components at their Otherwise margins.
+          Follow / Fixed settings and the phase curve do not apply to this view.
+        </div>
+      )}
+      {stockedOut && (
+        <div style={{ padding: '8px 12px', borderRadius: 8, backgroundColor: '#FFFBEB',
+                      border: '1px solid #FCD34D', fontSize: 12, color: '#92400E',
+                      lineHeight: 1.55, marginBottom: 8 }}>
+          No {label.toLowerCase()} inverters are in stock — a full system cannot be quoted on
+          this phase. The chart prices every point as a <strong>panels-without-inverter</strong>
+          {' '}order: panels at this phase&rsquo;s no-inverter margin ({(noInv * 100).toFixed(1)}%),
+          all other components at their Otherwise margins. Follow / Fixed settings and the phase
+          curve do not apply while stock is empty.
+        </div>
+      )}
+      <div style={{ height: 280 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 8, right: 18, left: 12, bottom: 6 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={COLORS.divider} />
+            <XAxis dataKey="kwp" type="number" domain={['dataMin', 'dataMax']}
+                   tick={{ fontSize: 11 }}
+                   label={{ value: 'Solar array capacity (kWp)', position: 'insideBottom', offset: -4, fontSize: 11 }} />
+            <YAxis type="number" domain={['auto', 'auto']} tick={{ fontSize: 11 }} width={74}
+                   tickFormatter={v => `₱${(v / 1000).toFixed(0)}k`} />
+            <Tooltip
+              formatter={(v, k, item) => [
+                `PHP ${Number(v).toLocaleString('en-PH')} / kWp — inverters: ${item?.payload?.inverters}`,
+                'DP per kWp']}
+              labelFormatter={l => `${l} kWp`} />
+            <Line type="monotone" dataKey="perKwp" stroke={stroke} strokeWidth={2}
+                  dot={false} isAnimationActive={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}

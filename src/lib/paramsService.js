@@ -23,19 +23,15 @@
 // and disable saving. The Admin UI will detect the read-only state.
 // =============================================================================
 
-import {
-  ADMIN_PARAMS,
-  BASELINE_RATE,
-  deriveThreePhaseCablingTiers,
-} from "../data/adminParams.js";
-import { deriveDirectPrices, cogsFromDirect } from "./calculations.js";
+import { ADMIN_PARAMS, BASELINE_RATE, deriveThreePhaseCablingTiers } from '../data/adminParams.js';
+import { deriveDirectPrices, cogsFromDirect, normalizeComponentMargins } from './calculations.js';
 import {
   PANEL_SETTINGS,
   INVERTERS_SINGLE_PHASE,
   INVERTERS_THREE_PHASE,
-} from "../data/inventory.js";
-import { DEVICES } from "../data/devices.js";
-import { getAccessToken } from "./supabaseClient.js";
+} from '../data/inventory.js';
+import { DEVICES } from '../data/devices.js';
+import { getAccessToken } from './supabaseClient.js';
 
 // Parameters endpoint. When VITE_API_BASE_URL is set (production), the admin
 // pipeline reads/writes the Supabase-backed Express service at
@@ -43,10 +39,10 @@ import { getAccessToken } from "./supabaseClient.js";
 // edits reflect in quotes. When unset (local dev without the backend), we fall
 // back to the legacy Netlify Function + Netlify Blobs path so the calculator
 // still boots. Trailing slashes on the base are trimmed to avoid `//api`.
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 const API_URL = API_BASE
   ? `${API_BASE}/api/parameters`
-  : "/.netlify/functions/parameters";
+  : '/.netlify/functions/parameters';
 
 // ═══ v3-83 — DERIVE ON MODULE LOAD, BEFORE ANYTHING ELSE ═════════════════════
 // `directPrice` / `panelDirectPrice` / `batteryUnitPrice` … ship as 0 in the data
@@ -57,13 +53,7 @@ const API_URL = API_BASE
 //
 // Placed BEFORE the ORIGINAL snapshot below so that reset-to-defaults restores
 // real prices too, not zeros.
-deriveDirectPrices(
-  ADMIN_PARAMS,
-  PANEL_SETTINGS,
-  INVERTERS_SINGLE_PHASE,
-  INVERTERS_THREE_PHASE,
-  ADMIN_PARAMS.grossMarginReference,
-);
+deriveDirectPrices(ADMIN_PARAMS, PANEL_SETTINGS, INVERTERS_SINGLE_PHASE, INVERTERS_THREE_PHASE, ADMIN_PARAMS.grossMarginReference);
 
 // Snapshot of original defaults — captured at module load time so we can
 // always compute "the current state" (defaults + applied overrides) and
@@ -72,7 +62,7 @@ const ORIGINAL = {
   adminParams: deepClone(ADMIN_PARAMS),
   panelSettings: deepClone(PANEL_SETTINGS),
   invertersSinglePhase: deepClone(INVERTERS_SINGLE_PHASE),
-  invertersThreePhase: deepClone(INVERTERS_THREE_PHASE),
+  invertersThreePhase:  deepClone(INVERTERS_THREE_PHASE),
   devices: deepClone(DEVICES),
 };
 
@@ -83,7 +73,7 @@ const _subscribers = new Set();
 // defaults if the network is unreachable.
 export async function load() {
   try {
-    const res = await fetch(API_URL, { method: "GET", cache: "no-store" });
+    const res = await fetch(API_URL, { method: 'GET', cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const overrides = await res.json();
     applyOverrides(overrides);
@@ -92,11 +82,8 @@ export async function load() {
     // Local dev or network failure → defaults stay in place. Save will be
     // disabled but the calculator still works. We log for diagnostics; the
     // UI surfaces the unreachable state via isLoadedFromServer() = false.
-    if (typeof console !== "undefined") {
-      console.warn(
-        "[paramsService] load() failed; falling back to defaults:",
-        err,
-      );
+    if (typeof console !== 'undefined') {
+      console.warn('[paramsService] load() failed; falling back to defaults:', err);
     }
     resetToDefaults();
     _loadedFromServer = false;
@@ -110,18 +97,22 @@ export async function load() {
 // server verifies the token, looks up the caller's role in `user_roles`, and
 // enforces the section-allowlist for that role. `role` is still sent for
 // server-side logging / defensive checks, but the JWT is the source of truth.
+//
+// NOTE: upstream v3-207 passed a shared password here
+// (`save(snapshot, password, role)`); this deployment authenticates per-user
+// through Supabase instead, so the password argument is gone.
 export async function save(snapshot, role) {
   try {
     const token = await getAccessToken();
     if (!token) {
-      return { ok: false, error: "Not signed in — please log in again." };
+      return { ok: false, error: 'Not signed in — please log in again.' };
     }
     const res = await fetch(API_URL, {
-      method: "PUT",
+      method: 'PUT',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
-        "x-solviva-role": role || "",
+        'x-solviva-role': role || '',
       },
       body: JSON.stringify(snapshot),
     });
@@ -143,14 +134,12 @@ export function getSnapshot() {
     adminParams: deepClone(ADMIN_PARAMS),
     panelSettings: deepClone(PANEL_SETTINGS),
     invertersSinglePhase: deepClone(INVERTERS_SINGLE_PHASE),
-    invertersThreePhase: deepClone(INVERTERS_THREE_PHASE),
+    invertersThreePhase:  deepClone(INVERTERS_THREE_PHASE),
     devices: deepClone(DEVICES),
   };
 }
 
-export function isLoadedFromServer() {
-  return _loadedFromServer;
-}
+export function isLoadedFromServer() { return _loadedFromServer; }
 
 // Subscribe to changes (used by App after a save persists, so all subscribed
 // components re-render with the new live values).
@@ -191,32 +180,16 @@ function deepClone(v) {
 export function stripLegacyPriceKeys(ap) {
   const DERIVED = [
     // v3-92 — the flat grossMargin scalar is dead (replaced by the capacity curve).
-    "grossMargin",
-    "mountingSupportFloorPrice",
-    "additionalDcCablePerMeter",
-    "additionalAcCablePerMeter",
-    "laborInstallationPerKwp",
-    "rsdVariablePerPanel",
-    "rsdFixedTransmitter",
-    "roofAsphaltPerKwp",
-    "roofConcretePerKwp",
-    "cebuFixedFee",
-    "cebuPerPanel",
-    "siargaoFixedFee",
-    "siargaoPerPanel",
-    "luzonOver30FixedFee",
-    "luzonOver30PerKm",
-    "rsdStandaloneLaborPerPanel",
-    "rsdStandaloneLaborMobilization",
-    "inverterStandaloneLaborPerUnit",
-    "inverterStandaloneMobilization",
-    "fixedOverheadDeliveryLogistics",
-    "fixedOverheadWarehouse",
-    "fixedOverheadCustoms",
-    "fixedOverheadSafetySupervision",
-    "fixedOverheadTesting",
-    "preventiveMaintenancePerPanel",
-    "preventiveMaintenancePerVisit",
+    'grossMargin',
+    'mountingSupportFloorPrice', 'additionalDcCablePerMeter', 'additionalAcCablePerMeter',
+    'laborInstallationPerKwp', 'rsdVariablePerPanel', 'rsdFixedTransmitter',
+    'roofAsphaltPerKwp', 'roofConcretePerKwp', 'cebuFixedFee', 'cebuPerPanel',
+    'siargaoFixedFee', 'siargaoPerPanel', 'luzonOver30FixedFee', 'luzonOver30PerKm',
+    'rsdStandaloneLaborPerPanel', 'rsdStandaloneLaborMobilization',
+    'inverterStandaloneLaborPerUnit', 'inverterStandaloneMobilization',
+    'fixedOverheadDeliveryLogistics', 'fixedOverheadWarehouse', 'fixedOverheadCustoms',
+    'fixedOverheadSafetySupervision', 'fixedOverheadTesting',
+    'preventiveMaintenancePerPanel', 'preventiveMaintenancePerVisit',
   ];
   for (const k of DERIVED) delete ap[k];
   return ap;
@@ -230,12 +203,10 @@ export function stripLegacyRateKeys(ap) {
 }
 
 export function migrateLegacyMinDp(ap) {
-  if (!ap || typeof ap !== "object") return ap;
+  if (!ap || typeof ap !== 'object') return ap;
   const legacy = ap.minDownPaymentPct;
   if (
-    typeof legacy === "number" &&
-    Number.isFinite(legacy) &&
-    legacy > 0 &&
+    typeof legacy === 'number' && Number.isFinite(legacy) && legacy > 0 &&
     !Array.isArray(ap.minDpTiers)
   ) {
     ap.minDpTiers = [{ fromNetPrice: 0, minDpPct: legacy }];
@@ -251,51 +222,74 @@ export function migrateLegacyMinDp(ap) {
 // deliveryLocations array in a post-v3-116 blob always wins. Exported for the
 // smoke harness (migrateLegacyMinDp precedent).
 export function migrateLegacyDeliveryLocations(ap) {
-  if (!ap || typeof ap !== "object") return;
-  const hasLegacy =
-    "cebuFixedFeeCogs" in ap ||
-    "cebuPerPanelCogs" in ap ||
-    "siargaoFixedFeeCogs" in ap ||
-    "siargaoPerPanelCogs" in ap;
+  if (!ap || typeof ap !== 'object') return;
+  const hasLegacy = 'cebuFixedFeeCogs' in ap || 'cebuPerPanelCogs' in ap
+                 || 'siargaoFixedFeeCogs' in ap || 'siargaoPerPanelCogs' in ap;
   if (hasLegacy && !Array.isArray(ap.deliveryLocations)) {
     const def = ADMIN_PARAMS.deliveryLocations || [];
-    const d = (id) => def.find((l) => l.id === id) || {};
+    const d = (id) => def.find(l => l.id === id) || {};
     ap.deliveryLocations = [
-      {
-        id: "cebu",
-        label: "Cebu",
-        fixedFeeCogs: ap.cebuFixedFeeCogs ?? d("cebu").fixedFeeCogs,
-        perPanelCogs: ap.cebuPerPanelCogs ?? d("cebu").perPanelCogs,
-        fixedFee: 0,
-        perPanel: 0,
-        available: true,
-      },
-      {
-        id: "siargao",
-        label: "Siargao",
-        fixedFeeCogs: ap.siargaoFixedFeeCogs ?? d("siargao").fixedFeeCogs,
-        perPanelCogs: ap.siargaoPerPanelCogs ?? d("siargao").perPanelCogs,
-        fixedFee: 0,
-        perPanel: 0,
-        available: true,
-      },
+      { id: 'cebu', label: 'Cebu',
+        fixedFeeCogs: ap.cebuFixedFeeCogs ?? d('cebu').fixedFeeCogs,
+        perPanelCogs: ap.cebuPerPanelCogs ?? d('cebu').perPanelCogs,
+        fixedFee: 0, perPanel: 0, available: true },
+      { id: 'siargao', label: 'Siargao',
+        fixedFeeCogs: ap.siargaoFixedFeeCogs ?? d('siargao').fixedFeeCogs,
+        perPanelCogs: ap.siargaoPerPanelCogs ?? d('siargao').perPanelCogs,
+        fixedFee: 0, perPanel: 0, available: true },
     ];
   }
-  delete ap.cebuFixedFeeCogs;
-  delete ap.cebuFixedFee;
-  delete ap.cebuPerPanelCogs;
-  delete ap.cebuPerPanel;
-  delete ap.siargaoFixedFeeCogs;
-  delete ap.siargaoFixedFee;
-  delete ap.siargaoPerPanelCogs;
-  delete ap.siargaoPerPanel;
+  delete ap.cebuFixedFeeCogs;  delete ap.cebuFixedFee;
+  delete ap.cebuPerPanelCogs;  delete ap.cebuPerPanel;
+  delete ap.siargaoFixedFeeCogs; delete ap.siargaoFixedFee;
+  delete ap.siargaoPerPanelCogs; delete ap.siargaoPerPanel;
+}
+
+// v3-191 — legacy-blob seed for the phase-split margin curve, the per-phase
+// panels-without-inverter margins, and the componentMargins object
+// (v3-54/75/116 migration pattern). A pre-v3-191 blob priced every quote off
+// ONE curve (its single-phase keys) with non-full-system orders at ITS OWN
+// grossMarginMax — so, to guarantee ZERO price drift across the deploy
+// boundary, every missing v3-191 key seeds from the BLOB'S values, never the
+// bundled defaults:
+//   • each missing Tp anchor ← the blob's single-phase counterpart
+//   • each missing no-inverter margin ← the blob's grossMarginMax
+//   • a missing componentMargins ← all-follow with fixed/otherwise = the
+//     blob's grossMarginMax (normalizeComponentMargins does exactly this
+//     when handed the blob's grossMarginMax — see calculations.js)
+// A blob that already carries the keys wins untouched. Runs on the OVERRIDE
+// object before Object.assign; the seeded keys persist to Blob storage on
+// the next admin Save. Exported for the smoke harness.
+export function seedPhaseAndComponentMargins(ap) {
+  if (!ap || typeof ap !== 'object') return ap;
+  const TP_FROM_SP = {
+    grossMarginMinKwpTp: 'grossMarginMinKwp',
+    grossMarginMidKwpTp: 'grossMarginMidKwp',
+    grossMarginMaxKwpTp: 'grossMarginMaxKwp',
+    grossMarginMinTp:    'grossMarginMin',
+    grossMarginMidTp:    'grossMarginMid',
+    grossMarginMaxTp:    'grossMarginMax',
+  };
+  for (const [tpKey, spKey] of Object.entries(TP_FROM_SP)) {
+    if (!Number.isFinite(ap[tpKey]) && Number.isFinite(ap[spKey])) ap[tpKey] = ap[spKey];
+  }
+  if (Number.isFinite(ap.grossMarginMax)) {
+    if (!Number.isFinite(ap.grossMarginNoInverterSp)) ap.grossMarginNoInverterSp = ap.grossMarginMax;
+    if (!Number.isFinite(ap.grossMarginNoInverterTp)) ap.grossMarginNoInverterTp = ap.grossMarginMax;
+    if (!ap.componentMargins || typeof ap.componentMargins !== 'object') {
+      normalizeComponentMargins(ap);   // seeds all ids from ap.grossMarginMax
+    }
+  }
+  // A blob with NO grossMarginMax at all (fresh install, empty blob) carries
+  // no margin state to preserve — the bundled defaults stand.
+  return ap;
 }
 
 // Apply server-supplied overrides by MUTATING the imported objects.
 // This is what makes calculations.js see the live values without refactor.
 function applyOverrides(overrides) {
   resetToDefaults();
-  if (!overrides || typeof overrides !== "object") return;
+  if (!overrides || typeof overrides !== 'object') return;
 
   // v3-54 legacy-blob migration: the 6 flat battery keys
   // (batteryPer5kWhPrice, batteryRackPer3Cap, batteryAtsPrice,
@@ -306,36 +300,34 @@ function applyOverrides(overrides) {
   // exactly. This guarantees zero math drift across the v3-53 → v3-54
   // deploy boundary. The legacy keys are stripped from the override so they
   // don't leak through Object.assign onto ADMIN_PARAMS.
-  if (overrides.adminParams && typeof overrides.adminParams === "object") {
+  if (overrides.adminParams && typeof overrides.adminParams === 'object') {
     const ap = overrides.adminParams;
-    migrateLegacyDeliveryLocations(ap); // v3-116 — before the clone captures
-    const hasLegacyKeys =
-      "batteryPer5kWhPrice" in ap ||
-      "batteryRackPer3Cap" in ap ||
-      "batteryAtsPrice" in ap ||
-      "batteryCriticalLoadsMaterials" in ap ||
-      "batteryLaborWithSolarInstall" in ap ||
-      "batteryStandaloneLabor" in ap;
+    migrateLegacyDeliveryLocations(ap);   // v3-116 — before the clone captures
+    seedPhaseAndComponentMargins(ap);     // v3-191 — before the clone captures
+    const hasLegacyKeys = (
+      'batteryPer5kWhPrice' in ap ||
+      'batteryRackPer3Cap' in ap ||
+      'batteryAtsPrice' in ap ||
+      'batteryCriticalLoadsMaterials' in ap ||
+      'batteryLaborWithSolarInstall' in ap ||
+      'batteryStandaloneLabor' in ap
+    );
     if (hasLegacyKeys && !Array.isArray(ap.batteryPackages)) {
       // Build a single legacy-equivalent package using the blob's values,
       // falling back to current defaults for any missing field.
       const def = ADMIN_PARAMS.batteryPackages?.[0] || {};
-      ap.batteryPackages = [
-        {
-          id: def.id || "pkg5kwh01",
-          label: def.label || "5 kWh",
-          batteryUnitKwh: 5,
-          batteryRackCapacity: 3,
-          batteryUnitPrice: ap.batteryPer5kWhPrice ?? def.batteryUnitPrice,
-          batteryRackPrice: ap.batteryRackPer3Cap ?? def.batteryRackPrice,
-          atsPrice: ap.batteryAtsPrice ?? def.atsPrice,
-          criticalLoadsMaterials:
-            ap.batteryCriticalLoadsMaterials ?? def.criticalLoadsMaterials,
-          laborWithSolarInstall:
-            ap.batteryLaborWithSolarInstall ?? def.laborWithSolarInstall,
-          standaloneLabor: ap.batteryStandaloneLabor ?? def.standaloneLabor,
-        },
-      ];
+      ap.batteryPackages = [{
+        id: def.id || 'pkg5kwh01',
+        label: def.label || '5 kWh',
+        batteryUnitKwh: 5,
+        batteryRackCapacity: 3,
+        batteryUnitPrice:        ap.batteryPer5kWhPrice           ?? def.batteryUnitPrice,
+        batteryRackPrice:        ap.batteryRackPer3Cap            ?? def.batteryRackPrice,
+        atsPrice:                ap.batteryAtsPrice               ?? def.atsPrice,
+        criticalLoadsMaterials:  ap.batteryCriticalLoadsMaterials ?? def.criticalLoadsMaterials,
+        laborWithSolarInstall:   ap.batteryLaborWithSolarInstall  ?? def.laborWithSolarInstall,
+        standaloneLabor:         ap.batteryStandaloneLabor        ?? def.standaloneLabor,
+      }];
     }
     // Strip the legacy keys regardless (whether we migrated them or there
     // are also batteryPackages alongside them — the new key wins).
@@ -375,42 +367,45 @@ function applyOverrides(overrides) {
     // Fix: clone the source arrays into local refs first, then assign without
     // aliasing.
     const tiersFromOverride = Array.isArray(overrides.adminParams.cablingTiers)
-      ? overrides.adminParams.cablingTiers.map((t) => ({ ...t }))
+      ? overrides.adminParams.cablingTiers.map(t => ({ ...t }))
       : null;
-    const tiers3pFromOverride = Array.isArray(
-      overrides.adminParams.cablingTiersThreePhase,
-    )
-      ? overrides.adminParams.cablingTiersThreePhase.map((t) => ({ ...t }))
+    const tiers3pFromOverride = Array.isArray(overrides.adminParams.cablingTiersThreePhase)
+      ? overrides.adminParams.cablingTiersThreePhase.map(t => ({ ...t }))
       : null;
     const promosFromOverride = Array.isArray(overrides.adminParams.promoCodes)
-      ? overrides.adminParams.promoCodes.map((p) => ({ ...p }))
+      ? overrides.adminParams.promoCodes.map(p => ({ ...p }))
       : null;
-    const battPkgsFromOverride = Array.isArray(
-      overrides.adminParams.batteryPackages,
-    )
-      ? overrides.adminParams.batteryPackages.map((p) => ({ ...p }))
+    const battPkgsFromOverride = Array.isArray(overrides.adminParams.batteryPackages)
+      ? overrides.adminParams.batteryPackages.map(p => ({ ...p }))
       : null;
-    const minDpTiersFromOverride = Array.isArray(
-      overrides.adminParams.minDpTiers,
-    )
-      ? overrides.adminParams.minDpTiers.map((t) => ({ ...t }))
+    const minDpTiersFromOverride = Array.isArray(overrides.adminParams.minDpTiers)
+      ? overrides.adminParams.minDpTiers.map(t => ({ ...t }))
       : null;
-    const deliveryLocationsFromOverride = Array.isArray(
-      overrides.adminParams.deliveryLocations,
-    )
-      ? overrides.adminParams.deliveryLocations.map((l) => ({ ...l }))
+    const deliveryLocationsFromOverride = Array.isArray(overrides.adminParams.deliveryLocations)
+      ? overrides.adminParams.deliveryLocations.map(l => ({ ...l }))
       : null;
     // v3-138 — misc catalog. Same treatment as deliveryLocations: an EMPTY
     // saved array is a valid state (Step 2F falls back to free-form only), so
     // assign whenever the override carried the key rather than gating on
     // length the way minDpTiers does.
-    const miscCatalogFromOverride = Array.isArray(
-      overrides.adminParams.miscCatalog,
-    )
-      ? overrides.adminParams.miscCatalog.map((m) => ({ ...m }))
+    const miscCatalogFromOverride = Array.isArray(overrides.adminParams.miscCatalog)
+      ? overrides.adminParams.miscCatalog.map(m => ({ ...m }))
       : null;
+    // v3-191 — componentMargins is a NESTED object: the same aliasing hazard
+    // as the arrays above (Object.assign copies the reference, after which
+    // ADMIN_PARAMS.componentMargins and the override point at ONE object and
+    // any in-place edit corrupts both). Deep-clone per entry.
+    const componentMarginsFromOverride =
+      overrides.adminParams.componentMargins && typeof overrides.adminParams.componentMargins === 'object'
+        ? Object.fromEntries(Object.entries(overrides.adminParams.componentMargins)
+            .map(([k, v]) => [k, { ...(v || {}) }]))
+        : null;
 
     Object.assign(ADMIN_PARAMS, overrides.adminParams);
+
+    if (componentMarginsFromOverride) {
+      ADMIN_PARAMS.componentMargins = componentMarginsFromOverride;
+    }
 
     if (tiersFromOverride) {
       ADMIN_PARAMS.cablingTiers = tiersFromOverride;
@@ -423,8 +418,7 @@ function applyOverrides(overrides) {
       // LIVE single-phase tiers via the uplift factors so the seed tracks any
       // admin customizations — not from the bundled code defaults. It becomes
       // a persisted, independently-editable key on the next admin Save.
-      ADMIN_PARAMS.cablingTiersThreePhase =
-        deriveThreePhaseCablingTiers(tiersFromOverride);
+      ADMIN_PARAMS.cablingTiersThreePhase = deriveThreePhaseCablingTiers(tiersFromOverride);
     }
     // (No override at all → bundled default from adminParams.js stands.)
     if (promosFromOverride) {
@@ -450,16 +444,10 @@ function applyOverrides(overrides) {
   }
   if (overrides.panelSettings) {
     if (overrides.panelSettings.singlePhase) {
-      Object.assign(
-        PANEL_SETTINGS.singlePhase,
-        overrides.panelSettings.singlePhase,
-      );
+      Object.assign(PANEL_SETTINGS.singlePhase, overrides.panelSettings.singlePhase);
     }
     if (overrides.panelSettings.threePhase) {
-      Object.assign(
-        PANEL_SETTINGS.threePhase,
-        overrides.panelSettings.threePhase,
-      );
+      Object.assign(PANEL_SETTINGS.threePhase, overrides.panelSettings.threePhase);
     }
   }
   if (Array.isArray(overrides.invertersSinglePhase)) {
@@ -502,67 +490,41 @@ function applyOverrides(overrides) {
   const backfillInverters = (live, defaults, label) => {
     for (const inv of live) {
       if (Number.isFinite(inv.cogs) && inv.cogs > 0) continue;
-      const def = defaults.find((d) => d.ratedKw === inv.ratedKw);
-      inv.cogs =
-        def && Number.isFinite(def.cogs) && def.cogs > 0
-          ? def.cogs
-          : cogsFromDirect(
-              inv.directPrice,
-              ADMIN_PARAMS,
-              ADMIN_PARAMS.grossMarginReference,
-            );
+      const def = defaults.find(d => d.ratedKw === inv.ratedKw);
+      inv.cogs = def && Number.isFinite(def.cogs) && def.cogs > 0
+        ? def.cogs
+        : cogsFromDirect(inv.directPrice, ADMIN_PARAMS, ADMIN_PARAMS.grossMarginReference);
       if (!(inv.cogs > 0)) {
-        console.warn(
-          `[Solviva params] ${label} ${inv.ratedKw}kW has neither COGS nor a usable price.`,
-        );
+        console.warn(`[Solviva params] ${label} ${inv.ratedKw}kW has neither COGS nor a usable price.`);
       }
     }
   };
-  backfillInverters(
-    INVERTERS_SINGLE_PHASE,
-    ORIGINAL.invertersSinglePhase,
-    "single-phase inverter",
-  );
-  backfillInverters(
-    INVERTERS_THREE_PHASE,
-    ORIGINAL.invertersThreePhase,
-    "three-phase inverter",
-  );
+  backfillInverters(INVERTERS_SINGLE_PHASE, ORIGINAL.invertersSinglePhase, 'single-phase inverter');
+  backfillInverters(INVERTERS_THREE_PHASE,  ORIGINAL.invertersThreePhase,  'three-phase inverter');
 
-  for (const key of ["singlePhase", "threePhase"]) {
+  for (const key of ['singlePhase', 'threePhase']) {
     const ps = PANEL_SETTINGS[key];
     if (ps && !(Number.isFinite(ps.panelCogs) && ps.panelCogs > 0)) {
-      ps.panelCogs =
-        ORIGINAL.panelSettings[key]?.panelCogs ||
-        cogsFromDirect(
-          ps.panelDirectPrice,
-          ADMIN_PARAMS,
-          ADMIN_PARAMS.grossMarginReference,
-        );
+      ps.panelCogs = ORIGINAL.panelSettings[key]?.panelCogs
+                  || cogsFromDirect(ps.panelDirectPrice, ADMIN_PARAMS, ADMIN_PARAMS.grossMarginReference);
     }
   }
 
   const BATT_COGS = {
-    batteryUnitCogs: "batteryUnitPrice",
-    batteryRackCogs: "batteryRackPrice",
-    atsCogs: "atsPrice",
-    criticalLoadsMaterialsCogs: "criticalLoadsMaterials",
-    laborWithSolarInstallCogs: "laborWithSolarInstall",
-    standaloneLaborCogs: "standaloneLabor",
+    batteryUnitCogs: 'batteryUnitPrice',
+    batteryRackCogs: 'batteryRackPrice',
+    atsCogs: 'atsPrice',
+    criticalLoadsMaterialsCogs: 'criticalLoadsMaterials',
+    laborWithSolarInstallCogs: 'laborWithSolarInstall',
+    standaloneLaborCogs: 'standaloneLabor',
   };
   for (const pkg of ADMIN_PARAMS.batteryPackages || []) {
-    const def = (ORIGINAL.adminParams.batteryPackages || []).find(
-      (d) => d.id === pkg.id,
-    );
+    const def = (ORIGINAL.adminParams.batteryPackages || []).find(d => d.id === pkg.id);
     for (const [cogsKey, priceKey] of Object.entries(BATT_COGS)) {
-      if (Number.isFinite(pkg[cogsKey])) continue; // 0 is legitimate (16 kWh rack)
+      if (Number.isFinite(pkg[cogsKey])) continue;   // 0 is legitimate (16 kWh rack)
       pkg[cogsKey] = Number.isFinite(def?.[cogsKey])
         ? def[cogsKey]
-        : cogsFromDirect(
-            pkg[priceKey],
-            ADMIN_PARAMS,
-            ADMIN_PARAMS.grossMarginReference,
-          );
+        : cogsFromDirect(pkg[priceKey], ADMIN_PARAMS, ADMIN_PARAMS.grossMarginReference);
     }
   }
 
@@ -579,13 +541,13 @@ function applyOverrides(overrides) {
   // Runs after Object.assign, so a stored blob's COGS overrides are already in
   // place — and any STALE directPrice values a pre-v3-83 blob still carries are
   // overwritten here rather than silently winning.
-  deriveDirectPrices(
-    ADMIN_PARAMS,
-    PANEL_SETTINGS,
-    INVERTERS_SINGLE_PHASE,
-    INVERTERS_THREE_PHASE,
-    ADMIN_PARAMS.grossMarginReference,
-  );
+  // v3-191 — shape-harden componentMargins first (missing ids, bad modes,
+  // non-finite margins all repair from the LIVE grossMarginMax) so the quote
+  // resolver never reads a malformed entry. Boot derivation itself still
+  // prices every key at the scalar reference margin, exactly as pre-v3-191.
+  normalizeComponentMargins(ADMIN_PARAMS);
+  deriveDirectPrices(ADMIN_PARAMS, PANEL_SETTINGS, INVERTERS_SINGLE_PHASE, INVERTERS_THREE_PHASE, ADMIN_PARAMS.grossMarginReference);
+
 }
 
 function resetToDefaults() {
@@ -597,7 +559,7 @@ function resetToDefaults() {
 
   // Reset panel settings
   Object.assign(PANEL_SETTINGS.singlePhase, ORIGINAL.panelSettings.singlePhase);
-  Object.assign(PANEL_SETTINGS.threePhase, ORIGINAL.panelSettings.threePhase);
+  Object.assign(PANEL_SETTINGS.threePhase,  ORIGINAL.panelSettings.threePhase);
 
   // Reset inverter arrays
   INVERTERS_SINGLE_PHASE.length = 0;
@@ -616,3 +578,4 @@ function resetToDefaults() {
 }
 
 export { BASELINE_RATE };
+
