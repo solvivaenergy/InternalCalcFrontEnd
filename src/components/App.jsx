@@ -31,6 +31,7 @@ import Calculator from './Calculator.jsx';
 import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
+import AuditHistory from './AuditHistory.jsx';
 import MobileFlow from './MobileFlow.jsx';
 // ── Supabase user management (this deployment's replacement for upstream
 // v3-207's shared-password AuthDialog sign-in). Identity and role come from
@@ -226,7 +227,7 @@ const GENERATED_DATE_KEY  = 'solviva_generated_date';
 // adminAccess !== 'none'. Shared by App (content mount, bounce effect,
 // LiveTotalBar suppression) and Tabs (strip composition). Order here IS the
 // strip order after the divider.
-const ADMIN_TAB_IDS = ['inventory', 'engineering', 'product', 'finco'];
+const ADMIN_TAB_IDS = ['inventory', 'engineering', 'product', 'finco', 'audit-history'];
 // Labels for the admin half of the v3-203 tab strip. Order here IS the strip
 // order. EVERY admin tier sees all four (v3-203 D2) — the read/write split is
 // per-section inside each tab, not per-tab.
@@ -236,6 +237,7 @@ const ADMIN_TAB_META = [
   { id: 'product',     label: 'Product',     admin: true },
   { id: 'finco',       label: 'FinCo',       admin: true },
 ];
+const ADMIN_AUDIT_TAB = { id: 'audit-history', label: 'Audit History', admin: true };
 
 // v3-203 — Staff Sign-in key glyph (approved option E): the Solviva radiant
 // sun simplified to eight rays as the key head (the logo's twelve V-chevrons
@@ -1214,7 +1216,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // all. Per-tab gating is deliberately absent (v3-203 D2): every admin tier
     // may OPEN every admin tab; what differs is whether its sections are
     // editable or read-only.
-    if (adminAccess === 'none' && ADMIN_TAB_IDS.includes(activeTab)) {
+    if (
+      (adminAccess === 'none' || adminAccess !== 'edit') &&
+      activeTab === 'audit-history'
+    ) {
+      setActiveTab('calculator');
+    } else if (adminAccess === 'none' && ADMIN_TAB_IDS.includes(activeTab)) {
       setActiveTab('calculator');
     }
   }, [activeTab, model.terms.negativeBalance, adminAccess]);
@@ -1375,17 +1382,23 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             count (model.panelCount, never state.panelCount). */}
         {adminAccess !== 'none' && ADMIN_TAB_IDS.includes(activeTab) && (
           <>
-            <MaintenanceModeBlock
-              accessLevel={adminAccess}
-              savingDisabled={!paramsLoadedFromServer}
-            />
-            <AdminShell
-              tab={activeTab}
-              accessLevel={adminAccess}
-              onLogout={handleAdminLogout}
-              savingDisabled={!paramsLoadedFromServer}
-              calcPanelCount={model.panelCount}
-            />
+            {activeTab === 'audit-history' ? (
+              <AuditHistory accessLevel={adminAccess} />
+            ) : (
+              <>
+                <MaintenanceModeBlock
+                  accessLevel={adminAccess}
+                  savingDisabled={!paramsLoadedFromServer}
+                />
+                <AdminShell
+                  tab={activeTab}
+                  accessLevel={adminAccess}
+                  onLogout={handleAdminLogout}
+                  savingDisabled={!paramsLoadedFromServer}
+                  calcPanelCount={model.panelCount}
+                />
+              </>
+            )}
           </>
         )}
       </main>
@@ -1985,7 +1998,9 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
     // Product and FinCo tabs but not edit them, and vice versa. The backend
     // re-enforces the same allowlist on PUT /api/parameters, so read-only here
     // is a UI affordance over a real server-side boundary, not the boundary.
-    ...(adminAccess !== 'none' ? ADMIN_TAB_META : []),
+    ...(adminAccess !== 'none'
+      ? [...ADMIN_TAB_META, ...(adminAccess === 'edit' ? [ADMIN_AUDIT_TAB] : [])]
+      : []),
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
   const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;

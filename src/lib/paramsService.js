@@ -55,6 +55,9 @@ const API_BASE = (
 const API_URL = API_BASE
   ? `${API_BASE}/api/parameters`
   : "/.netlify/functions/parameters";
+const AUDIT_API_URL = API_BASE
+  ? `${API_BASE}/api/parameter-audit`
+  : "/.netlify/functions/parameter-audit";
 
 // ═══ v3-83 — DERIVE ON MODULE LOAD, BEFORE ANYTHING ELSE ═════════════════════
 // `directPrice` / `panelDirectPrice` / `batteryUnitPrice` … ship as 0 in the data
@@ -144,6 +147,30 @@ export async function save(snapshot, role) {
     applyOverrides(snapshot);
     notify();
     return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+}
+
+export async function getAuditHistory(role, limit = 100) {
+  try {
+    const token = await getAccessToken();
+    if (!token)
+      return { ok: false, error: "Not signed in — please log in again." };
+    const res = await fetch(
+      `${AUDIT_API_URL}?limit=${encodeURIComponent(limit)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "x-solviva-role": role || "",
+        },
+        cache: "no-store",
+      },
+    );
+    const body = await res.json().catch(() => []);
+    if (!res.ok)
+      return { ok: false, error: body.error || `HTTP ${res.status}` };
+    return { ok: true, events: Array.isArray(body) ? body : [] };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
