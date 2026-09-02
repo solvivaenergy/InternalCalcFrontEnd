@@ -287,6 +287,11 @@ function drawFooter(mgr, opts = {}) {
   const { doc, pageNumber } = mgr;
   const footerY = PAGE_H - 12;
 
+  if (opts.scheduleExact) {
+    drawScheduleFooterFigma(mgr);
+    return;
+  }
+
   if (!opts.noSignatureLine) drawPageSignatureLine(doc);
 
   if (opts.figmaExact) {
@@ -2656,22 +2661,61 @@ function drawSnapshotPage(mgr, pngDataUrl, opts = {}) {
 
 // ─── Schedule of Payments — vector autotable ─────────────────────────────────
 
+function drawScheduleHeaderFigma(mgr) {
+  const { doc, ctx } = mgr;
+  const logoData = ctx.assets?.logo;
+  if (logoData) {
+    const props = doc.getImageProperties(logoData);
+    const targetHeight = fxmm(136);
+    const targetWidth = targetHeight * (props.width / props.height);
+    doc.addImage(
+      logoData,
+      "PNG",
+      fxmm(88),
+      fxmm(89),
+      targetWidth,
+      targetHeight,
+    );
+  }
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(fxpt(32));
+  doc.setTextColor(73, 73, 73);
+  doc.text(`Reference ID ${ctx.quoteRef}`, fxmm(2389), fxmm(107), {
+    align: "right",
+  });
+  doc.text(
+    `Quotation valid until ${fmtDate(ctx.validUntil)}`,
+    fxmm(2389),
+    fxmm(164),
+    {
+      align: "right",
+    },
+  );
+  doc.setFont("helvetica", "semibold");
+  doc.setFontSize(fxpt(48));
+  doc.setTextColor(0, 106, 198);
+  doc.text("Schedule of payments", fxmm(85), fxmm(321), { baseline: "top" });
+}
+
+function drawScheduleFooterFigma(mgr) {
+  const { doc, ctx, pageNumber } = mgr;
+  mgr.footerStamps.push({ pageNumber, y: fxmm(3380), figmaExact: true });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(fxpt(32));
+  doc.setTextColor(73, 73, 73);
+  doc.text("www. solvivaenergy.com", fxmm(94), fxmm(3380), { baseline: "top" });
+  doc.text(String(pageNumber), fxmm(2392), fxmm(3380), {
+    align: "right",
+    baseline: "top",
+  });
+}
+
 function drawSchedulePage(mgr) {
   const { ctx } = mgr;
   const { model } = ctx;
   const annex = model.annex || { rows: [] };
 
-  drawTopHeaderFigma(mgr);
-  mgr.y += 2;
-
-  // Match the image's blue header
-  mgr.doc.setFont("helvetica", "semibold");
-  mgr.doc.setFontSize(fxpt(64));
-  mgr.doc.setTextColor(0, 106, 198);
-  mgr.doc.text("Schedule of payments", MARGIN, mgr.y + 4);
-
-  // Space before the table starts
-  mgr.y += 10;
+  drawScheduleHeaderFigma(mgr);
 
   // Schedule rows table
   const rows = (annex.rows || []).filter(
@@ -2700,31 +2744,24 @@ function drawSchedulePage(mgr) {
     r.savings != null && r.savings > 0 ? peso(r.savings) : "-",
   ]);
 
-  // ---------------------------------------------------------------------------
-  // FIX: Intercept addPage to draw the background and headers BEFORE AutoTable
-  // draws the rows. This prevents the background from covering the table.
-  // ---------------------------------------------------------------------------
+  const scheduleLeft = fxmm(87);
+  const scheduleRight = fxmm(87);
+  const scheduleTop = fxmm(404);
+
+  // AutoTable silently creates continuation pages, so each one needs the same
+  // Figma background, header, and footer before its rows are drawn.
   const originalAddPage = mgr.doc.addPage.bind(mgr.doc);
   mgr.doc.addPage = function () {
     originalAddPage(...arguments);
     mgr.pageNumber++; // Keep our global page tracker perfectly in sync
 
-    // Draw base layers first
-    if (typeof drawPageBackground === "function") drawPageBackground(mgr);
-    if (typeof drawFooter === "function") drawFooter(mgr);
-
-    // Draw top header and title
-    mgr.y = MARGIN;
-    if (typeof drawTopHeaderFigma === "function") drawTopHeaderFigma(mgr);
-
-    mgr.doc.setFont("helvetica", "semibold");
-    mgr.doc.setFontSize(fxpt(64));
-    mgr.doc.setTextColor(0, 106, 198);
-    mgr.doc.text("Schedule of payments", MARGIN, mgr.y + 4);
+    drawPageBackground(mgr);
+    drawScheduleFooterFigma(mgr);
+    drawScheduleHeaderFigma(mgr);
   };
 
   autoTable(mgr.doc, {
-    startY: mgr.y,
+    startY: scheduleTop,
     head: [
       [
         "#",
@@ -2736,35 +2773,44 @@ function drawSchedulePage(mgr) {
       ],
     ],
     body,
-    margin: { left: MARGIN, right: MARGIN, top: MARGIN + 22, bottom: 25 },
+    margin: {
+      left: scheduleLeft,
+      right: scheduleRight,
+      top: scheduleTop,
+      bottom: fxmm(3380),
+    },
     styles: {
       font: "helvetica",
-      fontSize: 8,
-      cellPadding: 1.6, // Keeps 60 months fitting perfectly on 2 pages
-      textColor: C.textBody,
-      lineColor: [210, 210, 210],
+      fontSize: fxpt(32),
+      cellPadding: 0,
+      minCellHeight: fxmm(87),
+      valign: "middle",
+      fillColor: [252, 252, 252],
+      textColor: [52, 64, 84],
+      lineColor: [43, 43, 43],
       lineWidth: 0.15,
     },
     headStyles: {
       fillColor: [31, 82, 43], // Dark Green matching the image
-      textColor: [255, 255, 255],
-      fontStyle: "bold",
-      fontSize: 8,
+      textColor: [210, 255, 30],
+      fontStyle: "medium",
+      fontSize: fxpt(32),
+      minCellHeight: fxmm(87),
     },
     columnStyles: {
-      0: { cellWidth: 10, halign: "left" },
-      1: { cellWidth: 28, halign: "left" },
-      2: { cellWidth: "auto", halign: "left" },
-      3: { cellWidth: 30, halign: "left" },
-      4: { cellWidth: 32, halign: "left" },
-      5: { cellWidth: 28, halign: "left" },
+      0: { cellWidth: fxmm(85), halign: "center" },
+      1: { cellWidth: fxmm(469), halign: "left" },
+      2: { cellWidth: fxmm(572), halign: "left" },
+      3: { cellWidth: fxmm(389), halign: "left" },
+      4: { cellWidth: fxmm(448), halign: "left" },
+      5: { cellWidth: fxmm(340), halign: "left" },
     },
     didParseCell: function (data) {
       // Style the DP row exactly like the image
       if (data.section === "body" && data.row.index === 0) {
         data.cell.styles.fillColor = [100, 100, 100];
-        data.cell.styles.textColor = [255, 255, 255];
-        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.textColor = [252, 252, 252];
+        data.cell.styles.fontStyle = "medium";
       }
     },
     // We completely removed didDrawPage since our addPage override handles it securely.
@@ -2836,7 +2882,11 @@ function drawTermsAndConditions(mgr) {
           /{{QUOTE_VALIDITY_DAYS}}/g,
           ctx.adminParams?.quoteValidityDays || 30,
         )
-        .replace(/{{VALID_UNTIL}}/g, validityDate);
+        .replace(/{{VALID_UNTIL}}/g, validityDate)
+        .replace(
+          /{{LUZON_FREE_KM}}/g,
+          ctx.adminParams?.luzonFreeTravelKm || 30, // Pulls the '30' from the admin params
+        );
 
       // Track if this specific paragraph needs to be bold
       if (item.bold) {
@@ -3203,7 +3253,7 @@ export async function generateProposalPdf({
   // Pages 6-7: Schedule of Payments (RTO terms)
   // We only draw the schedule table if they are financing (tenor > 0)
   if (state.tenor > 0) {
-    newPage(mgr);
+    newPage(mgr, { scheduleExact: true });
     drawSchedulePage(mgr);
   }
 
