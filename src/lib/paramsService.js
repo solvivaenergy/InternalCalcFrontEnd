@@ -39,7 +39,11 @@ import { getAccessToken } from './supabaseClient.js';
 // edits reflect in quotes. When unset (local dev without the backend), we fall
 // back to the legacy Netlify Function + Netlify Blobs path so the calculator
 // still boots. Trailing slashes on the base are trimmed to avoid `//api`.
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const API_BASE = (
+  import.meta.env.DEV
+    ? "http://localhost:3000"
+    : import.meta.env.VITE_API_BASE_URL || ""
+).replace(/\/+$/, "");
 const API_URL = API_BASE
   ? `${API_BASE}/api/parameters`
   : '/.netlify/functions/parameters';
