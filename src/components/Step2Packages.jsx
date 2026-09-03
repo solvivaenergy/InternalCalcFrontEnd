@@ -575,7 +575,16 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             // standalone retrofit path).
                             const floor = recommended?.minPanelsFloor || 0;
                             const c = (v > 0 && v < floor) ? floor : v;
-                            updateState({ panelCount: c === recPanelCount ? null : c });
+                            const patch = { panelCount: c === recPanelCount ? null : c };
+                            // v3-143 — going standalone (0 panels) zeroes the
+                            // solar-excess battery recommendation; pin the
+                            // battery the rep is seeing so a battery-only
+                            // order doesn't silently drop to 0 kWh, matching
+                            // the Battery-only checkbox above.
+                            if (c === 0 && state.batteryKwh == null && batteryKwh > 0) {
+                              patch.batteryKwh = batteryKwh;
+                            }
+                            updateState(patch);
                           }}
                           min={0}
                           step={1}
