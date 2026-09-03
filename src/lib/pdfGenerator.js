@@ -138,12 +138,12 @@ async function fetchPublicFontBase64(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(`Unable to load PDF font: ${path}`);
   const bytes = new Uint8Array(await res.arrayBuffer());
+  // Byte-by-byte (no spread/apply) — spreading large chunks into
+  // String.fromCharCode blows the call stack once the engine's argument-list
+  // limit is hit, which varies with current stack depth and browser.
   let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(
-      ...bytes.subarray(offset, offset + chunkSize),
-    );
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
 }
@@ -2777,7 +2777,14 @@ function drawSchedulePage(mgr) {
       left: scheduleLeft,
       right: scheduleRight,
       top: scheduleTop,
-      bottom: fxmm(3380),
+      // v3-178 fix — this must be the RESERVED HEIGHT from the page bottom
+      // (autoTable's margin.bottom semantics), not the absolute Figma Y of
+      // the footer band. Passing fxmm(3380) directly left ~286mm of "margin"
+      // on a 297mm page — near-zero usable height — so any table needing to
+      // paginate (long tenors, 60 rows) fed autoTable a row taller than the
+      // page on every continuation page, spinning into its "row -1" infinite
+      // pagination bug and blowing the call stack.
+      bottom: PAGE_H - fxmm(3380),
     },
     styles: {
       font: "helvetica",
