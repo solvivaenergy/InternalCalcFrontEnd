@@ -2786,28 +2786,30 @@ function drawSchedulePage(mgr) {
       // pagination bug and blowing the call stack.
       bottom: PAGE_H - fxmm(3380),
     },
+    theme: "plain",
     styles: {
       font: "helvetica",
       fontSize: fxpt(32),
-      cellPadding: 0,
+      cellPadding: { top: 0, right: 2, bottom: 0, left: 3 }, // Keeps your previous padding fix
       minCellHeight: fxmm(87),
       valign: "middle",
-      fillColor: [252, 252, 252],
+      fillColor: [255, 255, 255], // Changed to pure white to match the image
       textColor: [52, 64, 84],
-      lineColor: [43, 43, 43],
-      lineWidth: 0.15,
+      lineColor: [210, 210, 210], // Lighter gray for the dividers
+      lineWidth: { bottom: 1.0 }, // This removes vertical lines and leaves only the bottom border
     },
     headStyles: {
-      fillColor: [31, 82, 43], // Dark Green matching the image
+      fillColor: [31, 82, 43],
       textColor: [210, 255, 30],
       fontStyle: "medium",
       fontSize: fxpt(32),
       minCellHeight: fxmm(87),
+      lineWidth: 0, // Removes the divider line from the green header block
     },
     columnStyles: {
-      0: { cellWidth: fxmm(85), halign: "center" },
+      0: { cellWidth: fxmm(125), halign: "center" },
       1: { cellWidth: fxmm(469), halign: "left" },
-      2: { cellWidth: fxmm(572), halign: "left" },
+      2: { cellWidth: fxmm(532), halign: "left" },
       3: { cellWidth: fxmm(389), halign: "left" },
       4: { cellWidth: fxmm(448), halign: "left" },
       5: { cellWidth: fxmm(340), halign: "left" },
@@ -2815,9 +2817,10 @@ function drawSchedulePage(mgr) {
     didParseCell: function (data) {
       // Style the DP row exactly like the image
       if (data.section === "body" && data.row.index === 0) {
-        data.cell.styles.fillColor = [100, 100, 100];
+        data.cell.styles.fillColor = [120, 120, 120]; // Adjusted to match the lighter gray in the new image
         data.cell.styles.textColor = [252, 252, 252];
         data.cell.styles.fontStyle = "medium";
+        data.cell.styles.lineWidth = 0; // Removes the bottom line so the block looks seamless
       }
     },
     // We completely removed didDrawPage since our addPage override handles it securely.
