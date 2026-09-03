@@ -267,6 +267,45 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           })}
         </div>
 
+        {/* v3-143 — Battery-only shortcut (rep-only). One click zeroes the
+            solar array for a storage-only order and pins the battery the rep
+            is seeing so it survives the loss of the solar-excess battery
+            recommendation (which drops to 0 without solar). Unchecking
+            restores the full auto solar + battery recommendation. */}
+        {!isCustomer && panelsAvailable && anyBatteryInStock && (
+          <div style={styles.consvBlock}>
+            <label style={styles.consvRow}>
+              <input
+                type="checkbox"
+                checked={panelCount === 0}
+                onChange={e => {
+                  if (e.target.checked) {
+                    const patch = { panelCount: 0 };
+                    // Pin the current battery so a storage-only order doesn't
+                    // silently drop to 0 kWh (rec can't size storage w/o solar).
+                    if (state.batteryKwh == null && batteryKwh > 0) {
+                      patch.batteryKwh = batteryKwh;
+                    }
+                    updateState(patch);
+                  } else {
+                    updateState({ panelCount: null, batteryKwh: null });
+                  }
+                }}
+                style={styles.consvCheckbox}
+              />
+              <span>
+                <span style={styles.consvLabel}>Battery-only order (no solar panels)</span>
+                <span style={styles.consvHint}>
+                  Storage-only quote: zeroes the solar array and prices the
+                  battery package on its own (standalone labor, plus ATS &amp;
+                  critical-loads materials unless unbundled below). The inverter
+                  is treated as client-supplied unless you add one in 2C.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+
         {/* v3-106 — panels out of stock for the selected phase. The quote is
             NOT blocked: the solar array is forced to 0 panels and the rest
             (batteries / inverters / RSD retrofits for an existing
