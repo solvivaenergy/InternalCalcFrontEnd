@@ -1425,7 +1425,7 @@ export const PROPOSAL_CONTENT = {
       kind: "paragraph",
       text:
         "Any excess distance beyond the first {{LUZON_FREE_KM}} kilometers (km) from " +
-        "Solviva's Parañaque logistics hub will be charged per kilometer " +
+        "Parañaque city will be charged per kilometer " +
         "at a specified rate.", // v3-114 origin rebase; v3-199 — the radius is
       // the luzonFreeTravelKm param via the v3-104
       // token mechanism, so the legal copy can never
