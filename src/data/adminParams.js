@@ -287,24 +287,32 @@ export const ADMIN_PARAMS = {
   grossMarginMid: 0.22, // 22% — mid systems (curvature) (legacy fallback)
   grossMarginMax: 0.3, // 30% — large / ceiling / no-panels default (legacy fallback)
   // v3-142 — package-level gross margin CURVES (CEO request). The per-system-size
-  // (kWp) curve is RETAINED, but each package now rides its own curve fitted
+  // (kWp) curve is RETAINED for Solar and Misc, each riding its own curve fitted
   // through the SAME kWp breakpoints above (min/mid/max @ 1/15/30 kWp):
   //   A. Solar package   (panels, inverters, solar labor/install, cabling, roof, location, RSD)
-  //   B. Battery package  (battery units, rack, ATS, critical loads, battery labor)
   //   C. Misc package     (misc catalog lines in Step 2F)
-  // A no-panels order (battery/RSD/inverter-only) prices at that package's MAX
-  // anchor (ceiling), mirroring the legacy no-panels rule. If a package's
-  // anchors are absent in an older saved payload, calculations.js falls back to
-  // the legacy grossMarginMin/Mid/Max curve.
+  // A no-panels order (battery/RSD/inverter-only) prices Solar/Misc at that
+  // package's MAX anchor (ceiling), mirroring the legacy no-panels rule. If a
+  // package's anchors are absent in an older saved payload, calculations.js
+  // falls back to the legacy grossMarginMin/Mid/Max curve.
   grossMarginSolarMin: 0.2, // Solar @ 1 kWp
   grossMarginSolarMid: 0.25, // Solar @ 15 kWp
   grossMarginSolarMax: 0.3, // Solar @ 30 kWp / no-panels
-  grossMarginBatteryMin: 0.2, // Battery @ 1 kWp
-  grossMarginBatteryMid: 0.26, // Battery @ 15 kWp
-  grossMarginBatteryMax: 0.34, // Battery @ 30 kWp / no-panels
   grossMarginMiscMin: 0.2, // Misc @ 1 kWp
   grossMarginMiscMid: 0.27, // Misc @ 15 kWp
   grossMarginMiscMax: 0.35, // Misc @ 30 kWp / no-panels
+  // v3-149 — B. Battery package margin rides its OWN capacity axis: the
+  // quote's TOTAL BATTERY kWh, not the solar array's kWp. A panel-light,
+  // battery-heavy order no longer gets stuck at the solar system's low-kWp
+  // anchor — the battery line prices off how much battery is actually being
+  // sold. A no-battery order (batteryKwh === 0) prices at grossMarginBatteryMax
+  // (ceiling), mirroring the no-panels rule for Solar/Misc.
+  grossMarginBatteryMinKwh: 5, // kWh of the battery min-margin anchor
+  grossMarginBatteryMidKwh: 15, // kWh of the battery mid-margin anchor (curvature)
+  grossMarginBatteryMaxKwh: 30, // kWh of the battery max-margin anchor
+  grossMarginBatteryMin: 0.2, // Battery @ 5 kWh
+  grossMarginBatteryMid: 0.26, // Battery @ 15 kWh
+  grossMarginBatteryMax: 0.34, // Battery @ 30 kWh / no-battery
   // The margin used for the ADMIN Inventory/Engineering "DP Price" columns and the
   // boot price derivation — set DIRECTLY (v3-95) rather than via a reference kWp.
   // Default = the max anchor (ceiling price). Does NOT affect quotes; those resolve

@@ -145,28 +145,33 @@ export function MarginAnchorRow({ label, hint, marginValue, onMargin, kwpValue, 
 }
 
 // v3-142 — per-package gross-margin MATRIX. The per-system-size (kWp) curve is
-// retained, but each package (Solar / Battery / Misc) now rides its OWN curve
-// fitted through the SAME three kWp breakpoints. Rows = kWp anchors (Min / Med /
-// Max, each with an editable shared kWp), columns = packages. A no-panels order
-// prices at the Max row for every package.
+// retained for Solar/Misc, each riding its OWN curve fitted through the SAME
+// three kWp breakpoints. Rows = kWp anchors (Min / Med / Max, each with an
+// editable shared kWp), columns = packages. A no-panels order prices Solar/Misc
+// at the Max row. v3-149 — Battery no longer shares the kWp axis: it gets its
+// own kWh breakpoint per row, so its column carries a margin % PLUS its own
+// "at N kWh" input. A no-battery order prices Battery at its Max row.
 export function PackageMarginMatrix({ params, updateParam, canEdit }) {
   const rows = [
     {
       label: 'Min anchor',
       sub: 'small systems / floor',
       kwpKey: 'grossMarginMinKwp',
+      kwhKey: 'grossMarginBatteryMinKwh',
       keys: { solar: 'grossMarginSolarMin', battery: 'grossMarginBatteryMin', misc: 'grossMarginMiscMin' },
     },
     {
       label: 'Med anchor',
       sub: 'curvature',
       kwpKey: 'grossMarginMidKwp',
+      kwhKey: 'grossMarginBatteryMidKwh',
       keys: { solar: 'grossMarginSolarMid', battery: 'grossMarginBatteryMid', misc: 'grossMarginMiscMid' },
     },
     {
       label: 'Max anchor',
       sub: 'large / ceiling / no-panels',
       kwpKey: 'grossMarginMaxKwp',
+      kwhKey: 'grossMarginBatteryMaxKwh',
       keys: { solar: 'grossMarginSolarMax', battery: 'grossMarginBatteryMax', misc: 'grossMarginMiscMax' },
     },
   ];
@@ -188,16 +193,28 @@ export function PackageMarginMatrix({ params, updateParam, canEdit }) {
                      onChange={(v) => setPct(key, v)} step={0.5} min={0} max={99} suffix="%" width={92} />
       : <div style={{ ...adminStyles.paramValueRO, width: 92, margin: '0 auto' }}>{((params[key] ?? 0) * 100).toFixed(2)}%</div>
   );
+  const batteryCell = (r) => (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+      {pctCell(r.keys.battery)}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span style={{ fontSize: 11, color: COLORS.textMuted }}>at</span>
+        {canEdit
+          ? <NumberInput value={params[r.kwhKey]} onChange={(v) => setKwp(r.kwhKey, v)}
+                         step={1} min={0} suffix="kWh" width={92} />
+          : <div style={{ ...adminStyles.paramValueRO, width: 92 }}>{fmt.num(params[r.kwhKey])} kWh</div>}
+      </div>
+    </div>
+  );
 
   return (
     <div style={{ overflowX: 'auto', marginBottom: 12 }}>
-      <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 560 }}>
+      <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 620 }}>
         <thead>
           <tr>
             <th style={thLeft}>Anchor</th>
-            <th style={th}>kWp</th>
+            <th style={th}>Solar/Misc kWp</th>
             <th style={th}>A. Solar</th>
-            <th style={th}>B. Battery</th>
+            <th style={th}>B. Battery (own kWh)</th>
             <th style={th}>C. Misc</th>
           </tr>
         </thead>
@@ -215,7 +232,7 @@ export function PackageMarginMatrix({ params, updateParam, canEdit }) {
                   : <div style={{ ...adminStyles.paramValueRO, width: 96, margin: '0 auto' }}>{fmt.num(params[r.kwpKey])} kWp</div>}
               </td>
               <td style={td}>{pctCell(r.keys.solar)}</td>
-              <td style={td}>{pctCell(r.keys.battery)}</td>
+              <td style={td}>{batteryCell(r)}</td>
               <td style={td}>{pctCell(r.keys.misc)}</td>
             </tr>
           ))}

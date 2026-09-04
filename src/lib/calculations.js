@@ -517,14 +517,36 @@ export function grossMarginForCapacity(systemKwp, panelCount, adminParams) {
 
 // v3-142 — the margin applied to a specific PACKAGE (solar/battery/misc) for a
 // quote. Same no-panels ceiling rule as grossMarginForCapacity, but per package.
+// v3-149 — the BATTERY package no longer rides the solar systemKwp axis: it
+// rides its own capacity axis, the quote's total battery kWh (passed as
+// `batteryKwh`), through its own grossMarginBatteryMin/Mid/MaxKwh breakpoints.
+// Solar and Misc are unchanged (still keyed on systemKwp/panelCount).
 export function packageMarginForCapacity(
   systemKwp,
   panelCount,
   adminParams,
   pkg,
+  batteryKwh,
 ) {
   const ap = adminParams || {};
   const { q1, q2, q3 } = resolvePackageMarginAnchors(ap, pkg);
+  if (pkg === "battery") {
+    if (!(batteryKwh > 0)) {
+      return Number.isFinite(q3)
+        ? q3
+        : (ap.grossMarginMax ?? ap.grossMargin ?? 0);
+    }
+    return grossMarginCurveFromAnchors(
+      batteryKwh,
+      ap.grossMarginBatteryMinKwh,
+      ap.grossMarginBatteryMidKwh,
+      ap.grossMarginBatteryMaxKwh,
+      q1,
+      q2,
+      q3,
+      ap.grossMargin,
+    );
+  }
   if (!(panelCount > 0)) {
     return Number.isFinite(q3)
       ? q3
@@ -936,11 +958,13 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     adminParams,
     "solar",
   );
+  // v3-149 — battery rides its OWN kWh axis, not systemKwp/panelCount.
   const batteryMargin = packageMarginForCapacity(
     systemKwp,
     panelCount,
     adminParams,
     "battery",
+    batteryKwh,
   );
   const miscMargin = packageMarginForCapacity(
     systemKwp,

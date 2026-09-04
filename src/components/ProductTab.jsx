@@ -147,11 +147,14 @@ export default function ProductTab({
              B. Battery, C. Misc) rides its own curve through the same three kWp
              breakpoints below. */}
         <div style={{ marginBottom: 12, fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
-           Gross margin is set per <strong>package</strong> and per <strong>system size</strong>. Each
-           column below (<strong>A. Solar</strong>, <strong>B. Battery</strong>, <strong>C. Misc</strong>)
-           gets its own margin curve, fitted through the three shared kWp anchors (Min / Med / Max).
-           A quote resolves each package line at the curve value for the order&rsquo;s kWp; an order with
-           <strong> no solar panels</strong> prices every package at its Max anchor (ceiling).
+           Gross margin is set per <strong>package</strong> and per <strong>capacity</strong>. <strong>A. Solar</strong>
+           and <strong>C. Misc</strong> share one margin curve fitted through the three kWp anchors
+           (Min / Med / Max) and resolve at the order&rsquo;s solar kWp; an order with
+           <strong> no solar panels</strong> prices them at their Max anchor (ceiling).
+           <strong> B. Battery</strong> rides its <strong>own</strong> curve fitted through its own kWh
+           anchors and resolves at the order&rsquo;s total battery kWh — not the solar kWp — so a
+           panel-light, battery-heavy order still gets the right battery margin; an order with
+           <strong> no battery</strong> prices it at its Max anchor (ceiling).
         </div>
         <PackageMarginMatrix params={params} updateParam={updateParam}
                              canEdit={canEditSection('margins')} />
@@ -175,21 +178,21 @@ export default function ProductTab({
             <table style={{ borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 11.5, minWidth: 320 }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: 'left', padding: '2px 10px 4px 0' }}>kWp</th>
+                  <th style={{ textAlign: 'left', padding: '2px 10px 4px 0' }}>kWp / kWh</th>
                   <th style={{ textAlign: 'right', padding: '2px 10px 4px' }}>A. Solar</th>
                   <th style={{ textAlign: 'right', padding: '2px 10px 4px' }}>B. Battery</th>
                   <th style={{ textAlign: 'right', padding: '2px 0 4px 10px' }}>C. Misc</th>
                 </tr>
               </thead>
               <tbody>
-                {[3, 5, 10, 15, 20, 30].map(kwp => {
-                  const panels = Math.max(1, Math.round((kwp * 1000) / 620));
-                  const s = packageMarginForCapacity(kwp, panels, params, 'solar');
-                  const b = packageMarginForCapacity(kwp, panels, params, 'battery');
-                  const m = packageMarginForCapacity(kwp, panels, params, 'misc');
+                {[3, 5, 10, 15, 20, 30].map(capacity => {
+                  const panels = Math.max(1, Math.round((capacity * 1000) / 620));
+                  const s = packageMarginForCapacity(capacity, panels, params, 'solar');
+                  const b = packageMarginForCapacity(capacity, panels, params, 'battery', capacity);
+                  const m = packageMarginForCapacity(capacity, panels, params, 'misc');
                   return (
-                    <tr key={kwp}>
-                      <td style={{ textAlign: 'left', padding: '2px 10px 2px 0' }}>{kwp}</td>
+                    <tr key={capacity}>
+                      <td style={{ textAlign: 'left', padding: '2px 10px 2px 0' }}>{capacity}</td>
                       <td style={{ textAlign: 'right', padding: '2px 10px' }}>{(s * 100).toFixed(1)}%</td>
                       <td style={{ textAlign: 'right', padding: '2px 10px' }}>{(b * 100).toFixed(1)}%</td>
                       <td style={{ textAlign: 'right', padding: '2px 0 2px 10px' }}>{(m * 100).toFixed(1)}%</td>
@@ -197,9 +200,9 @@ export default function ProductTab({
                   );
                 })}
                 <tr>
-                  <td style={{ textAlign: 'left', padding: '4px 10px 2px 0', borderTop: '1px solid #E5E7EB' }}>no&nbsp;panels</td>
+                  <td style={{ textAlign: 'left', padding: '4px 10px 2px 0', borderTop: '1px solid #E5E7EB' }}>no&nbsp;panels/battery</td>
                   <td style={{ textAlign: 'right', padding: '4px 10px 2px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'solar')) * 100).toFixed(1)}%</td>
-                  <td style={{ textAlign: 'right', padding: '4px 10px 2px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'battery')) * 100).toFixed(1)}%</td>
+                  <td style={{ textAlign: 'right', padding: '4px 10px 2px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'battery', 0)) * 100).toFixed(1)}%</td>
                   <td style={{ textAlign: 'right', padding: '4px 0 2px 10px', borderTop: '1px solid #E5E7EB' }}>{((packageMarginForCapacity(0, 0, params, 'misc')) * 100).toFixed(1)}%</td>
                 </tr>
               </tbody>
