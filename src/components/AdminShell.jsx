@@ -244,6 +244,13 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
       return { ok: false, msg: 'Gross-margin capacity breakpoints (kWp) must be positive and strictly increasing: MinKwp < MidKwp < MaxKwp.' };
     }
 
+    // v3-149 — Battery rides its OWN capacity breakpoints (kWh), validated the
+    // same way as the shared kWp breakpoints above.
+    const { grossMarginBatteryMinKwh: bx1, grossMarginBatteryMidKwh: bx2, grossMarginBatteryMaxKwh: bx3 } = params;
+    if (![bx1, bx2, bx3].every(v => Number.isFinite(v) && v > 0) || !(bx1 < bx2 && bx2 < bx3)) {
+      return { ok: false, msg: 'Battery gross-margin capacity breakpoints (kWh) must be positive and strictly increasing: MinKwh < MidKwh < MaxKwh.' };
+    }
+
     // v3-142 — per-package anchors. Each package's three anchors must be
     // non-decreasing fractions in [0%, 100%). Equal anchors are allowed (a flat
     // margin, e.g. battery 32/32/32) — the curve degrades to a constant. A
