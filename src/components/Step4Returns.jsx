@@ -296,10 +296,11 @@ function DuInflationControl({ value, onChange, params }) {
           {hint && <div style={styles.duStepHint}>{hint}</div>}
         </div>
         <div style={styles.duStepper}>
-          <button type="button" onClick={() => set(bp - DU_STEP_BP)} disabled={atMin}
+          {/* <button type="button" onClick={() => set(bp - DU_STEP_BP)} //disabled={atMin}
+            disabled={true}
                   style={btn(atMin)} aria-label="Decrease assumed annual DU rate increase by 0.25%">
             &minus;
-          </button>
+          </button> */}
           <div style={styles.duStepValue}
                role="spinbutton"
                aria-valuemin={DU_MIN_BP / 100}
@@ -309,10 +310,11 @@ function DuInflationControl({ value, onChange, params }) {
                aria-label="Assumed annual DU rate increase">
             {(bp / 100).toFixed(2)}%
           </div>
-          <button type="button" onClick={() => set(bp + DU_STEP_BP)} disabled={atMax}
+          {/* <button type="button" onClick={() => set(bp + DU_STEP_BP)} //disabled={atMax}
+          disabled={true}
                   style={btn(atMax)} aria-label="Increase assumed annual DU rate increase by 0.25%">
             +
-          </button>
+          </button> */}
         </div>
       </div>
 
@@ -400,6 +402,7 @@ const styles = {
   duStepValue: {
     minWidth: 86, textAlign: 'center', fontSize: 17, fontWeight: 700,
     fontVariantNumeric: 'tabular-nums', color: COLORS.textBody,
+    padding: '8px 0'
   },
   // v3-184 — ONE block replacing the v3-183 pair. Outer surface matches the
   // metric tiles above so the adjuster reads as the last row of that stack;

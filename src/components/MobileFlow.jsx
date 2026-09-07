@@ -670,7 +670,8 @@ function ReturnsSheet({ screen, state, model, updateState }) {
             </div>
             <div className="mfl-dusctl">
               <button type="button" aria-label="Decrease assumed annual DU rate increase by 0.25%"
-                      disabled={duBp <= DU_MIN_BP}
+                      // disabled={duBp <= DU_MIN_BP}
+                      disabled={true}
                       onClick={() => setDu(duBp - DU_STEP_BP)}>&minus;</button>
               <div className="mfl-dusval"
                    role="spinbutton"
@@ -681,7 +682,8 @@ function ReturnsSheet({ screen, state, model, updateState }) {
                 {(duBp / 100).toFixed(2)}%
               </div>
               <button type="button" aria-label="Increase assumed annual DU rate increase by 0.25%"
-                      disabled={duBp >= DU_MAX_BP}
+                      // disabled={duBp >= DU_MAX_BP}
+                      disabled={true}
                       onClick={() => setDu(duBp + DU_STEP_BP)}>+</button>
             </div>
           </div>
