@@ -322,6 +322,21 @@ export const ADMIN_PARAMS = {
   // reproducing the pre-v3-191 hardwired rule exactly.
   grossMarginNoInverterSp: 0.3,
   grossMarginNoInverterTp: 0.3,
+  // v3-208 — BATTERY PACKAGE curve (production-main rule). The battery no
+  // longer rides the solar kWp axis nor the component table: it rides its own
+  // GENLINV curve over the quote's TOTAL BATTERY kWh, fitted through these
+  // three anchors. A panel-light, battery-heavy order prices its battery off
+  // how much battery is actually being sold; a no-battery order prices at the
+  // Max anchor (ceiling), mirroring the no-panels rule. Margins ship
+  // non-decreasing (flat allowed); kWh anchors must be strictly increasing.
+  // A blob predating these keys falls back to grossMarginMax-anchored
+  // behavior via batteryMarginCurve's degenerate-axis guard.
+  grossMarginBatteryMinKwh: 5, // kWh of the battery min-margin anchor
+  grossMarginBatteryMidKwh: 15, // kWh of the battery mid-margin anchor (curvature)
+  grossMarginBatteryMaxKwh: 30, // kWh of the battery max-margin anchor
+  grossMarginBatteryMin: 0.2, // 20% — small batteries / floor
+  grossMarginBatteryMid: 0.26, // 26% — mid batteries (curvature)
+  grossMarginBatteryMax: 0.34, // 34% — large batteries / ceiling / no-battery
   // Every other component's margin setting, keyed by Pat's component letters
   // (see COMPONENT_MARGIN_IDS in calculations.js for the legend). On a FULL
   // SYSTEM (panels + inverter) a component either follows the panels' curve
@@ -342,7 +357,6 @@ export const ADMIN_PARAMS = {
     H: { mode: "follow", fixed: 0.3, otherwise: 0.3 },
     I: { mode: "follow", fixed: 0.3, otherwise: 0.3 },
     J: { mode: "follow", fixed: 0.3, otherwise: 0.3 },
-    K: { mode: "follow", fixed: 0.3, otherwise: 0.3 },
     L: { mode: "follow", fixed: 0.3, otherwise: 0.3 },
     M: { mode: "follow", fixed: 0.3, otherwise: 0.3 },
     N: { otherwise: 0.3 },

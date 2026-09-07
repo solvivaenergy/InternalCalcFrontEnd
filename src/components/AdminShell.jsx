@@ -302,7 +302,21 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
           `The ${label} panels-without-inverter margin must be a fraction in [0%, 100%).` };
       }
     }
-    // v3-191 — the componentMargins table (B–Q). Shape + range on every entry;
+    // v3-208 — the battery curve anchors. Margins may be flat (Min ≤ Med ≤
+    // Max — production main allows a constant curve); the kWh breakpoints
+    // must be positive and strictly increasing (mirrors the server guard).
+    {
+      const { grossMarginBatteryMin: b1, grossMarginBatteryMid: b2, grossMarginBatteryMax: b3,
+              grossMarginBatteryMinKwh: c1, grossMarginBatteryMidKwh: c2, grossMarginBatteryMaxKwh: c3 } = params;
+      if (![b1, b2, b3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(b1 <= b2 && b2 <= b3)) {
+        return { ok: false, msg: 'Battery gross-margin anchors must be non-decreasing fractions in [0%, 100%): Min ≤ Med ≤ Max.' };
+      }
+      if (![c1, c2, c3].every(v => Number.isFinite(v) && v > 0) || !(c1 < c2 && c2 < c3)) {
+        return { ok: false, msg: 'Battery gross-margin capacity breakpoints (kWh) must be positive and strictly increasing: MinKwh < MidKwh < MaxKwh.' };
+      }
+    }
+    // v3-191 — the componentMargins table (B–Q; K moved to the battery
+    // curve in v3-208). Shape + range on every entry;
     // a bad entry would price an entire component group at NaN or a >=1 margin
     // on every quote (mirrors the server guard).
     const cm = params.componentMargins;
@@ -310,7 +324,7 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
       return { ok: false, msg: 'Component gross margins are missing or malformed.' };
     }
     const marginOk = (v) => Number.isFinite(v) && v >= 0 && v < 1;
-    for (const id of ['B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q']) {
+    for (const id of ['B','C','D','E','F','G','H','I','J','L','M','N','O','P','Q']) {
       const row = cm[id];
       if (!row || typeof row !== 'object') {
         return { ok: false, msg: `Component ${id}: margin entry is missing.` };

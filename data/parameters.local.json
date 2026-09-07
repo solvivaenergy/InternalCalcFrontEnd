@@ -62,11 +62,6 @@
         "fixed": 0.3,
         "otherwise": 0.3
       },
-      "K": {
-        "mode": "follow",
-        "fixed": 0.3,
-        "otherwise": 0.3
-      },
       "L": {
         "mode": "follow",
         "fixed": 0.3,
@@ -393,12 +388,12 @@
         "batteryUnitKwh": 5,
         "batteryRackCapacity": 3,
         "rackRequiredFromUnits": 3,
-        "batteryUnitCogs": 50600,
+        "batteryUnitCogs": 49363,
         "batteryRackCogs": 10000,
-        "atsCogs": 6000,
+        "atsCogs": 11000,
         "criticalLoadsMaterialsCogs": 21000,
-        "laborWithSolarInstallCogs": 18500,
-        "standaloneLaborCogs": 25000,
+        "laborWithSolarInstallCogs": 10500,
+        "standaloneLaborCogs": 35500,
         "batteryUnitPrice": 97308,
         "batteryRackPrice": 19231,
         "atsPrice": 11539,
@@ -493,7 +488,10 @@
     "defaultMonthlyBill": 15000,
     "defaultDownPaymentPct": 0.3,
     "gateAuthEnabled": true,
-    "minDaysToFirstPostInstallPayment": 44
+    "minDaysToFirstPostInstallPayment": 44,
+    "grossMarginBatteryMin": 0.21,
+    "grossMarginBatteryMid": 0.24,
+    "grossMarginBatteryMax": 0.29
   },
   "panelSettings": {
     "singlePhase": {
