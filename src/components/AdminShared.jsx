@@ -139,7 +139,9 @@ export function Param({ label, value, onChange, canEdit, isPct, isPeso, suffix, 
 // v3-94 — a margin anchor and its capacity breakpoint on ONE row, side by side,
 // so the pairing is unambiguous (was two stacked Param rows). Left: the anchor
 // label + hint. Right: the margin % input, "at", then the kWp input.
-export function MarginAnchorRow({ label, hint, marginValue, onMargin, kwpValue, onKwp, canEdit }) {
+// v3-208 — `unit` lets the battery curve's rows read "kWh" (production main:
+// the battery margin axis is battery capacity, not solar kWp).
+export function MarginAnchorRow({ label, hint, marginValue, onMargin, kwpValue, onKwp, canEdit, unit = 'kWp' }) {
   const setM = (v) => { if (canEdit && v != null) onMargin(Math.max(0, Math.min(99, v)) / 100); };
   const setK = (v) => { if (canEdit && v != null) onKwp(Math.max(0, v)); };
   return (
@@ -158,9 +160,9 @@ export function MarginAnchorRow({ label, hint, marginValue, onMargin, kwpValue, 
         <span style={{ fontSize: 12, color: COLORS.textMuted, whiteSpace: 'nowrap' }}>at</span>
         {canEdit ? (
           <NumberInput value={kwpValue} onChange={setK}
-                       step={1} min={0} suffix="kWp" width={104} />
+                       step={1} min={0} suffix={unit} width={104} />
         ) : (
-          <div style={{ ...adminStyles.paramValueRO, width: 104 }}>{fmt.num(kwpValue)} kWp</div>
+          <div style={{ ...adminStyles.paramValueRO, width: 104 }}>{fmt.num(kwpValue)} {unit}</div>
         )}
       </div>
     </div>

@@ -9,10 +9,22 @@
 // can trace any number back to its source.
 // =============================================================================
 
-import { DEVICES, DAY_START_HOUR } from '../data/devices.js';
-import { PANEL_SETTINGS, INVERTERS_SINGLE_PHASE, INVERTERS_THREE_PHASE } from '../data/inventory.js';
-import { INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS } from '../config.js';
-import { resolveBatteryPackage, normalizeCategory, racksNeeded, promoDiscountAmount } from '../data/adminParams.js';
+import { DEVICES, DAY_START_HOUR } from "../data/devices.js";
+import {
+  PANEL_SETTINGS,
+  INVERTERS_SINGLE_PHASE,
+  INVERTERS_THREE_PHASE,
+} from "../data/inventory.js";
+import {
+  INCLUDED_DC_CABLE_METERS,
+  INCLUDED_AC_CABLE_METERS,
+} from "../config.js";
+import {
+  resolveBatteryPackage,
+  normalizeCategory,
+  racksNeeded,
+  promoDiscountAmount,
+} from "../data/adminParams.js";
 
 // ─── Excel financial functions (PMT, PV) ──────────────────────────────────────
 // These match Excel's behaviour including the optional `type` argument
@@ -40,7 +52,7 @@ export function PMT(rate, nper, pv, fv = 0, type = 0) {
 export function PV(rate, nper, pmt, fv = 0, type = 0) {
   if (rate === 0) return -(pmt * nper + fv);
   const pvif = Math.pow(1 + rate, nper);
-  return -(pmt * (1 + rate * type) * (pvif - 1) / rate + fv) / pvif;
+  return -((pmt * (1 + rate * type) * (pvif - 1)) / rate + fv) / pvif;
 }
 
 /**
@@ -51,9 +63,9 @@ export function PV(rate, nper, pmt, fv = 0, type = 0) {
 export function NPER(rate, pmt, pv, fv = 0, type = 0) {
   if (pmt === 0) return Infinity;
   if (rate === 0) return -(pv + fv) / pmt;
-  const num = (pmt * (1 + rate * type) - fv * rate);
-  const den = (pv * rate + pmt * (1 + rate * type));
-  if (num / den <= 0) return Infinity;  // payback never happens
+  const num = pmt * (1 + rate * type) - fv * rate;
+  const den = pv * rate + pmt * (1 + rate * type);
+  if (num / den <= 0) return Infinity; // payback never happens
   return Math.log(num / den) / Math.log(1 + rate);
 }
 
@@ -72,7 +84,7 @@ export function IRR(cashflows, guess = 0.1) {
     for (let t = 0; t < cashflows.length; t++) {
       const v = 1 / Math.pow(1 + rate, t);
       npv += cashflows[t] * v;
-      dnpv -= t * cashflows[t] * v / (1 + rate);
+      dnpv -= (t * cashflows[t] * v) / (1 + rate);
     }
     if (Math.abs(npv) < TOL) return rate;
     if (dnpv === 0) return null;
@@ -90,7 +102,10 @@ export function IRR(cashflows, guess = 0.1) {
  * at the END of period 1. We replicate that.
  */
 export function NPV(rate, cashflows) {
-  return cashflows.reduce((acc, cf, i) => acc + cf / Math.pow(1 + rate, i + 1), 0);
+  return cashflows.reduce(
+    (acc, cf, i) => acc + cf / Math.pow(1 + rate, i + 1),
+    0,
+  );
 }
 
 // ═══ COGS → DIRECT PURCHASE PRICE (v3-83) ════════════════════════════════════
@@ -111,7 +126,7 @@ export function NPV(rate, cashflows) {
 // not 0.85. Anjon's original sheet divided by 0.85, which quietly realised a
 // 24.4% margin against a 26% target. This form realises the margin you set.
 // (Not tax advice — confirmed with the user, who chose this over the sheet's.)
-const VAT_RATE = 0.12;   // Philippine VAT. A constant, not a param, by instruction.
+const VAT_RATE = 0.12; // Philippine VAT. A constant, not a param, by instruction.
 
 // v3-145 — sign-aware companion to directFromCogs, for the ONE place negative
 // COGS is a feature rather than bad input: the misc catalog's reversal/credit
@@ -131,12 +146,17 @@ export function directFromCogs(cogs, adminParams, marginOverride) {
   // v3-84 — defensive. A missing adminParams used to throw, which took the ENTIRE
   // admin screen down (blank page) rather than showing one wrong number. A price
   // of ₱0 in an admin cell is visible and harmless; a ReferenceError is not.
-  const ap  = adminParams || {};
+  const ap = adminParams || {};
   // v3-92 — gross margin is now CAPACITY-DERIVED (a GENLINV curve over kWp).
   // Callers pricing a quote pass the resolved margin explicitly; with no override
   // the price is the ADMIN/REFERENCE price — grossMarginReference (v3-95: set
   // directly, default = the max anchor / ceiling), falling back to grossMarginMax.
-  const gm  = marginOverride ?? ap.grossMarginReference ?? ap.grossMarginMax ?? ap.grossMargin ?? 0;
+  const gm =
+    marginOverride ??
+    ap.grossMarginReference ??
+    ap.grossMarginMax ??
+    ap.grossMargin ??
+    0;
   const mdr = ap.merchantDiscountRate ?? 0;
   const c = Number(cogs);
   if (!Number.isFinite(c) || c <= 0) return 0;
@@ -145,8 +165,47 @@ export function directFromCogs(cogs, adminParams, marginOverride) {
   // would drive this to zero or below, but a hand-edited blob must not divide by
   // zero and blank out every price in the app.
   const retained = (1 + VAT_RATE) * (1 - mdr) - VAT_RATE;
-  if (!(retained > 0) || !((1 - gm) > 0)) return 0;
-  return Math.ceil(c * (1 + VAT_RATE) / (1 - gm) / retained);
+  if (!(retained > 0) || !(1 - gm > 0)) return 0;
+  return Math.ceil((c * (1 + VAT_RATE)) / (1 - gm) / retained);
+}
+
+// v3-208 — BATTERY PACKAGE margin rides its OWN capacity axis: the quote's
+// total battery kWh, not the solar array's kWp (production main, v3-149
+// equivalent). A panel-light, battery-heavy order no longer inherits the
+// small-system floor margin on its battery lines, and a big system no longer
+// prices a small battery at the large-system ceiling. kWh is clamped to the
+// anchor axis so the output is bounded in [min, max]. Anchors ship non-
+// decreasing (Min ≤ Med ≤ Max — flat curves allowed); a degenerate axis falls
+// back to the max anchor, the same defensive rule grossMarginCurve uses.
+export function batteryMarginCurve(batteryKwh, adminParams) {
+  const ap = adminParams || {};
+  const x1 = ap.grossMarginBatteryMinKwh,
+    x2 = ap.grossMarginBatteryMidKwh,
+    x3 = ap.grossMarginBatteryMaxKwh,
+    q1 = ap.grossMarginBatteryMin,
+    q2 = ap.grossMarginBatteryMid,
+    q3 = ap.grossMarginBatteryMax;
+  const fb = Number.isFinite(q3)
+    ? q3
+    : Number.isFinite(ap.grossMargin)
+      ? ap.grossMargin
+      : 0;
+  if (![x1, x2, x3, q1, q2, q3].every(Number.isFinite) || !(x1 < x2 && x2 < x3))
+    return fb;
+  // Flat margin (Min = Med = Max, e.g. a deliberate constant battery margin —
+  // allowed by both validators): the GENLINV skew divides by (q2 − q1) = 0.
+  // Short-circuit to the constant rather than degrading to NaN.
+  if (q1 === q2 && q2 === q3) return q3;
+  const kwh = Number.isFinite(batteryKwh) && batteryKwh > 0 ? batteryKwh : x3; // 0/absent → ceiling
+  const x = Math.min(x3, Math.max(x1, kwh));
+  const kN = Math.log(0.5) / Math.log((x2 - x1) / (x3 - x1));
+  const u = Math.pow((x - x1) / (x3 - x1), kN);
+  const p = 0.25 + 0.5 * u;
+  const b = (q3 - q2) / (q2 - q1);
+  const z = normSInv(p) / Z75;
+  return Math.abs(b - 1) < 1e-9
+    ? q2 + (q3 - q2) * z
+    : q2 + ((q3 - q2) * (Math.pow(b, z) - 1)) / (b - 1);
 }
 
 // The exact inverse of directFromCogs(). Used ONLY to rescue a SKU that an admin
@@ -154,14 +213,19 @@ export function directFromCogs(cogs, adminParams, marginOverride) {
 // and no matching entry in the code defaults to copy one from. Back-solving keeps
 // its price where it was instead of zeroing it out.
 export function cogsFromDirect(directPrice, adminParams, marginOverride) {
-  const ap  = adminParams || {};
-  const gm  = marginOverride ?? ap.grossMarginReference ?? ap.grossMarginMax ?? ap.grossMargin ?? 0;
+  const ap = adminParams || {};
+  const gm =
+    marginOverride ??
+    ap.grossMarginReference ??
+    ap.grossMarginMax ??
+    ap.grossMargin ??
+    0;
   const mdr = ap.merchantDiscountRate ?? 0;
-  const px  = Number(directPrice);
+  const px = Number(directPrice);
   if (!Number.isFinite(px) || px <= 0) return 0;
   const retained = (1 + VAT_RATE) * (1 - mdr) - VAT_RATE;
-  if (!(retained > 0) || !((1 - gm) > 0)) return 0;
-  return Math.round(px * (1 - gm) * retained / (1 + VAT_RATE));
+  if (!(retained > 0) || !(1 - gm > 0)) return 0;
+  return Math.round((px * (1 - gm) * retained) / (1 + VAT_RATE));
 }
 
 // Writes every derived price back onto the live objects. Called by paramsService
@@ -169,7 +233,13 @@ export function cogsFromDirect(directPrice, adminParams, marginOverride) {
 // to know COGS exists — it still reads `mountingSupportFloorPrice`, `directPrice`,
 // `batteryUnitPrice` etc. exactly as before. That is the whole point of doing it
 // this way: the pricing engine is UNCHANGED.
-export function deriveDirectPrices(ap, panelSettings, invertersSP, invertersTP, margin) {
+export function deriveDirectPrices(
+  ap,
+  panelSettings,
+  invertersSP,
+  invertersTP,
+  margin,
+) {
   // v3-92 — `margin` is the basis to price at. Boot/admin pass the REFERENCE
   // margin (grossMarginReference); a per-quote re-price passes
   // the quote's capacity margin. Omitted → directFromCogs falls back to the
@@ -181,39 +251,47 @@ export function deriveDirectPrices(ap, panelSettings, invertersSP, invertersTP, 
   // before — every key at that one margin — which is what boot still passes
   // (grossMarginReference), preserving the pre-v3-191 boot derivation
   // verbatim.
-  const mFor = typeof margin === 'function' ? margin : () => margin;
-  const dAt  = (c, id) => directFromCogs(c, ap, mFor(id));
+  const mFor = typeof margin === "function" ? margin : () => margin;
+  const dAt = (c, id) => directFromCogs(c, ap, mFor(id));
 
-  if (panelSettings?.singlePhase) panelSettings.singlePhase.panelDirectPrice = dAt(panelSettings.singlePhase.panelCogs, 'A');
-  if (panelSettings?.threePhase)  panelSettings.threePhase.panelDirectPrice  = dAt(panelSettings.threePhase.panelCogs, 'A');
-  for (const inv of invertersSP || []) inv.directPrice = dAt(inv.cogs, 'I');
-  for (const inv of invertersTP || []) inv.directPrice = dAt(inv.cogs, 'J');
+  if (panelSettings?.singlePhase)
+    panelSettings.singlePhase.panelDirectPrice = dAt(
+      panelSettings.singlePhase.panelCogs,
+      "A",
+    );
+  if (panelSettings?.threePhase)
+    panelSettings.threePhase.panelDirectPrice = dAt(
+      panelSettings.threePhase.panelCogs,
+      "A",
+    );
+  for (const inv of invertersSP || []) inv.directPrice = dAt(inv.cogs, "I");
+  for (const inv of invertersTP || []) inv.directPrice = dAt(inv.cogs, "J");
 
   // adminParams scalars — key: [its COGS field, its v3-191 component id].
   // 'PM' (preventive maintenance) is OUTSIDE the component scheme — the
   // resolver routes it to grossMarginReference; the scalar path is unaffected.
   const MAP = {
-    mountingSupportFloorPrice:      ['mountingSupportFloorCogs',      'P'],
-    additionalDcCablePerMeter:      ['additionalDcCablePerMeterCogs', 'D'],
-    additionalAcCablePerMeter:      ['additionalAcCablePerMeterCogs', 'E'],
-    laborInstallationPerKwp:        ['laborInstallationPerKwpCogs',   'F'],
-    rsdVariablePerPanel:            ['rsdVariablePerPanelCogs',       'G'],
-    rsdFixedTransmitter:            ['rsdFixedTransmitterCogs',       'H'],
-    roofAsphaltPerKwp:              ['roofAsphaltPerKwpCogs',         'Q'],
-    roofConcretePerKwp:             ['roofConcretePerKwpCogs',        'Q'],
-    luzonOver30FixedFee:            ['luzonOver30FixedFeeCogs',       'M'],
-    luzonOver30PerKm:               ['luzonOver30PerKmCogs',          'M'],
-    rsdStandaloneLaborPerPanel:     ['rsdStandaloneLaborPerPanelCogs',     'N'],
-    rsdStandaloneLaborMobilization: ['rsdStandaloneLaborMobilizationCogs', 'N'],
-    inverterStandaloneLaborPerUnit: ['inverterStandaloneLaborPerUnitCogs', 'N'],
-    inverterStandaloneMobilization: ['inverterStandaloneMobilizationCogs', 'N'],
-    fixedOverheadDeliveryLogistics: ['fixedOverheadDeliveryLogisticsCogs', 'O'],
-    fixedOverheadWarehouse:         ['fixedOverheadWarehouseCogs',         'O'],
-    fixedOverheadCustoms:           ['fixedOverheadCustomsCogs',           'O'],
-    fixedOverheadSafetySupervision: ['fixedOverheadSafetySupervisionCogs', 'O'],
-    fixedOverheadTesting:           ['fixedOverheadTestingCogs',           'O'],
-    preventiveMaintenancePerPanel:  ['preventiveMaintenancePerPanelCogs',  'PM'],
-    preventiveMaintenancePerVisit:  ['preventiveMaintenancePerVisitCogs',  'PM'],
+    mountingSupportFloorPrice: ["mountingSupportFloorCogs", "P"],
+    additionalDcCablePerMeter: ["additionalDcCablePerMeterCogs", "D"],
+    additionalAcCablePerMeter: ["additionalAcCablePerMeterCogs", "E"],
+    laborInstallationPerKwp: ["laborInstallationPerKwpCogs", "F"],
+    rsdVariablePerPanel: ["rsdVariablePerPanelCogs", "G"],
+    rsdFixedTransmitter: ["rsdFixedTransmitterCogs", "H"],
+    roofAsphaltPerKwp: ["roofAsphaltPerKwpCogs", "Q"],
+    roofConcretePerKwp: ["roofConcretePerKwpCogs", "Q"],
+    luzonOver30FixedFee: ["luzonOver30FixedFeeCogs", "M"],
+    luzonOver30PerKm: ["luzonOver30PerKmCogs", "M"],
+    rsdStandaloneLaborPerPanel: ["rsdStandaloneLaborPerPanelCogs", "N"],
+    rsdStandaloneLaborMobilization: ["rsdStandaloneLaborMobilizationCogs", "N"],
+    inverterStandaloneLaborPerUnit: ["inverterStandaloneLaborPerUnitCogs", "N"],
+    inverterStandaloneMobilization: ["inverterStandaloneMobilizationCogs", "N"],
+    fixedOverheadDeliveryLogistics: ["fixedOverheadDeliveryLogisticsCogs", "O"],
+    fixedOverheadWarehouse: ["fixedOverheadWarehouseCogs", "O"],
+    fixedOverheadCustoms: ["fixedOverheadCustomsCogs", "O"],
+    fixedOverheadSafetySupervision: ["fixedOverheadSafetySupervisionCogs", "O"],
+    fixedOverheadTesting: ["fixedOverheadTestingCogs", "O"],
+    preventiveMaintenancePerPanel: ["preventiveMaintenancePerPanelCogs", "PM"],
+    preventiveMaintenancePerVisit: ["preventiveMaintenancePerVisitCogs", "PM"],
   };
   for (const [priceKey, [cogsKey, compId]] of Object.entries(MAP)) {
     if (cogsKey in ap) ap[priceKey] = dAt(ap[cogsKey], compId);
@@ -221,18 +299,18 @@ export function deriveDirectPrices(ap, panelSettings, invertersSP, invertersTP, 
 
   // Battery packages — six derived prices each.
   const B = {
-    batteryUnitPrice:       'batteryUnitCogs',
-    batteryRackPrice:       'batteryRackCogs',
-    atsPrice:               'atsCogs',
-    criticalLoadsMaterials: 'criticalLoadsMaterialsCogs',
-    laborWithSolarInstall:  'laborWithSolarInstallCogs',
-    standaloneLabor:        'standaloneLaborCogs',
+    batteryUnitPrice: "batteryUnitCogs",
+    batteryRackPrice: "batteryRackCogs",
+    atsPrice: "atsCogs",
+    criticalLoadsMaterials: "criticalLoadsMaterialsCogs",
+    laborWithSolarInstall: "laborWithSolarInstallCogs",
+    standaloneLabor: "standaloneLaborCogs",
   };
   // v3-116 — delivery locations: two derived prices per row (was the four
   // cebu/siargao scalars in the map above).
   for (const loc of ap.deliveryLocations || []) {
-    loc.fixedFee = dAt(loc.fixedFeeCogs, 'M');
-    loc.perPanel = dAt(loc.perPanelCogs, 'M');
+    loc.fixedFee = dAt(loc.fixedFeeCogs, "M");
+    loc.perPanel = dAt(loc.perPanelCogs, "M");
   }
   // v3-138 — misc catalog: one derived unit price per row. Written
   // unconditionally (v3-85 rationale) so a row whose COGS was edited never
@@ -248,7 +326,7 @@ export function deriveDirectPrices(ap, panelSettings, invertersSP, invertersTP, 
     // v3-191 — the whole catalog prices at the L component margin; reversals
     // keep their sign symmetry AT THAT MARGIN, so a reversal still nets to
     // zero against its counterpart to the centavo.
-    m.price = signedDirectFromCogs(m.cogs, ap, mFor('L'));
+    m.price = signedDirectFromCogs(m.cogs, ap, mFor("L"));
   }
   for (const pkg of ap.batteryPackages || []) {
     for (const [priceKey, cogsKey] of Object.entries(B)) {
@@ -256,7 +334,7 @@ export function deriveDirectPrices(ap, panelSettings, invertersSP, invertersTP, 
       // pre-v3-83 blob) silently KEPT its stale stored price while its COGS cell
       // rendered blank. Write unconditionally; backfillCogs() guarantees the COGS
       // is there by the time we get here.
-      pkg[priceKey] = dAt(pkg[cogsKey], 'K');
+      pkg[priceKey] = dAt(pkg[cogsKey], "K");
     }
   }
   return ap;
@@ -302,7 +380,7 @@ export function deriveDirectPrices(ap, panelSettings, invertersSP, invertersTP, 
 // It also barely matters — at 75% down you are financing a quarter of the
 // system, so the rate is doing very little work. Change this to 1.0 only if you
 // also intend to re-tune the anchors.
-const DP_AXIS_MAX  = 0.50;
+const DP_AXIS_MAX = 0.5;
 // v3-99 — restored to 1, matching Solviva_Calc_v_B_5_1.xlsm's rate surface,
 // whose tenor axis spans 1..60 (PRODUCT!D54=1, D55=60; normalization
 // (tenor−1)/59, kT=0.9759…). v3-97 had narrowed this to 2 while the app was on
@@ -313,37 +391,53 @@ const DP_AXIS_MAX  = 0.50;
 const TENOR_AXIS_MIN = 1;
 const TENOR_AXIS_MAX = 60;
 const ANCHOR_MID_TENOR = 30;
-const ANCHOR_MID_DP    = 0.25;
+const ANCHOR_MID_DP = 0.25;
 
 // Acklam's inverse normal CDF. Accurate to ~1e-9 — far beyond what a rate card
 // snapped to 1/8 of a point could ever need.
 function normSInv(p) {
-  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687,
-             138.3577518672690, -30.66479806614716, 2.506628277459239];
-  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866,
-             66.80131188771972, -13.28068155288572];
-  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838,
-             -2.549732539343734, 4.374664141464968, 2.938163982698783];
-  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996,
-             3.754408661907416];
+  const a = [
+    -39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269,
+    -30.66479806614716, 2.506628277459239,
+  ];
+  const b = [
+    -54.47609879822406, 161.5858368580409, -155.6989798598866,
+    66.80131188771972, -13.28068155288572,
+  ];
+  const c = [
+    -0.007784894002430293, -0.3223964580411365, -2.400758277161838,
+    -2.549732539343734, 4.374664141464968, 2.938163982698783,
+  ];
+  const d = [
+    0.007784695709041462, 0.3224671290700398, 2.445134137142996,
+    3.754408661907416,
+  ];
   const pLow = 0.02425;
   let q, r;
   if (p < pLow) {
     q = Math.sqrt(-2 * Math.log(p));
-    return (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
-           ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
+    return (
+      (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+      ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+    );
   }
   if (p <= 1 - pLow) {
-    q = p - 0.5; r = q * q;
-    return (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5]) * q /
-           (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1);
+    q = p - 0.5;
+    r = q * q;
+    return (
+      ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) *
+        q) /
+      (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+    );
   }
   q = Math.sqrt(-2 * Math.log(1 - p));
-  return -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
-          ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
+  return (
+    -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) /
+    ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+  );
 }
 
-const Z75 = normSInv(0.75);   // 0.6744897…
+const Z75 = normSInv(0.75); // 0.6744897…
 
 // The rate a customer actually pays, given their tenor and down payment.
 // Tenor is clamped to [1,60] and DP to [0,0.5] so an out-of-range value can
@@ -362,29 +456,35 @@ export function rtoRate(tenor, downPaymentPct, adminParams) {
   const q1 = adminParams.rateAnchorMin;
   const q2 = adminParams.rateAnchorMid;
   const q3 = adminParams.rateAnchorMax;
-  const w  = adminParams.rateTenorWeight;
+  const w = adminParams.rateTenorWeight;
   const step = adminParams.rateStepPct;
 
-  const T  = Math.min(TENOR_AXIS_MAX, Math.max(TENOR_AXIS_MIN, tenor));
+  const T = Math.min(TENOR_AXIS_MAX, Math.max(TENOR_AXIS_MIN, tenor));
   const DP = Math.min(DP_AXIS_MAX, Math.max(0, downPaymentPct));
 
-  const kT = Math.log(0.5) / Math.log(
-    (ANCHOR_MID_TENOR - TENOR_AXIS_MIN) / (TENOR_AXIS_MAX - TENOR_AXIS_MIN));
-  const kD = Math.log(0.5) / Math.log(
-    (DP_AXIS_MAX - ANCHOR_MID_DP) / DP_AXIS_MAX);
+  const kT =
+    Math.log(0.5) /
+    Math.log(
+      (ANCHOR_MID_TENOR - TENOR_AXIS_MIN) / (TENOR_AXIS_MAX - TENOR_AXIS_MIN),
+    );
+  const kD =
+    Math.log(0.5) / Math.log((DP_AXIS_MAX - ANCHOR_MID_DP) / DP_AXIS_MAX);
 
-  const uT = Math.pow((T - TENOR_AXIS_MIN) / (TENOR_AXIS_MAX - TENOR_AXIS_MIN), kT);
+  const uT = Math.pow(
+    (T - TENOR_AXIS_MIN) / (TENOR_AXIS_MAX - TENOR_AXIS_MIN),
+    kT,
+  );
   const uD = Math.pow((DP_AXIS_MAX - DP) / DP_AXIS_MAX, kD);
-  const p  = 0.25 + 0.5 * (w * uT + (1 - w) * uD);
+  const p = 0.25 + 0.5 * (w * uT + (1 - w) * uD);
 
   const b = (q3 - q2) / (q2 - q1);
   let raw;
   if (Math.abs(b - 1) < 1e-9) {
     // Symmetric anchors — the generalized-lognormal degenerates to a normal.
     // Without this branch the (b - 1) denominator below divides by zero.
-    raw = q2 + (q3 - q1) / (2 * Z75) * normSInv(p);
+    raw = q2 + ((q3 - q1) / (2 * Z75)) * normSInv(p);
   } else {
-    raw = q2 + (q3 - q2) * (Math.pow(b, normSInv(p) / Z75) - 1) / (b - 1);
+    raw = q2 + ((q3 - q2) * (Math.pow(b, normSInv(p) / Z75) - 1)) / (b - 1);
   }
   return step > 0 ? Math.round(raw / step) * step : raw;
 }
@@ -411,32 +511,42 @@ export function rtoRate(tenor, downPaymentPct, adminParams) {
 // than to the degenerate-axis fallback. (paramsService also seeds the Tp keys
 // from the blob's single-phase values on load — this fallback is the
 // belt-and-braces second layer.)
-export function grossMarginCurve(systemKwp, adminParams, phase = 'single') {
+export function grossMarginCurve(systemKwp, adminParams, phase = "single") {
   const ap = adminParams || {};
-  const tp = phase === 'three';
+  const tp = phase === "three";
   const pick = (tpKey, spKey) => {
     const v = tp ? ap[tpKey] : undefined;
     return Number.isFinite(v) ? v : ap[spKey];
   };
-  const x1 = pick('grossMarginMinKwpTp', 'grossMarginMinKwp'),
-        x2 = pick('grossMarginMidKwpTp', 'grossMarginMidKwp'),
-        x3 = pick('grossMarginMaxKwpTp', 'grossMarginMaxKwp');
-  const q1 = pick('grossMarginMinTp', 'grossMarginMin'),
-        q2 = pick('grossMarginMidTp', 'grossMarginMid'),
-        q3 = pick('grossMarginMaxTp', 'grossMarginMax');
+  const x1 = pick("grossMarginMinKwpTp", "grossMarginMinKwp"),
+    x2 = pick("grossMarginMidKwpTp", "grossMarginMidKwp"),
+    x3 = pick("grossMarginMaxKwpTp", "grossMarginMaxKwp");
+  const q1 = pick("grossMarginMinTp", "grossMarginMin"),
+    q2 = pick("grossMarginMidTp", "grossMarginMid"),
+    q3 = pick("grossMarginMaxTp", "grossMarginMax");
   // Defensive: a hand-edited blob with a degenerate axis must not throw.
-  if (![x1, x2, x3, q1, q2, q3].every(Number.isFinite) || x3 <= x1 || x2 <= x1 || x2 >= x3) {
-    return Number.isFinite(q3) ? q3 : (Number.isFinite(ap.grossMargin) ? ap.grossMargin : 0);
+  if (
+    ![x1, x2, x3, q1, q2, q3].every(Number.isFinite) ||
+    x3 <= x1 ||
+    x2 <= x1 ||
+    x2 >= x3
+  ) {
+    return Number.isFinite(q3)
+      ? q3
+      : Number.isFinite(ap.grossMargin)
+        ? ap.grossMargin
+        : 0;
   }
-  const kwp = Number.isFinite(systemKwp) ? systemKwp : x3;   // bad kWp → max anchor → q3
-  const x  = Math.min(x3, Math.max(x1, kwp));
+  const kwp = Number.isFinite(systemKwp) ? systemKwp : x3; // bad kWp → max anchor → q3
+  const x = Math.min(x3, Math.max(x1, kwp));
   const kN = Math.log(0.5) / Math.log((x2 - x1) / (x3 - x1));
-  const u  = Math.pow((x - x1) / (x3 - x1), kN);
-  const p  = 0.25 + 0.5 * u;
-  const b  = (q3 - q2) / (q2 - q1);
-  const z  = normSInv(p) / Z75;
-  return Math.abs(b - 1) < 1e-9 ? q2 + (q3 - q2) * z
-                                : q2 + (q3 - q2) * (Math.pow(b, z) - 1) / (b - 1);
+  const u = Math.pow((x - x1) / (x3 - x1), kN);
+  const p = 0.25 + 0.5 * u;
+  const b = (q3 - q2) / (q2 - q1);
+  const z = normSInv(p) / Z75;
+  return Math.abs(b - 1) < 1e-9
+    ? q2 + (q3 - q2) * z
+    : q2 + ((q3 - q2) * (Math.pow(b, z) - 1)) / (b - 1);
 }
 
 // The margin actually APPLIED to a quote. v4.6 rule (PRODUCT!D24):
@@ -460,13 +570,20 @@ export function grossMarginCurve(systemKwp, adminParams, phase = 'single') {
 // ONLY when panels are purchased with at least one inverter. Zero-panel orders
 // keep the max-anchor return for pre-v3-191 callers, but the quote engine no
 // longer consumes that branch (each component resolves its own margin).
-export function grossMarginNoInverter(adminParams, phase = 'single') {
+export function grossMarginNoInverter(adminParams, phase = "single") {
   const ap = adminParams || {};
-  const v = phase === 'three' ? ap.grossMarginNoInverterTp : ap.grossMarginNoInverterSp;
+  const v =
+    phase === "three" ? ap.grossMarginNoInverterTp : ap.grossMarginNoInverterSp;
   return Number.isFinite(v) ? v : (ap.grossMarginMax ?? ap.grossMargin ?? 0);
 }
 
-export function grossMarginForCapacity(systemKwp, panelCount, adminParams, hasInverter = true, phase = 'single') {
+export function grossMarginForCapacity(
+  systemKwp,
+  panelCount,
+  adminParams,
+  hasInverter = true,
+  phase = "single",
+) {
   const ap = adminParams || {};
   if (!(panelCount > 0)) return ap.grossMarginMax ?? ap.grossMargin ?? 0;
   if (!hasInverter) return grossMarginNoInverter(ap, phase);
@@ -482,14 +599,21 @@ export function grossMarginForCapacity(systemKwp, panelCount, adminParams, hasIn
 //   D  Add'l DC cable                    E  Add'l AC cable
 //   F  Labor & installation (per kWp)    G  RSD variable (per panel)
 //   H  RSD fixed transmitter             I  Single-phase inverters
-//   J  Three-phase inverters             K  Battery package (all six prices)
-//   L  Misc catalog (all rows)           M  Location / delivery (all rows + Luzon pair)
+//   J  Three-phase inverters             L  Misc catalog (all rows)
+//   M  Location / delivery (all rows + Luzon pair)
 //   N  Standalone retrofit charges       O  Fixed overhead (all five lines)
 //   P  Mounting support                  Q  Roof preparation
 // Each entry: { mode: 'follow'|'fixed', fixed, otherwise } — except N, which
 // only ever prices in NO-PANEL orders (standalone RSD labor, standalone-
 // inverter mobilization), so its full-system branch is unreachable and it
 // stores a single { otherwise } margin (decision D4, Pat).
+//
+// v3-208 — K (Battery Package) is OUT of this table: the battery rides its
+// own kWh margin curve (batteryMarginCurve, grossMarginBattery* anchors),
+// following the quote's battery kWh regardless of the solar order shape —
+// the production-main rule. normalizeComponentMargins below iterates this
+// list, so a persisted K entry is stripped on load; the first admin save
+// after this deploy then drops it from the blob.
 //
 // THE RULE (confirmed verbatim, Pat): Follow-panels-curve and Fixed apply ONLY
 // when the order contains BOTH panels AND at least one inverter ("full
@@ -501,8 +625,23 @@ export function grossMarginForCapacity(systemKwp, panelCount, adminParams, hasIn
 // prices derive at grossMarginReference (the FinCo IRR/LCOE assumption), and
 // the resolver id 'PM' below exists only so deriveDirectPrices can route those
 // two keys away from the component table.
-export const COMPONENT_MARGIN_IDS =
-  ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q'];
+export const COMPONENT_MARGIN_IDS = [
+  "B",
+  "C",
+  "D",
+  "E",
+  "F",
+  "G",
+  "H",
+  "I",
+  "J",
+  "L",
+  "M",
+  "N",
+  "O",
+  "P",
+  "Q",
+];
 
 const finOr = (v, fb) => (Number.isFinite(v) ? v : fb);
 
@@ -514,18 +653,23 @@ const finOr = (v, fb) => (Number.isFinite(v) ? v : fb);
 // returns ap.componentMargins. Exported for paramsService and the smoke
 // harness.
 export function normalizeComponentMargins(ap) {
-  if (!ap || typeof ap !== 'object') return {};
-  const base = finOr(ap.grossMarginMax, finOr(ap.grossMargin, 0.30));
-  const src = (ap.componentMargins && typeof ap.componentMargins === 'object')
-    ? ap.componentMargins : {};
+  if (!ap || typeof ap !== "object") return {};
+  const base = finOr(ap.grossMarginMax, finOr(ap.grossMargin, 0.3));
+  const src =
+    ap.componentMargins && typeof ap.componentMargins === "object"
+      ? ap.componentMargins
+      : {};
   const out = {};
   for (const id of COMPONENT_MARGIN_IDS) {
-    const r = (src[id] && typeof src[id] === 'object') ? src[id] : {};
-    out[id] = id === 'N'
-      ? { otherwise: finOr(r.otherwise, base) }
-      : { mode: r.mode === 'fixed' ? 'fixed' : 'follow',
-          fixed: finOr(r.fixed, base),
-          otherwise: finOr(r.otherwise, base) };
+    const r = src[id] && typeof src[id] === "object" ? src[id] : {};
+    out[id] =
+      id === "N"
+        ? { otherwise: finOr(r.otherwise, base) }
+        : {
+            mode: r.mode === "fixed" ? "fixed" : "follow",
+            fixed: finOr(r.fixed, base),
+            otherwise: finOr(r.otherwise, base),
+          };
   }
   ap.componentMargins = out;
   return out;
@@ -536,29 +680,46 @@ export function normalizeComponentMargins(ap) {
 // 'follow' follows on a full system.
 export function componentMarginFor(id, adminParams, fullSystem, panelsMargin) {
   const ap = adminParams || {};
-  const base = finOr(ap.grossMarginMax, finOr(ap.grossMargin, 0.30));
+  const base = finOr(ap.grossMarginMax, finOr(ap.grossMargin, 0.3));
   const r = (ap.componentMargins || {})[id] || {};
-  if (id === 'N') return finOr(r.otherwise, base);
+  if (id === "N") return finOr(r.otherwise, base);
   if (fullSystem) {
-    return r.mode === 'fixed' ? finOr(r.fixed, base) : finOr(panelsMargin, base);
+    return r.mode === "fixed"
+      ? finOr(r.fixed, base)
+      : finOr(panelsMargin, base);
   }
   return finOr(r.otherwise, base);
 }
 
 // Builds the per-component margin resolver for ONE order. Returned function
-// maps a component id → margin; 'A' is the panels line itself and 'PM' the
-// preventive-maintenance pair (reference margin, outside the scheme).
-export function buildMarginResolver(adminParams, systemKwp, panelCount, hasInverter, phase) {
+// maps a component id → margin; 'A' is the panels line itself, 'PM' the
+// preventive-maintenance pair (reference margin, outside the scheme), and
+// 'K' the battery package — which v3-208 routes to the battery kWh curve,
+// ignoring fullSystem/panelsMargin entirely (the battery curve follows the
+// order's battery kWh whatever the solar shape).
+export function buildMarginResolver(
+  adminParams,
+  systemKwp,
+  panelCount,
+  hasInverter,
+  phase,
+  batteryKwh,
+) {
   const ap = adminParams || {};
-  const fullSystem = (panelCount > 0) && !!hasInverter;
-  const panelsMargin = !(panelCount > 0) ? null
-    : fullSystem ? grossMarginCurve(systemKwp, ap, phase)
-                 : grossMarginNoInverter(ap, phase);
-  const refMargin = finOr(ap.grossMarginReference,
-                      finOr(ap.grossMarginMax, finOr(ap.grossMargin, 0)));
+  const fullSystem = panelCount > 0 && !!hasInverter;
+  const panelsMargin = !(panelCount > 0)
+    ? null
+    : fullSystem
+      ? grossMarginCurve(systemKwp, ap, phase)
+      : grossMarginNoInverter(ap, phase);
+  const refMargin = finOr(
+    ap.grossMarginReference,
+    finOr(ap.grossMarginMax, finOr(ap.grossMargin, 0)),
+  );
   return (id) => {
-    if (id === 'A')  return finOr(panelsMargin, finOr(ap.grossMarginMax, 0));
-    if (id === 'PM') return refMargin;
+    if (id === "A") return finOr(panelsMargin, finOr(ap.grossMarginMax, 0));
+    if (id === "PM") return refMargin;
+    if (id === "K") return batteryMarginCurve(batteryKwh, ap);
     return componentMarginFor(id, ap, fullSystem, panelsMargin);
   };
 }
@@ -592,7 +753,7 @@ export function deviceMonthlyKwh(device, count, onTime, offTime, daysPerWeek) {
   // The "duration" of the device's ON cycle, mapped to [0..1):
   let dur;
   if (onTime === offTime) {
-    dur = 1;  // runs continuously all day
+    dur = 1; // runs continuously all day
   } else if (offTime > onTime) {
     dur = offTime - onTime;
   } else {
@@ -601,21 +762,33 @@ export function deviceMonthlyKwh(device, count, onTime, offTime, daysPerWeek) {
 
   // Shifted on-time: ((onTime - 6/24) MOD 1)
   const SHIFT = DAY_START_HOUR / 24;
-  const onShifted = ((onTime - SHIFT) % 1 + 1) % 1;
+  const onShifted = (((onTime - SHIFT) % 1) + 1) % 1;
 
   // Day window contribution (in fractional days, then *24 → hours)
   // Two pieces because the "shifted day" can wrap:
   //   piece1: window [0,   0.5]
   //   piece2: window [1.0, 1.5]
-  const dayPiece1 = Math.max(0, Math.min(onShifted + dur, 0.5) - Math.max(onShifted, 0));
-  const dayPiece2 = Math.max(0, Math.min(onShifted + dur, 1.5) - Math.max(onShifted, 1));
+  const dayPiece1 = Math.max(
+    0,
+    Math.min(onShifted + dur, 0.5) - Math.max(onShifted, 0),
+  );
+  const dayPiece2 = Math.max(
+    0,
+    Math.min(onShifted + dur, 1.5) - Math.max(onShifted, 1),
+  );
   const hoursDay = (dayPiece1 + dayPiece2) * 24;
 
   // Night window contribution
   //   piece1: window (0.5, 1.0]
   //   piece2: window (1.5, 2.0]
-  const nightPiece1 = Math.max(0, Math.min(onShifted + dur, 1.0) - Math.max(onShifted, 0.5));
-  const nightPiece2 = Math.max(0, Math.min(onShifted + dur, 2.0) - Math.max(onShifted, 1.5));
+  const nightPiece1 = Math.max(
+    0,
+    Math.min(onShifted + dur, 1.0) - Math.max(onShifted, 0.5),
+  );
+  const nightPiece2 = Math.max(
+    0,
+    Math.min(onShifted + dur, 2.0) - Math.max(onShifted, 1.5),
+  );
   const hoursNight = (nightPiece1 + nightPiece2) * 24;
 
   // Monthly hours: per-cycle hours * (daysPerWeek/7) * (365/12)
@@ -637,13 +810,18 @@ export function deviceMonthlyKwh(device, count, onTime, offTime, daysPerWeek) {
  * deviceRows: [{ deviceName, count, onTime, offTime, daysPerWeek }, ...]
  */
 export function totalDeviceKwh(deviceRows) {
-  let day = 0, night = 0;
+  let day = 0,
+    night = 0;
   for (const row of deviceRows) {
     if (!row.deviceName) continue;
-    const device = DEVICES.find(d => d.name === row.deviceName);
+    const device = DEVICES.find((d) => d.name === row.deviceName);
     if (!device) continue;
     const { dayKwh, nightKwh } = deviceMonthlyKwh(
-      device, row.count, row.onTime, row.offTime, row.daysPerWeek
+      device,
+      row.count,
+      row.onTime,
+      row.offTime,
+      row.daysPerWeek,
     );
     day += dayKwh;
     night += nightKwh;
@@ -664,18 +842,23 @@ export function totalDeviceKwh(deviceRows) {
 // CALCULATOR W7 (recommended panel count) = ROUNDUP(Q34, 0)
 
 export function computeRecommendedPanels(inputs, adminParams) {
-  const { monthlyBill, utilityRate, deviceRows, desiredSavingsPct, phase } = inputs;
+  const { monthlyBill, utilityRate, deviceRows, desiredSavingsPct, phase } =
+    inputs;
   const Q25 = monthlyBill / utilityRate;
   const { totalDeviceDayKwh, totalDeviceNightKwh } = totalDeviceKwh(deviceRows);
   const Q26 = totalDeviceDayKwh + totalDeviceNightKwh;
-  const Q27 = Q25 - Q26;                          // baseload (can be negative if user-listed > bill implies)
-  const Q28 = Q27 / 2 + totalDeviceDayKwh;        // total day kWh/mo
-  const Q29 = Q27 / 2 + totalDeviceNightKwh;      // total night kWh/mo
-  const Q31 = Q29 / adminParams.batteryEfficiency / adminParams.batteryDepthOfDischarge;
-  const Q32 = (Q28 + Q31) * 12 / 365;             // daily capacity needed (kWh/day)
-  const panelWatts = phase === 'three' ? PANEL_SETTINGS.threePhase.panelWatts
-                                       : PANEL_SETTINGS.singlePhase.panelWatts;
-  const Q34 = desiredSavingsPct * Q32 * 1000 / panelWatts / adminParams.kWhPerKwpPerDay;
+  const Q27 = Q25 - Q26; // baseload (can be negative if user-listed > bill implies)
+  const Q28 = Q27 / 2 + totalDeviceDayKwh; // total day kWh/mo
+  const Q29 = Q27 / 2 + totalDeviceNightKwh; // total night kWh/mo
+  const Q31 =
+    Q29 / adminParams.batteryEfficiency / adminParams.batteryDepthOfDischarge;
+  const Q32 = ((Q28 + Q31) * 12) / 365; // daily capacity needed (kWh/day)
+  const panelWatts =
+    phase === "three"
+      ? PANEL_SETTINGS.threePhase.panelWatts
+      : PANEL_SETTINGS.singlePhase.panelWatts;
+  const Q34 =
+    (desiredSavingsPct * Q32 * 1000) / panelWatts / adminParams.kWhPerKwpPerDay;
   // v3-68: Product-settable minimum system size. DELIBERATE DEVIATION from the
   // Excel mirror (the workbook has no equivalent knob): the recommendation is
   // floored at the panel-count equivalent of adminParams.minSystemKwp. Inert
@@ -684,16 +867,19 @@ export function computeRecommendedPanels(inputs, adminParams) {
   // raises the limit. minPanelsFloor is exported for the Step 2A override
   // input, which clamps manual entries to the same floor (0 stays allowed for
   // standalone RSD/inverter retrofit orders).
-  const minPanelsFloor = Math.ceil(((adminParams.minSystemKwp || 0) * 1000) / panelWatts);
+  const minPanelsFloor = Math.ceil(
+    ((adminParams.minSystemKwp || 0) * 1000) / panelWatts,
+  );
   // v3-106 — panel stock flag. When the active phase's panel is out of stock
   // the recommendation is forced to ZERO panels (overriding the min-system
   // floor too — you can't floor an order to panels that don't exist). The
   // quote itself proceeds: batteries / inverters / RSD retrofits for existing
   // installations are all still orderable (the standalone pricing paths).
   // Absent flag = available, so pre-v3-106 blobs need no migration.
-  const panelsAvailable = (phase === 'three'
-    ? PANEL_SETTINGS.threePhase.available
-    : PANEL_SETTINGS.singlePhase.available) !== false;
+  const panelsAvailable =
+    (phase === "three"
+      ? PANEL_SETTINGS.threePhase.available
+      : PANEL_SETTINGS.singlePhase.available) !== false;
   const W7 = panelsAvailable
     ? Math.max(Math.ceil(Q34), minPanelsFloor) // recommended panel count
     : 0;
@@ -716,7 +902,7 @@ export function computeRecommendedPanels(inputs, adminParams) {
     recommendedPanelCount: W7,
     minPanelsFloor,
     panelWatts,
-    panelsAvailable,   // v3-106 — false ⇒ W7 forced to 0; UI shows out-of-stock notice
+    panelsAvailable, // v3-106 — false ⇒ W7 forced to 0; UI shows out-of-stock notice
     inconsistent,
   };
 }
@@ -734,15 +920,17 @@ export function computeRecommendedPanels(inputs, adminParams) {
 // available size first.
 
 export function availableInverters(phase) {
-  const list = phase === 'three' ? INVERTERS_THREE_PHASE : INVERTERS_SINGLE_PHASE;
+  const list =
+    phase === "three" ? INVERTERS_THREE_PHASE : INVERTERS_SINGLE_PHASE;
   // v3-106 — rows carry an `available` stock flag (absent = available, so
   // pre-v3-106 blobs need no migration). Out-of-stock SKUs keep their row in
   // the admin editor but are excluded HERE — the single chokepoint both the
   // recommendation engine (recommendInverters) and the Step 2C dropdown read
   // from, so one filter covers every consumer. Sort largest-first to mirror
   // the Excel VLOOKUP behavior.
-  return list.filter(inv => inv.available !== false)
-             .sort((a, b) => b.ratedKw - a.ratedKw);
+  return list
+    .filter((inv) => inv.available !== false)
+    .sort((a, b) => b.ratedKw - a.ratedKw);
 }
 
 // ─── Recommended inverter split (CALCULATOR G19, G20, G21) ───────────────────
@@ -763,8 +951,10 @@ export function recommendInverters(systemKwp, phase) {
   const available = availableInverters(phase);
   if (available.length === 0) return [null, null, null];
 
-  const maxRatio = phase === 'three' ? PANEL_SETTINGS.threePhase.maxDcAcRatio
-                                     : PANEL_SETTINGS.singlePhase.maxDcAcRatio;
+  const maxRatio =
+    phase === "three"
+      ? PANEL_SETTINGS.threePhase.maxDcAcRatio
+      : PANEL_SETTINGS.singlePhase.maxDcAcRatio;
   const totalAcKwRequired = systemKwp / maxRatio;
   const largestAvailable = available[0].ratedKw;
 
@@ -777,7 +967,9 @@ export function recommendInverters(systemKwp, phase) {
     // Find smallest available inverter whose ratedKw >= target.
     // (Sorted ascending here so we pick the smallest sufficient one.)
     const ascending = [...available].sort((a, b) => a.ratedKw - b.ratedKw);
-    const picked = ascending.find(inv => inv.ratedKw >= target) || ascending[ascending.length - 1];
+    const picked =
+      ascending.find((inv) => inv.ratedKw >= target) ||
+      ascending[ascending.length - 1];
     slots[i] = picked;
     remaining -= picked.ratedKw;
   }
@@ -792,13 +984,16 @@ export function recommendInverters(systemKwp, phase) {
 // Warning if G17 > F17 (max ratio)
 
 export function systemSizing(panelCount, panelWatts, selectedInverters, phase) {
-  const systemKwp = panelCount * panelWatts / 1000;
+  const systemKwp = (panelCount * panelWatts) / 1000;
   const totalInverterKw = selectedInverters.reduce(
-    (sum, inv) => sum + (inv ? inv.ratedKw : 0), 0
+    (sum, inv) => sum + (inv ? inv.ratedKw : 0),
+    0,
   );
   const dcAcRatio = totalInverterKw > 0 ? systemKwp / totalInverterKw : 0;
-  const maxRatio = phase === 'three' ? PANEL_SETTINGS.threePhase.maxDcAcRatio
-                                     : PANEL_SETTINGS.singlePhase.maxDcAcRatio;
+  const maxRatio =
+    phase === "three"
+      ? PANEL_SETTINGS.threePhase.maxDcAcRatio
+      : PANEL_SETTINGS.singlePhase.maxDcAcRatio;
   const ratioExceeded = dcAcRatio > maxRatio;
   return { systemKwp, totalInverterKw, dcAcRatio, maxRatio, ratioExceeded };
 }
@@ -811,8 +1006,11 @@ export function systemSizing(panelCount, panelWatts, selectedInverters, phase) {
 // Used as a last-resort fallback if cablingTiers is missing or empty so
 // the calculator never crashes — the alternative is a blank page.
 const FALLBACK_CABLING_TIER = {
-  minPanels: 1, dcCablePct: 0.27, acCablePct: 0.08,
-  conduitsPct: 0.12, panelBoardPct: 0.09,
+  minPanels: 1,
+  dcCablePct: 0.27,
+  acCablePct: 0.08,
+  conduitsPct: 0.12,
+  panelBoardPct: 0.09,
 };
 
 // ─── v3-174 · tier total + THE MONOTONICITY FLOOR ────────────────────────────
@@ -826,23 +1024,37 @@ const FALLBACK_CABLING_TIER = {
 // cannot import from src/ — the server validator in netlify/functions/
 // parameters.js. The smoke suite diffs the two implementations.
 export function cablingTierTotal(tier) {
-  return (tier.dcCablePct || 0) + (tier.acCablePct || 0)
-       + (tier.conduitsPct || 0) + (tier.panelBoardPct || 0);
+  return (
+    (tier.dcCablePct || 0) +
+    (tier.acCablePct || 0) +
+    (tier.conduitsPct || 0) +
+    (tier.panelBoardPct || 0)
+  );
 }
 export function cablingTierRequiredTotal(tiers, idx) {
   if (idx <= 0 || !tiers[idx - 1] || !tiers[idx]) return 0;
   const prev = tiers[idx - 1];
-  return cablingTierTotal(prev) * (prev.minPanels || 1) / (tiers[idx].minPanels || 1);
+  return (
+    (cablingTierTotal(prev) * (prev.minPanels || 1)) /
+    (tiers[idx].minPanels || 1)
+  );
 }
 // Every-boundary check, shared by the client validator and the smoke gate.
 // Returns null when monotone, else { index, minPanels, requiredTotal, total }.
 export function findCablingTierViolation(tiers) {
-  const sorted = [...tiers].sort((a, b) => (a.minPanels || 0) - (b.minPanels || 0));
+  const sorted = [...tiers].sort(
+    (a, b) => (a.minPanels || 0) - (b.minPanels || 0),
+  );
   for (let i = 1; i < sorted.length; i++) {
     const req = cablingTierRequiredTotal(sorted, i);
     const tot = cablingTierTotal(sorted[i]);
     if (tot < req - 1e-9) {
-      return { index: i, minPanels: sorted[i].minPanels, requiredTotal: req, total: tot };
+      return {
+        index: i,
+        minPanels: sorted[i].minPanels,
+        requiredTotal: req,
+        total: tot,
+      };
     }
   }
   return null;
@@ -871,26 +1083,33 @@ export function findCablingTierViolation(tiers) {
 // clamp at n>=1, same flat-below-first / flat-above-last regions — so the two
 // cannot drift on edge cases. NO CALLER PRICES ANYTHING WITH THIS; it exists
 // for display, and the quote continues to consume cablingTotalPct as-is.
-export const CABLING_COMPONENT_FIELDS =
-  ['dcCablePct', 'acCablePct', 'conduitsPct', 'panelBoardPct'];
+export const CABLING_COMPONENT_FIELDS = [
+  "dcCablePct",
+  "acCablePct",
+  "conduitsPct",
+  "panelBoardPct",
+];
 
 export function cablingComponentPcts(panelCount, tiers) {
   const list = Array.isArray(tiers) ? tiers : [];
   if (list.length === 0) {
     const t = FALLBACK_CABLING_TIER;
-    return CABLING_COMPONENT_FIELDS.map(f => t[f] || 0);
+    return CABLING_COMPONENT_FIELDS.map((f) => t[f] || 0);
   }
-  const sorted = [...list].sort((a, b) => (a.minPanels || 0) - (b.minPanels || 0));
+  const sorted = [...list].sort(
+    (a, b) => (a.minPanels || 0) - (b.minPanels || 0),
+  );
   const n = Math.max(1, panelCount || 0);
-  const at = (t) => CABLING_COMPONENT_FIELDS.map(f => t[f] || 0);
+  const at = (t) => CABLING_COMPONENT_FIELDS.map((f) => t[f] || 0);
   if (n <= sorted[0].minPanels) return at(sorted[0]);
   const last = sorted[sorted.length - 1];
   if (n >= last.minPanels) return at(last);
   let hi = 1;
   while (sorted[hi].minPanels < n) hi++;
-  const a = sorted[hi - 1], b = sorted[hi];
+  const a = sorted[hi - 1],
+    b = sorted[hi];
   const f = (n - a.minPanels) / (b.minPanels - a.minPanels);
-  return CABLING_COMPONENT_FIELDS.map(field => {
+  return CABLING_COMPONENT_FIELDS.map((field) => {
     const ca = (a[field] || 0) * (a.minPanels || 1);
     const cb = (b[field] || 0) * (b.minPanels || 1);
     return (ca + (cb - ca) * f) / n;
@@ -903,14 +1122,21 @@ export function cablingComponentPcts(panelCount, tiers) {
 export function cablingInterpolationSpan(panelCount, tiers) {
   const list = Array.isArray(tiers) ? tiers : [];
   if (list.length === 0) return null;
-  const sorted = [...list].sort((a, b) => (a.minPanels || 0) - (b.minPanels || 0));
+  const sorted = [...list].sort(
+    (a, b) => (a.minPanels || 0) - (b.minPanels || 0),
+  );
   const n = Math.max(1, panelCount || 0);
   const last = sorted[sorted.length - 1];
-  if (n <= sorted[0].minPanels) return { flat: 'below', anchor: sorted[0].minPanels };
-  if (n >= last.minPanels) return { flat: 'above', anchor: last.minPanels };
+  if (n <= sorted[0].minPanels)
+    return { flat: "below", anchor: sorted[0].minPanels };
+  if (n >= last.minPanels) return { flat: "above", anchor: last.minPanels };
   let hi = 1;
   while (sorted[hi].minPanels < n) hi++;
-  return { flat: null, from: sorted[hi - 1].minPanels, to: sorted[hi].minPanels };
+  return {
+    flat: null,
+    from: sorted[hi - 1].minPanels,
+    to: sorted[hi].minPanels,
+  };
 }
 
 export function cablingTotalPct(panelCount, adminParams, phase) {
@@ -918,14 +1144,21 @@ export function cablingTotalPct(panelCount, adminParams, phase) {
   // own tier table (cablingTiersThreePhase); if it's missing or empty (e.g. a
   // stale blob predating the migration seed), fall back to the single-phase
   // table — the pre-v3-62 behavior — rather than the bare hardcoded tier.
-  const singleTiers = adminParams && Array.isArray(adminParams.cablingTiers)
-    ? adminParams.cablingTiers : [];
-  const threeTiers = adminParams && Array.isArray(adminParams.cablingTiersThreePhase)
-    ? adminParams.cablingTiersThreePhase : [];
-  const tiers = (phase === 'three' && threeTiers.length > 0) ? threeTiers : singleTiers;
+  const singleTiers =
+    adminParams && Array.isArray(adminParams.cablingTiers)
+      ? adminParams.cablingTiers
+      : [];
+  const threeTiers =
+    adminParams && Array.isArray(adminParams.cablingTiersThreePhase)
+      ? adminParams.cablingTiersThreePhase
+      : [];
+  const tiers =
+    phase === "three" && threeTiers.length > 0 ? threeTiers : singleTiers;
   if (tiers.length === 0) {
-    if (typeof console !== 'undefined') {
-      console.warn('[cablingTotalPct] No cabling tiers available; falling back to default tier.');
+    if (typeof console !== "undefined") {
+      console.warn(
+        "[cablingTotalPct] No cabling tiers available; falling back to default tier.",
+      );
     }
     const t = FALLBACK_CABLING_TIER;
     return t.dcCablePct + t.acCablePct + t.conduitsPct + t.panelBoardPct;
@@ -947,7 +1180,9 @@ export function cablingTotalPct(panelCount, adminParams, phase) {
   // so every caller — package pricing, captions, gates — is untouched. The
   // panel price cancels out of the interpolation, so anchors are computed as
   // pct × minPanels without ever touching a price here.
-  const sorted = [...tiers].sort((a, b) => (a.minPanels || 0) - (b.minPanels || 0));
+  const sorted = [...tiers].sort(
+    (a, b) => (a.minPanels || 0) - (b.minPanels || 0),
+  );
   const n = Math.max(1, panelCount || 0);
   const anchorCost = (t) => cablingTierTotal(t) * (t.minPanels || 1);
   if (n <= sorted[0].minPanels) return cablingTierTotal(sorted[0]);
@@ -955,9 +1190,12 @@ export function cablingTotalPct(panelCount, adminParams, phase) {
   if (n >= last.minPanels) return cablingTierTotal(last);
   let hi = 1;
   while (sorted[hi].minPanels < n) hi++;
-  const a = sorted[hi - 1], b = sorted[hi];
-  const cost = anchorCost(a)
-    + (anchorCost(b) - anchorCost(a)) * (n - a.minPanels) / (b.minPanels - a.minPanels);
+  const a = sorted[hi - 1],
+    b = sorted[hi];
+  const cost =
+    anchorCost(a) +
+    ((anchorCost(b) - anchorCost(a)) * (n - a.minPanels)) /
+      (b.minPanels - a.minPanels);
   return cost / n;
 }
 
@@ -970,7 +1208,7 @@ export function cablingTotalPct(panelCount, adminParams, phase) {
 // time (PANEL_SETTINGS.singlePhase.panelDirectPrice). 3-phase is hardcoded.
 
 export function panelDirectPrice(phase) {
-  return phase === 'three'
+  return phase === "three"
     ? PANEL_SETTINGS.threePhase.panelDirectPrice
     : PANEL_SETTINGS.singlePhase.panelDirectPrice;
 }
@@ -994,32 +1232,49 @@ export function panelDirectPrice(phase) {
 // rows fall through to 'misc'. Resolved per-row inside the misc loop below.
 const LINE_ITEM_CATEGORY = {
   // A · Solar Package
-  panels: 'solar', mounting: 'solar', cabling: 'solar', dcExtra: 'solar',
-  acExtra: 'solar', labor: 'solar', rsd: 'solar', rsdLabor: 'solar',
-  inverter0: 'solar', inverter1: 'solar', inverter2: 'solar', invMob: 'solar',
+  panels: "solar",
+  mounting: "solar",
+  cabling: "solar",
+  dcExtra: "solar",
+  acExtra: "solar",
+  labor: "solar",
+  rsd: "solar",
+  rsdLabor: "solar",
+  inverter0: "solar",
+  inverter1: "solar",
+  inverter2: "solar",
+  invMob: "solar",
   // B · Battery Package
-  battery: 'battery', rack: 'battery', ats: 'battery', critLoads: 'battery',
-  batteryLabor: 'battery',
+  battery: "battery",
+  rack: "battery",
+  ats: "battery",
+  critLoads: "battery",
+  batteryLabor: "battery",
   // C · Misc. Materials, Labor, Services & Other Adjustments
-  roof: 'misc', location: 'misc',
+  roof: "misc",
+  location: "misc",
 };
 
 export { LINE_ITEM_CATEGORY };
 
 export function buildPackageLineItems(state, adminParams, schedule) {
   const {
-    phase, panelCount, mountingSupportOverride,
+    phase,
+    panelCount,
+    mountingSupportOverride,
     // v3-18 rename: these now hold the TOTAL meters required (panels-to-
     // inverter for DC, inverter-to-CB-panel for AC), not just the meters
     // beyond the included baseline. The math below subtracts the baseline
     // before billing so the customer is only charged for excess.
-    dcCableMeters, acCableMeters,
-    rsdEnabled, rsdStandalonePanelCount,
+    dcCableMeters,
+    acCableMeters,
+    rsdEnabled,
+    rsdStandalonePanelCount,
     selectedInverters,
     batteryKwh,
-    roofMaterial,         // NEW v3: 'metal' | 'asphalt' | 'concrete'
-    location,             // NEW v3: 'luzon' | 'cebu' | 'siargao'
-    locationKm,           // NEW v3: road-km from the Parañaque logistics hub (v3-114; was Rizal Park)
+    roofMaterial, // NEW v3: 'metal' | 'asphalt' | 'concrete'
+    location, // NEW v3: 'luzon' | 'cebu' | 'siargao'
+    locationKm, // NEW v3: road-km from the Parañaque logistics hub (v3-114; was Rizal Park)
     miscMaterials, // [{ description, count, unitPrice }, ...]
   } = state;
 
@@ -1028,9 +1283,11 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // finances whatever balance remains after the down payment. Line items carry
   // a direct price and nothing else.
 
-  const panelWatts = phase === 'three' ? PANEL_SETTINGS.threePhase.panelWatts
-                                       : PANEL_SETTINGS.singlePhase.panelWatts;
-  const systemKwp = panelCount * panelWatts / 1000;
+  const panelWatts =
+    phase === "three"
+      ? PANEL_SETTINGS.threePhase.panelWatts
+      : PANEL_SETTINGS.singlePhase.panelWatts;
+  const systemKwp = (panelCount * panelWatts) / 1000;
 
   // v3-175/176 — the expansion flag and the order's effective inverter list are
   // resolved BEFORE the margin, because the margin now depends on whether the
@@ -1043,10 +1300,10 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // older systems had lower per-panel wattages, but homeowners know their
   // rated capacity), replacing the panel count. The gate keys on it here and
   // in App's forced-empty-slots mirror identically.
-  const expansionMode = !!state.expansionMode
-    && (state.existingKwp || 0) > 0 && panelCount > 0;
+  const expansionMode =
+    !!state.expansionMode && (state.existingKwp || 0) > 0 && panelCount > 0;
   const invSelected = expansionMode ? [null, null, null] : selectedInverters;
-  const orderHasInverter = invSelected.some(i => i);
+  const orderHasInverter = invSelected.some((i) => i);
 
   // v3-92 — each quote re-prices every COGS-derived line at ITS OWN margin.
   // deriveDirectPrices runs on a CLONE so the global objects stay at the
@@ -1060,13 +1317,28 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // panels-without-inverter parameter on a panels-only order — never the
   // curve. Preventive maintenance stays at grossMarginReference via the
   // resolver's 'PM' route.
-  const marginFor = buildMarginResolver(adminParams, systemKwp, panelCount, orderHasInverter, phase);
-  const ap = { ...adminParams, batteryPackages: (adminParams.batteryPackages || []).map(p => ({ ...p })) };
+  // v3-208 — the resolver now also receives the quote's batteryKwh: the 'K'
+  // route prices the six battery lines off the battery curve at that kWh,
+  // whatever the panels/inverter shape (user-directed — production main).
+  const marginFor = buildMarginResolver(
+    adminParams,
+    systemKwp,
+    panelCount,
+    orderHasInverter,
+    phase,
+    batteryKwh,
+  );
+  const ap = {
+    ...adminParams,
+    batteryPackages: (adminParams.batteryPackages || []).map((p) => ({ ...p })),
+  };
   deriveDirectPrices(ap, null, null, null, marginFor);
 
-  const panelCogsEa = phase === 'three' ? PANEL_SETTINGS.threePhase.panelCogs
-                                        : PANEL_SETTINGS.singlePhase.panelCogs;
-  const panelPriceEa = directFromCogs(panelCogsEa, ap, marginFor('A'));
+  const panelCogsEa =
+    phase === "three"
+      ? PANEL_SETTINGS.threePhase.panelCogs
+      : PANEL_SETTINGS.singlePhase.panelCogs;
+  const panelPriceEa = directFromCogs(panelCogsEa, ap, marginFor("A"));
 
   // v3-134 — every line item also carries `cogs`: the SAME composition as its
   // directPrice but on the ENTERED pre-VAT COGS keys (Anjon's numbers, exact —
@@ -1079,7 +1351,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   const panelsTotal = panelCount * panelPriceEa;
   const panelsCogsTotal = panelCount * panelCogsEa;
   items.push({
-    key: 'panels',
+    key: "panels",
     description: `${panelCount} units ${panelWatts}W Solar Panels`,
     directPrice: panelsTotal,
     cogs: panelsCogsTotal,
@@ -1092,13 +1364,18 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // which coincided only because both legs shared one margin; under an
   // independent P margin the two spaces could disagree, so COGS space is the
   // single authority. The line's cogs field is that same notional COGS.
-  const mountingCogs = panelsTotal === 0 ? 0
-    : Math.max(ap.mountingSupportFloorCogs, panelsCogsTotal * ap.mountingSupportPctOfPanels);
-  const mountingDirect = panelsTotal === 0 ? 0
-    : directFromCogs(mountingCogs, ap, marginFor('P'));
+  const mountingCogs =
+    panelsTotal === 0
+      ? 0
+      : Math.max(
+          ap.mountingSupportFloorCogs,
+          panelsCogsTotal * ap.mountingSupportPctOfPanels,
+        );
+  const mountingDirect =
+    panelsTotal === 0 ? 0 : directFromCogs(mountingCogs, ap, marginFor("P"));
   items.push({
-    key: 'mounting',
-    description: 'Mounting Support',
+    key: "mounting",
+    description: "Mounting Support",
     directPrice: mountingDirect,
     cogs: mountingCogs,
   });
@@ -1132,7 +1409,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     ? Math.max(1, (state.existingKwp * 1000) / panelWatts)
     : 0;
   // cost in PANEL-COGS UNITS: pct(n) × n — the panel COGS multiplies once below.
-  const cablingUnits = (n) => n <= 0 ? 0 : cablingTotalPct(n, ap, phase) * n;
+  const cablingUnits = (n) => (n <= 0 ? 0 : cablingTotalPct(n, ap, phase) * n);
   const cablingUnitsCharged = expansionMode
     ? Math.max(0, cablingUnits(exEq + panelCount) - cablingUnits(exEq))
     : cablingUnits(panelCount);
@@ -1145,15 +1422,17 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // shift by centavos versus v3-190 (re-based in smoke-v3-191). Expansion
   // marginality — C(existing+new) − C(existing) — is unchanged, applied in
   // COGS units before pricing.
-  const cablingCompId = phase === 'three' ? 'C' : 'B';
+  const cablingCompId = phase === "three" ? "C" : "B";
   const cablingCogs = panelsTotal === 0 ? 0 : cablingUnitsCharged * panelCogsEa;
-  const cablingDirect = panelsTotal === 0 ? 0
-    : directFromCogs(cablingCogs, ap, marginFor(cablingCompId));
+  const cablingDirect =
+    panelsTotal === 0
+      ? 0
+      : directFromCogs(cablingCogs, ap, marginFor(cablingCompId));
   items.push({
-    key: 'cabling',
+    key: "cabling",
     description: expansionMode
       ? `Cables, Conduits, Fittings, Panel Board & Other Devices — expansion rate at ${(((exEq + panelCount) * panelWatts) / 1000).toFixed(2)} kWp combined`
-      : 'Cables, Conduits, Fittings, Panel Board & Other Devices',
+      : "Cables, Conduits, Fittings, Panel Board & Other Devices",
     directPrice: cablingDirect,
     cogs: cablingCogs,
   });
@@ -1163,44 +1442,58 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // to "total meters", so the calc now subtracts the included baseline
   // before multiplying by the per-meter rate. At the default (30m total =
   // 30m included) the line item is ₱0 and no charge appears.
-  const dcExtraMeters = Math.max(0, (dcCableMeters || 0) - INCLUDED_DC_CABLE_METERS);
-  const dcExtraDirect = panelsTotal === 0 ? 0
-    : dcExtraMeters * ap.additionalDcCablePerMeter;
+  const dcExtraMeters = Math.max(
+    0,
+    (dcCableMeters || 0) - INCLUDED_DC_CABLE_METERS,
+  );
+  const dcExtraDirect =
+    panelsTotal === 0 ? 0 : dcExtraMeters * ap.additionalDcCablePerMeter;
   items.push({
-    key: 'dcExtra',
+    key: "dcExtra",
     description: `${dcExtraMeters}m of Add'l. DC Cable`,
     directPrice: dcExtraDirect,
-    cogs: panelsTotal === 0 ? 0 : dcExtraMeters * ap.additionalDcCablePerMeterCogs,
+    cogs:
+      panelsTotal === 0 ? 0 : dcExtraMeters * ap.additionalDcCablePerMeterCogs,
   });
 
   // 5. Additional AC cable — same pattern as DC.
-  const acExtraMeters = Math.max(0, (acCableMeters || 0) - INCLUDED_AC_CABLE_METERS);
-  const acExtraDirect = panelsTotal === 0 ? 0
-    : acExtraMeters * ap.additionalAcCablePerMeter;
+  const acExtraMeters = Math.max(
+    0,
+    (acCableMeters || 0) - INCLUDED_AC_CABLE_METERS,
+  );
+  const acExtraDirect =
+    panelsTotal === 0 ? 0 : acExtraMeters * ap.additionalAcCablePerMeter;
   items.push({
-    key: 'acExtra',
+    key: "acExtra",
     description: `${acExtraMeters}m of Add'l. AC Cable`,
     directPrice: acExtraDirect,
-    cogs: panelsTotal === 0 ? 0 : acExtraMeters * ap.additionalAcCablePerMeterCogs,
+    cogs:
+      panelsTotal === 0 ? 0 : acExtraMeters * ap.additionalAcCablePerMeterCogs,
   });
 
   // 6. Solar Labor & Installation (variable per kWp + fixed overhead bundle)
-  const fixedOverheadDirect = ap.fixedOverheadDeliveryLogistics
-                            + ap.fixedOverheadWarehouse
-                            + ap.fixedOverheadCustoms
-                            + ap.fixedOverheadSafetySupervision
-                            + ap.fixedOverheadTesting;
-  const laborDirect = systemKwp * ap.laborInstallationPerKwp
-                    + (panelsTotal === 0 ? 0 : fixedOverheadDirect);
+  const fixedOverheadDirect =
+    ap.fixedOverheadDeliveryLogistics +
+    ap.fixedOverheadWarehouse +
+    ap.fixedOverheadCustoms +
+    ap.fixedOverheadSafetySupervision +
+    ap.fixedOverheadTesting;
+  const laborDirect =
+    systemKwp * ap.laborInstallationPerKwp +
+    (panelsTotal === 0 ? 0 : fixedOverheadDirect);
   items.push({
-    key: 'labor',
-    description: 'Solar Labor & Installation',
+    key: "labor",
+    description: "Solar Labor & Installation",
     directPrice: laborDirect,
-    cogs: systemKwp * ap.laborInstallationPerKwpCogs
-      + (panelsTotal === 0 ? 0
-         : ap.fixedOverheadDeliveryLogisticsCogs + ap.fixedOverheadWarehouseCogs
-         + ap.fixedOverheadCustomsCogs + ap.fixedOverheadSafetySupervisionCogs
-         + ap.fixedOverheadTestingCogs),
+    cogs:
+      systemKwp * ap.laborInstallationPerKwpCogs +
+      (panelsTotal === 0
+        ? 0
+        : ap.fixedOverheadDeliveryLogisticsCogs +
+          ap.fixedOverheadWarehouseCogs +
+          ap.fixedOverheadCustomsCogs +
+          ap.fixedOverheadSafetySupervisionCogs +
+          ap.fixedOverheadTestingCogs),
   });
 
   // 7. RSD bundled with solar package
@@ -1215,33 +1508,40 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // 8. RSD as standalone (when no solar package is being purchased)
   let rsdStandaloneDirect = 0;
   if (rsdEnabled && panelsTotal === 0 && (rsdStandalonePanelCount || 0) > 0) {
-    rsdStandaloneDirect = rsdStandalonePanelCount * ap.rsdVariablePerPanel
-                        + ap.rsdFixedTransmitter;
+    rsdStandaloneDirect =
+      rsdStandalonePanelCount * ap.rsdVariablePerPanel + ap.rsdFixedTransmitter;
   }
   // RSD Labor for standalone
   let rsdStandaloneLaborDirect = 0;
   if (rsdStandaloneDirect > 0) {
-    rsdStandaloneLaborDirect = rsdStandalonePanelCount * ap.rsdStandaloneLaborPerPanel
-                             + ap.rsdStandaloneLaborMobilization;
+    rsdStandaloneLaborDirect =
+      rsdStandalonePanelCount * ap.rsdStandaloneLaborPerPanel +
+      ap.rsdStandaloneLaborMobilization;
   }
   const rsdPanelsForLabel = Math.max(panelCount, rsdStandalonePanelCount || 0);
   const rsdAnyDirect = rsdDirect + rsdStandaloneDirect;
   items.push({
-    key: 'rsd',
+    key: "rsd",
     description: `Rapid Shutdown Device (RSD) for ${rsdPanelsForLabel} Solar Panels`,
     directPrice: rsdAnyDirect,
-    cogs: (rsdEnabled && panelsTotal > 0
-            ? panelCount * ap.rsdVariablePerPanelCogs + ap.rsdFixedTransmitterCogs : 0)
-        + (rsdEnabled && panelsTotal === 0 && (rsdStandalonePanelCount || 0) > 0
-            ? rsdStandalonePanelCount * ap.rsdVariablePerPanelCogs + ap.rsdFixedTransmitterCogs : 0),
+    cogs:
+      (rsdEnabled && panelsTotal > 0
+        ? panelCount * ap.rsdVariablePerPanelCogs + ap.rsdFixedTransmitterCogs
+        : 0) +
+      (rsdEnabled && panelsTotal === 0 && (rsdStandalonePanelCount || 0) > 0
+        ? rsdStandalonePanelCount * ap.rsdVariablePerPanelCogs +
+          ap.rsdFixedTransmitterCogs
+        : 0),
   });
   items.push({
-    key: 'rsdLabor',
-    description: 'Labor & Installation for Standalone RSD order',
+    key: "rsdLabor",
+    description: "Labor & Installation for Standalone RSD order",
     directPrice: rsdStandaloneLaborDirect,
-    cogs: rsdStandaloneLaborDirect > 0
-      ? rsdStandalonePanelCount * ap.rsdStandaloneLaborPerPanelCogs + ap.rsdStandaloneLaborMobilizationCogs
-      : 0,
+    cogs:
+      rsdStandaloneLaborDirect > 0
+        ? rsdStandalonePanelCount * ap.rsdStandaloneLaborPerPanelCogs +
+          ap.rsdStandaloneLaborMobilizationCogs
+        : 0,
   });
 
   // 9. Inverters (each slot)
@@ -1250,9 +1550,9 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     // J three-phase). On a full system that is Follow (= the panels curve)
     // or Fixed; an inverter-only retrofit prices at the Otherwise margin.
     const invDirect = inv
-      ? directFromCogs(inv.cogs, ap, marginFor(phase === 'three' ? 'J' : 'I'))
+      ? directFromCogs(inv.cogs, ap, marginFor(phase === "three" ? "J" : "I"))
       : 0;
-    const desc = inv ? `${inv.ratedKw.toFixed(2)} kW Inverter` : 'None';
+    const desc = inv ? `${inv.ratedKw.toFixed(2)} kW Inverter` : "None";
     items.push({
       key: `inverter${i}`,
       description: desc,
@@ -1285,9 +1585,10 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // an off-grid value (e.g. 25 kWh under a 16 kWh pack) still produces a
   // sane cost — it rounds up to the next physical pack count.
   const pkg = resolveBatteryPackage(ap, state.batteryPackageId);
-  const batteryCount = (batteryKwh || 0) > 0
-    ? Math.ceil((batteryKwh || 0) / pkg.batteryUnitKwh)
-    : 0;
+  const batteryCount =
+    (batteryKwh || 0) > 0
+      ? Math.ceil((batteryKwh || 0) / pkg.batteryUnitKwh)
+      : 0;
   // v3-151 — rack count now respects the package's rackRequiredFromUnits
   // threshold via the shared racksNeeded() helper. Below the threshold no rack
   // is quoted at all; the 5 kWh pack ships at 3, so one and two unit quotes
@@ -1300,72 +1601,82 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // line out of the Summary, which already filters zero-priced items — so an
   // excluded component leaves no trace on the customer's quote rather than
   // printing a PHP 0 row.
-  const rackOn  = state.batteryRackIncluded !== false;
-  const atsOn   = state.batteryAtsIncluded !== false;
-  const critOn  = state.batteryCritLoadsIncluded !== false;
+  const rackOn = state.batteryRackIncluded !== false;
+  const atsOn = state.batteryAtsIncluded !== false;
+  const critOn = state.batteryCritLoadsIncluded !== false;
 
   const batteryDirect = batteryCount * pkg.batteryUnitPrice;
   const rackDirect = rackOn ? rackCount * pkg.batteryRackPrice : 0;
-  const atsDirect = (atsOn && batteryKwh > 0) ? pkg.atsPrice : 0;
-  const critLoadDirect = (critOn && batteryKwh > 0) ? pkg.criticalLoadsMaterials : 0;
+  const atsDirect = atsOn && batteryKwh > 0 ? pkg.atsPrice : 0;
+  const critLoadDirect =
+    critOn && batteryKwh > 0 ? pkg.criticalLoadsMaterials : 0;
 
   // Labor with solar OR standalone
   const hasSolar = panelsTotal > 0;
-  const battLaborDirect = batteryKwh > 0
-    ? (hasSolar ? pkg.laborWithSolarInstall : pkg.standaloneLabor)
-    : 0;
+  const battLaborDirect =
+    batteryKwh > 0
+      ? hasSolar
+        ? pkg.laborWithSolarInstall
+        : pkg.standaloneLabor
+      : 0;
   const battLaborLabel = hasSolar
-    ? 'Battery Labor & Installation w/ Solar Package Installation'
-    : 'Battery Standalone Labor & Installation';
+    ? "Battery Labor & Installation w/ Solar Package Installation"
+    : "Battery Standalone Labor & Installation";
 
   items.push({
-    key: 'battery',
+    key: "battery",
     description: `${batteryCount} unit/s ${pkg.batteryUnitKwh}kWh Battery w/ Cables & Lugs`,
     directPrice: batteryDirect,
     cogs: batteryCount * pkg.batteryUnitCogs,
   });
   items.push({
-    key: 'rack',
+    key: "rack",
     description: `${rackCount} unit/s Battery Rack`,
     directPrice: rackDirect,
     cogs: rackOn ? rackCount * pkg.batteryRackCogs : 0,
   });
   items.push({
-    key: 'ats',
-    description: 'Automatic Transfer Switch (ATS)',
+    key: "ats",
+    description: "Automatic Transfer Switch (ATS)",
     directPrice: atsDirect,
-    cogs: (atsOn && batteryKwh > 0) ? pkg.atsCogs : 0,
+    cogs: atsOn && batteryKwh > 0 ? pkg.atsCogs : 0,
   });
   items.push({
-    key: 'critLoads',
-    description: 'Materials for Critical Loads',
+    key: "critLoads",
+    description: "Materials for Critical Loads",
     directPrice: critLoadDirect,
-    cogs: (critOn && batteryKwh > 0) ? pkg.criticalLoadsMaterialsCogs : 0,
+    cogs: critOn && batteryKwh > 0 ? pkg.criticalLoadsMaterialsCogs : 0,
   });
   items.push({
-    key: 'batteryLabor',
+    key: "batteryLabor",
     description: battLaborLabel,
     directPrice: battLaborDirect,
-    cogs: batteryKwh > 0
-      ? (hasSolar ? pkg.laborWithSolarInstallCogs : pkg.standaloneLaborCogs)
-      : 0,
+    cogs:
+      batteryKwh > 0
+        ? hasSolar
+          ? pkg.laborWithSolarInstallCogs
+          : pkg.standaloneLaborCogs
+        : 0,
   });
 
   // 11. Standalone-inverter mobilization
   // Excel AA23: when no solar, but inverters selected, charge mobilization fee
   let invMobDirect = 0;
-  const invCount = invSelected.filter(i => i).length;
+  const invCount = invSelected.filter((i) => i).length;
   if (panelsTotal === 0 && invCount > 0) {
-    invMobDirect = ap.inverterStandaloneLaborPerUnit * invCount
-                 + ap.inverterStandaloneMobilization;
+    invMobDirect =
+      ap.inverterStandaloneLaborPerUnit * invCount +
+      ap.inverterStandaloneMobilization;
   }
   items.push({
-    key: 'invMob',
-    description: 'Mobilization for StandAlone Inverter Order',
+    key: "invMob",
+    description: "Mobilization for StandAlone Inverter Order",
     directPrice: invMobDirect,
-    cogs: invMobDirect > 0
-      ? ap.inverterStandaloneLaborPerUnitCogs * invCount + ap.inverterStandaloneMobilizationCogs
-      : 0,
+    cogs:
+      invMobDirect > 0
+        ? ap.inverterStandaloneLaborPerUnitCogs * invCount +
+          ap.inverterStandaloneMobilizationCogs
+        : 0,
   });
 
   // 12. Roof Material (v3 — Excel CALCULATOR AA34)
@@ -1374,22 +1685,27 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   //   asphalt   → kWp × roofAsphaltPerKwp
   //   concrete  → kWp × roofConcretePerKwp
   let roofDirect = 0;
-  let roofLabel = 'Roof Preparation (Metal — no prep needed)';
+  let roofLabel = "Roof Preparation (Metal — no prep needed)";
   if (panelsTotal > 0) {
-    if (roofMaterial === 'asphalt') {
+    if (roofMaterial === "asphalt") {
       roofDirect = systemKwp * ap.roofAsphaltPerKwp;
-      roofLabel = 'Roof Preparation — Asphalt / Shingles / Tiled';
-    } else if (roofMaterial === 'concrete') {
+      roofLabel = "Roof Preparation — Asphalt / Shingles / Tiled";
+    } else if (roofMaterial === "concrete") {
       roofDirect = systemKwp * ap.roofConcretePerKwp;
-      roofLabel = 'Roof Preparation — Concrete';
+      roofLabel = "Roof Preparation — Concrete";
     }
   }
   items.push({
-    key: 'roof',
+    key: "roof",
     description: roofLabel,
     directPrice: roofDirect,
-    cogs: roofDirect === 0 ? 0
-      : systemKwp * (roofMaterial === 'asphalt' ? ap.roofAsphaltPerKwpCogs : ap.roofConcretePerKwpCogs),
+    cogs:
+      roofDirect === 0
+        ? 0
+        : systemKwp *
+          (roofMaterial === "asphalt"
+            ? ap.roofAsphaltPerKwpCogs
+            : ap.roofConcretePerKwpCogs),
   });
 
   // 13. Location / Delivery (v3 — Excel CALCULATOR AA38)
@@ -1408,13 +1724,14 @@ export function buildPackageLineItems(state, adminParams, schedule) {
     // margin above); a missing/deleted id defensively prices ₱0 here —
     // App.jsx already falls a stale pick back to 'luzon' before pricing, so
     // this branch is a belt-and-braces guard, not the enforcement point.
-    const dynamicLoc = location !== 'luzon' && location !== 'other'
-      ? (ap.deliveryLocations || []).find(l => l.id === location)
-      : null;
+    const dynamicLoc =
+      location !== "luzon" && location !== "other"
+        ? (ap.deliveryLocations || []).find((l) => l.id === location)
+        : null;
     if (dynamicLoc) {
       locationDirect = dynamicLoc.fixedFee + panelCount * dynamicLoc.perPanel;
       locationLabel = `Location / Delivery — ${dynamicLoc.label}`;
-    } else if (location === 'luzon' && (locationKm || 0) > luzonFreeKm) {
+    } else if (location === "luzon" && (locationKm || 0) > luzonFreeKm) {
       // v3-115 PARITY FIX — workbook AA38 is MAX(0, Y39-30) × D41 + D40: the
       // per-km rate applies ONLY to the EXCESS beyond the free zone. The app
       // had charged the FULL distance since Luzon location pricing was
@@ -1424,9 +1741,10 @@ export function buildPackageLineItems(state, adminParams, schedule) {
       // v3-114; verified against Solviva_Calc_v_B_5_1.xlsm CALCULATOR!AA38.
       // v3-199 — the radius (workbook's literal 30) is the luzonFreeTravelKm
       // param; the workbook still hardcodes 30 (deferred-sync list).
-      locationDirect = ap.luzonOver30FixedFee
-        + Math.max(0, (locationKm || 0) - luzonFreeKm) * ap.luzonOver30PerKm;
-      locationLabel = `Location / Delivery — Luzon (${locationKm} km from Parañaque hub)`;   // v3-114 origin rebase
+      locationDirect =
+        ap.luzonOver30FixedFee +
+        Math.max(0, (locationKm || 0) - luzonFreeKm) * ap.luzonOver30PerKm;
+      locationLabel = `Location / Delivery — Luzon (${locationKm} km from Parañaque hub)`; // v3-114 origin rebase
     }
   }
   // v3-134 — location COGS mirror: dynamic row → fixedFeeCogs + panels ×
@@ -1434,17 +1752,21 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // luzonOver30PerKmCogs (same AA38 shape on Anjon's entered values).
   let locationCogs = 0;
   if (panelsTotal > 0) {
-    const dynRow = location !== 'luzon' && location !== 'other'
-      ? (ap.deliveryLocations || []).find(l => l.id === location) : null;
+    const dynRow =
+      location !== "luzon" && location !== "other"
+        ? (ap.deliveryLocations || []).find((l) => l.id === location)
+        : null;
     if (dynRow) {
-      locationCogs = (dynRow.fixedFeeCogs || 0) + panelCount * (dynRow.perPanelCogs || 0);
-    } else if (location === 'luzon' && (locationKm || 0) > luzonFreeKm) {
-      locationCogs = ap.luzonOver30FixedFeeCogs
-        + Math.max(0, (locationKm || 0) - luzonFreeKm) * ap.luzonOver30PerKmCogs;
+      locationCogs =
+        (dynRow.fixedFeeCogs || 0) + panelCount * (dynRow.perPanelCogs || 0);
+    } else if (location === "luzon" && (locationKm || 0) > luzonFreeKm) {
+      locationCogs =
+        ap.luzonOver30FixedFeeCogs +
+        Math.max(0, (locationKm || 0) - luzonFreeKm) * ap.luzonOver30PerKmCogs;
     }
   }
   items.push({
-    key: 'location',
+    key: "location",
     description: locationLabel,
     directPrice: locationDirect,
     cogs: locationCogs,
@@ -1473,15 +1795,26 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // and applied in the single stamping pass after the loop.
   const miscCategoryByKey = {};
   (miscMaterials || []).forEach((row, i) => {
-    const empty = { key: `misc${i}`, description: '', directPrice: 0, cogs: null };
-    miscCategoryByKey[`misc${i}`] = 'misc';
-    if (!row || !row.count) { items.push(empty); return; }
+    const empty = {
+      key: `misc${i}`,
+      description: "",
+      directPrice: 0,
+      cogs: null,
+    };
+    miscCategoryByKey[`misc${i}`] = "misc";
+    if (!row || !row.count) {
+      items.push(empty);
+      return;
+    }
 
     const catId = row.catalogId;
-    const isCatalog = catId && catId !== 'other';
+    const isCatalog = catId && catId !== "other";
     if (isCatalog) {
-      const item = (ap.miscCatalog || []).find(m => m && m.id === catId);
-      if (!item || item.available === false) { items.push(empty); return; }
+      const item = (ap.miscCatalog || []).find((m) => m && m.id === catId);
+      if (!item || item.available === false) {
+        items.push(empty);
+        return;
+      }
       // A REVERSAL row assigned to 'battery' nets against the Battery Package
       // subtotal and cancels its counterpart in place — the reason the category
       // is per-ITEM rather than a fixed rule for all of 2F.
@@ -1495,12 +1828,15 @@ export function buildPackageLineItems(state, adminParams, schedule) {
       return;
     }
 
-    if (!row.description || !row.unitPrice) { items.push(empty); return; }
+    if (!row.description || !row.unitPrice) {
+      items.push(empty);
+      return;
+    }
     items.push({
       key: `misc${i}`,
       description: `${row.count} Unit/s ${row.description}`,
       directPrice: row.count * row.unitPrice,
-      cogs: null,   // rep-entered PRICE — no COGS basis (shown as — in the reveal)
+      cogs: null, // rep-entered PRICE — no COGS basis (shown as — in the reveal)
     });
   });
 
@@ -1513,8 +1849,9 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // populated in the loop above); everything else from the static map. The
   // ?? 'misc' tail is the belt-and-braces fallback normalizeCategory already
   // guarantees — an uncategorized line renders in Misc rather than vanishing.
-  items.forEach(i => {
-    i.category = miscCategoryByKey[i.key] ?? LINE_ITEM_CATEGORY[i.key] ?? 'misc';
+  items.forEach((i) => {
+    i.category =
+      miscCategoryByKey[i.key] ?? LINE_ITEM_CATEGORY[i.key] ?? "misc";
   });
 
   // Totals
@@ -1558,8 +1895,8 @@ export function buildPackageLineItems(state, adminParams, schedule) {
 // Two components now set state.downPaymentPct; a copied array is how the
 // minimum-DP tier ends up enforced in one of them and not the other.
 export const DP_PCT_OPTIONS = [
-  0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50,
-  0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00,
+  0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65,
+  0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0,
 ];
 
 // Float-safe comparison epsilon for DP fractions (0.15 vs 0.15000000000002).
@@ -1571,14 +1908,15 @@ export const DP_EPS = 1e-9;
 // control that set it disappear. Step 3's selector lives outside that block and
 // keeps the full range.
 export function allowedDpOptions(minDpPct, excludeFull = false) {
-  return DP_PCT_OPTIONS.filter(p =>
-    p >= minDpPct - DP_EPS && !(excludeFull && p >= 1 - DP_EPS));
+  return DP_PCT_OPTIONS.filter(
+    (p) => p >= minDpPct - DP_EPS && !(excludeFull && p >= 1 - DP_EPS),
+  );
 }
 
 export function resolveMinDpPct(minDpTiers, netPrice) {
   if (!Array.isArray(minDpTiers) || minDpTiers.length === 0) return 0;
   const sorted = [...minDpTiers].sort(
-    (a, b) => (a.fromNetPrice || 0) - (b.fromNetPrice || 0)
+    (a, b) => (a.fromNetPrice || 0) - (b.fromNetPrice || 0),
   );
   let pct = 0;
   for (const t of sorted) {
@@ -1628,11 +1966,13 @@ export function computePaymentTerms(state, adminParams, packageData) {
   // `promoDiscount` stays the EFFECTIVE FRACTION for display and for anything
   // downstream that reasons in percentages — on a peso code that is the clamped
   // amount over the total, which is what the customer actually got.
-  const promo = adminParams.promoCodes.find(p => p.code === (promoCode || '').trim().toUpperCase());
+  const promo = adminParams.promoCodes.find(
+    (p) => p.code === (promoCode || "").trim().toUpperCase(),
+  );
   const discountValue = promoDiscountAmount(promo, totalDirect);
   const promoDiscount = totalDirect > 0 ? discountValue / totalDirect : 0;
-  const discountAmount = -discountValue;                    // AH6 (≤ 0)
-  const netDirectPrice = totalDirect + discountAmount;      // AH7
+  const discountAmount = -discountValue; // AH6 (≤ 0)
+  const netDirectPrice = totalDirect + discountAmount; // AH7
 
   // The rate comes from the tenor × DP surface (Admin!C22 in the workbook is an
   // XLOOKUP into the Rate Grid sheet; `rtoRate` IS that grid, in closed form).
@@ -1640,8 +1980,8 @@ export function computePaymentTerms(state, adminParams, packageData) {
   const monthlyRate = rate / 12;
 
   // AH9 → AH11
-  const dpTotalCharge      = downPaymentPct * netDirectPrice;   // AH9
-  const amountForFinancing = netDirectPrice - dpTotalCharge;    // AH11
+  const dpTotalCharge = downPaymentPct * netDirectPrice; // AH9
+  const amountForFinancing = netDirectPrice - dpTotalCharge; // AH11
 
   // AH14 — ANNUITY-DUE (type 1): payments fall at month START, matching the
   // workbook's PMT(Admin!C22/12, tenor, -AH11, , 1) (v4.7). This is a real
@@ -1677,8 +2017,8 @@ export function computePaymentTerms(state, adminParams, packageData) {
   // Direct Purchase, monthly × tenor otherwise.
   const finalPostInstallBalance = isDirectPurchase
     ? amountForFinancing
-    : customerMonthlyPmt * tenor;                                        // AH16
-  const totalAmountDue = dpTotalCharge + finalPostInstallBalance;        // AG29
+    : customerMonthlyPmt * tenor; // AH16
+  const totalAmountDue = dpTotalCharge + finalPostInstallBalance; // AG29
 
   // v3-99 — DOCUMENTARY STAMP TAX (CALCULATOR!AH13). ₱1.50 per ₱200 (or part)
   // of the financed amount, prorated by the loan's fraction of a year and
@@ -1694,7 +2034,9 @@ export function computePaymentTerms(state, adminParams, packageData) {
   const dstPerTwoHundred = 200 * (adminParams.documentaryStampTaxRate ?? 0);
   const dst = isDirectPurchase
     ? 0
-    : Math.ceil(amountForFinancing / 200) * dstPerTwoHundred * Math.min(1, tenor / 12);
+    : Math.ceil(amountForFinancing / 200) *
+      dstPerTwoHundred *
+      Math.min(1, tenor / 12);
 
   // v3-100 — the DST-INCLUSIVE grand total: SUMMARY!H20 = H18 + H14 + H11
   // (balance + DST + DP) = ANNEX!E8. Deliberately a NEW field: totalAmountDue
@@ -1706,7 +2048,7 @@ export function computePaymentTerms(state, adminParams, packageData) {
   const summaryTotalDue = totalAmountDue + dst;
   // AssetCo's revenue. Internal — the workbook's SUMMARY does not show it and
   // neither do we.
-  const totalInterest = totalAmountDue - netDirectPrice;                 // AH19
+  const totalInterest = totalAmountDue - netDirectPrice; // AH19
 
   // v3-82 — a 100% down payment leaves nothing to finance. PMT() returns a clean
   // 0 here (no NaN), but the TENOR then means nothing: without this flag the
@@ -1738,9 +2080,9 @@ export function computePaymentTerms(state, adminParams, packageData) {
     cashPrice: netDirectPrice,
     downPayment: dpTotalCharge,
     amountFinanced: amountForFinancing,
-    financeCharge: totalInterest,        // <- REQUIRED. Was hidden pre-v3-86.
+    financeCharge: totalInterest, // <- REQUIRED. Was hidden pre-v3-86.
     totalPayable: totalAmountDue,
-    nominalAnnualRate: rate,             // disclosed as "% p.a., diminishing balance"
+    nominalAnnualRate: rate, // disclosed as "% p.a., diminishing balance"
     monthlyRate,
     monthlyPayment: customerMonthlyPmt,
     tenor,
@@ -1807,11 +2149,11 @@ export function computePaymentTerms(state, adminParams, packageData) {
 export function decomposeDirectPrice(directPrice, cogs, merchantDiscountRate) {
   const dp = Number(directPrice) || 0;
   const m = Number(merchantDiscountRate) || 0;
-  const vat = Math.round(dp * VAT_RATE / (1 + VAT_RATE));
+  const vat = Math.round((dp * VAT_RATE) / (1 + VAT_RATE));
   const mdrAmt = Math.round(dp * m);
   const cogsR = Math.round(cogs ?? 0);
   const dpR = Math.round(dp);
-  const gm = dpR - cogsR - mdrAmt - vat;   // residual → exact identity
+  const gm = dpR - cogsR - mdrAmt - vat; // residual → exact identity
   return { cogs: cogsR, gm, mdrAmt, vat, dp: dpR, cogsKnown: cogs != null };
 }
 
@@ -1819,7 +2161,7 @@ export function monthlyAddOnRate(monthlyPmt, amountForFinancing, tenor) {
   if (!tenor || tenor <= 0) return 0;
   const amt = Number(amountForFinancing);
   if (!Number.isFinite(amt) || amt <= 0) return 0;
-  return ((monthlyPmt * tenor - amt) / tenor) / amt;
+  return (monthlyPmt * tenor - amt) / tenor / amt;
 }
 
 export function popularTenorsTable(state, adminParams, packageData) {
@@ -1853,8 +2195,12 @@ export function popularTenorsTable(state, adminParams, packageData) {
   const sel = state.tenor ?? 0;
   if (!tenors.includes(sel)) tenors.push(sel);
   tenors.sort((a, b) => a - b);
-  return tenors.map(t => {
-    const terms = computePaymentTerms({ ...state, tenor: t }, adminParams, packageData);
+  return tenors.map((t) => {
+    const terms = computePaymentTerms(
+      { ...state, tenor: t },
+      adminParams,
+      packageData,
+    );
     return {
       tenor: t,
       rate: terms.rtoRate,

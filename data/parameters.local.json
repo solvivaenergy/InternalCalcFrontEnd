@@ -62,11 +62,6 @@
         "fixed": 0.3,
         "otherwise": 0.3
       },
-      "K": {
-        "mode": "follow",
-        "fixed": 0.3,
-        "otherwise": 0.3
-      },
       "L": {
         "mode": "follow",
         "fixed": 0.3,
@@ -103,9 +98,9 @@
     "rateAnchorMin": 0.15,
     "rateTenorWeight": 0.3,
     "rateStepPct": 0.00125,
-    "earlyPayoffDiscountRate": 0.08,
+    "earlyPayoffDiscountRate": 0.09,
     "documentaryStampTaxRate": 0.0075,
-    "mountingSupportFloorCogs": 9019.7,
+    "mountingSupportFloorCogs": 9060,
     "mountingSupportPctOfPanels": 0.13,
     "cablingTiers": [
       {
@@ -235,7 +230,7 @@
         "fixedFeeCogs": 37736,
         "perPanelCogs": 3740,
         "fixedFee": 63758,
-        "perPanel": 6319,
+        "perPanel": 6320,
         "available": true
       },
       {
@@ -243,7 +238,7 @@
         "label": "Siargao",
         "fixedFeeCogs": 327053,
         "perPanelCogs": 5748,
-        "fixedFee": 552576,
+        "fixedFee": 552581,
         "perPanel": 9712,
         "available": true
       }
@@ -325,7 +320,7 @@
         "id": "mc-canopy",
         "label": "Canopy",
         "cogs": 17920,
-        "price": 30277,
+        "price": 30278,
         "category": "misc",
         "available": true
       },
@@ -370,12 +365,12 @@
         "available": true
       }
     ],
-    "luzonFreeTravelKm": 33,
-    "luzonOver30FixedFeeCogs": 4625,
-    "luzonOver30PerKmCogs": 132,
+    "luzonFreeTravelKm": 30,
+    "luzonOver30FixedFeeCogs": 4630,
+    "luzonOver30PerKmCogs": 130,
     "rsdAvailable": true,
-    "rsdVariablePerPanelCogs": 1850,
-    "rsdFixedTransmitterCogs": 9506,
+    "rsdVariablePerPanelCogs": 1851,
+    "rsdFixedTransmitterCogs": 9532,
     "rsdStandaloneLaborPerPanelCogs": 330,
     "rsdStandaloneLaborMobilizationCogs": 6607,
     "inverterStandaloneLaborPerUnitCogs": 2500,
@@ -393,12 +388,12 @@
         "batteryUnitKwh": 5,
         "batteryRackCapacity": 3,
         "rackRequiredFromUnits": 3,
-        "batteryUnitCogs": 50600,
+        "batteryUnitCogs": 49363,
         "batteryRackCogs": 10000,
-        "atsCogs": 6000,
+        "atsCogs": 11000,
         "criticalLoadsMaterialsCogs": 21000,
-        "laborWithSolarInstallCogs": 18500,
-        "standaloneLaborCogs": 25000,
+        "laborWithSolarInstallCogs": 10500,
+        "standaloneLaborCogs": 35500,
         "batteryUnitPrice": 97308,
         "batteryRackPrice": 19231,
         "atsPrice": 11539,
@@ -465,7 +460,7 @@
     ],
     "quoteValidityDays": 30,
     "irrYearsDefault": 25,
-    "duRateInflationDefault": 0,
+    "duRateInflationDefault": 0.05,
     "duInflationSourceName": "Meralco's Rates Archives",
     "duInflationSourceUrl": "https://company.meralco.com.ph/news-and-advisories/rates-archives",
     "duInflationBasis": "500 kWh consumption",
@@ -493,21 +488,24 @@
     "defaultMonthlyBill": 15000,
     "defaultDownPaymentPct": 0.3,
     "gateAuthEnabled": true,
-    "minDaysToFirstPostInstallPayment": 44
+    "minDaysToFirstPostInstallPayment": 44,
+    "grossMarginBatteryMin": 0.21,
+    "grossMarginBatteryMid": 0.24,
+    "grossMarginBatteryMax": 0.29
   },
   "panelSettings": {
     "singlePhase": {
       "available": true,
-      "panelWatts": 630,
-      "panelCogs": 6200,
-      "panelDirectPrice": 11924,
+      "panelWatts": 631,
+      "panelCogs": 6000,
+      "panelDirectPrice": 11539,
       "maxDcAcRatio": 1.3
     },
     "threePhase": {
       "available": true,
-      "panelWatts": 650,
-      "panelCogs": 6200,
-      "panelDirectPrice": 11924,
+      "panelWatts": 681,
+      "panelCogs": 6500,
+      "panelDirectPrice": 12501,
       "maxDcAcRatio": 1.6
     }
   },

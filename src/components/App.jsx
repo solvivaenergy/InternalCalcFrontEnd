@@ -223,6 +223,22 @@ export function makeInitialState(kind = 'all') {
 const CONTACT_STORAGE_KEY = 'solviva_contact';
 const STATE_STORAGE_KEY   = 'solviva_state';
 const GENERATED_DATE_KEY  = 'solviva_generated_date';
+// v3-208 — stale-chunk PDF recovery. The pdfGenerator and html2canvas
+// bundles are hashed, code-split chunks loaded via import() only when a rep
+// clicks Generate PDF. If a deploy lands while a tab is open, the old chunk
+// hash no longer exists on the CDN and the import throws "Failed to fetch
+// dynamically imported module". All quote/contact/agent state is already
+// sessionStorage-persisted, so a reload is lossless: flag the pending PDF,
+// reload once onto the fresh bundle, and auto-resume generation on mount.
+const PDF_RESUME_KEY    = 'solviva_pdf_resume_after_reload';
+const CHUNK_RELOAD_KEY  = 'solviva_chunk_reloaded_at';
+// Chrome: "Failed to fetch dynamically imported module"; Firefox: "error
+// loading dynamically imported module"; Safari: "Importing a module script
+// failed." — one regex covers all three.
+function isChunkLoadError(err) {
+  const msg = String(err?.message || err || '');
+  return /dynamically imported module|module script failed/i.test(msg);
+}
 // v3-203 — the four admin tab ids, valid as activeTab values only while
 // adminAccess !== 'none'. Shared by App (content mount, bounce effect,
 // LiveTotalBar suppression) and Tabs (strip composition). Order here IS the
@@ -922,6 +938,24 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       console.error('[generateProposalPdf]', err);
       // Restore on error
       setActiveTab(originalTab);
+      // v3-208 — a deploy landed while this tab was open and replaced the
+      // hashed pdfGenerator/html2canvas chunk the import() above points at.
+      // Reload once (sessionStorage keeps the whole quote, contacts, agent
+      // and mode, so nothing is lost) and auto-resume the PDF on the fresh
+      // bundle via PDF_RESUME_KEY. The 15s guard breaks a reload loop if
+      // the new chunk still can't be fetched (e.g. CDN mid-propagation) —
+      // second failure falls through to the plain error alert.
+      if (isChunkLoadError(err)) {
+        const lastReload = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0);
+        if (Date.now() - lastReload > 15000) {
+          sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+          sessionStorage.setItem(PDF_RESUME_KEY, '1');
+          alert('The app was updated in the background. Click OK — the page will reload once (your quote is preserved) and the PDF will generate automatically.');
+          window.location.reload();
+          return;
+        }
+        sessionStorage.removeItem(PDF_RESUME_KEY);
+      }
       alert('PDF generation failed: ' + (err?.message || 'unknown error') +
             '\n\nIf this keeps happening, please flag it to the dev team.');
     } finally {
@@ -939,6 +973,19 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     if (pdfDetailsComplete(contact, agent)) handleGeneratePdf();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfGatePending, editingContacts, contact, agent]);
+
+  // v3-208 — resume a PDF interrupted by a stale-chunk reload (see the
+  // catch in handleGeneratePdf). Waits for paramsService.load()
+  // (paramsLoading → false) so the PDF prices from live server params,
+  // exactly as a fresh click would. handleGeneratePdf re-runs its own
+  // details gate, so an incomplete contact record reopens the dialog.
+  useEffect(() => {
+    if (paramsLoading) return;
+    if (sessionStorage.getItem(PDF_RESUME_KEY) !== '1') return;
+    sessionStorage.removeItem(PDF_RESUME_KEY);
+    handleGeneratePdf();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramsLoading]);
 
   // If a customer-mode user somehow has activeTab === 'summary' or 'schedule'
   // (e.g. a rep was just on one of those, then locked back to customer mode),

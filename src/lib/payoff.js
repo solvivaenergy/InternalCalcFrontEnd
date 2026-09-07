@@ -48,10 +48,13 @@ export function buildPayoffModel({ state, model, adminParams, maxYears }) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
 
   const requested = state?.irrYears ?? WARRANTY_YEARS;
-  const years = Math.max(1, Math.min(rows.length, maxYears || requested, requested));
-  const monthlySave = rows.slice(0, years).map(r => (r?.duSavings ?? 0) / 12);
+  const years = Math.max(
+    1,
+    Math.min(rows.length, maxYears || requested, requested),
+  );
+  const monthlySave = rows.slice(0, years).map((r) => (r?.duSavings ?? 0) / 12);
   if (monthlySave.length === 0) return null;
-  if (monthlySave.some(v => !Number.isFinite(v) || v <= 0)) return null;
+  if (monthlySave.some((v) => !Number.isFinite(v) || v <= 0)) return null;
 
   const pmt = Math.round(model?.terms?.customerMonthlyPmt ?? 0);
   const tenor = state?.tenor ?? 0;
@@ -80,45 +83,58 @@ export function buildPayoffModel({ state, model, adminParams, maxYears }) {
   // cannot drift apart.
   const degClause = `${degPct}% a year your panels lose in yield`;
   if (Math.abs(netFactor - 1) < FLAT_BAND) {
-    direction = `holds roughly steady — an assumed ${inflPct}% tariff rise almost exactly `
-              + `offsets the ${degClause}`;
+    direction =
+      `holds roughly steady — an assumed ${inflPct}% tariff rise almost exactly ` +
+      `offsets the ${degClause}`;
   } else if (netFactor > 1) {
     direction = `climbs — the assumed ${inflPct}% tariff rise outpaces the ${degClause}`;
   } else {
-    direction = `eases down — an assumed ${inflPct}% tariff rise does not quite offset the `
-              + `${degClause}`;
+    direction =
+      `eases down — an assumed ${inflPct}% tariff rise does not quite offset the ` +
+      `${degClause}`;
   }
 
   const headline = directPurchase
-    ? 'Nothing to pay after installation'
-    : 'Your payment stops. Your savings don’t.';
+    ? "Nothing to pay after installation"
+    : "Your payment stops. Your savings don’t.";
   const subtitle = directPurchase
     ? `Every peso saved is yours from month one. Your monthly bill saving ${direction}.`
-    : `Your monthly bill saving ${direction}. Your payment is fixed, and stops after `
-      + `${payYears} year${payYears === 1 ? '' : 's'}.`;
+    : `Your monthly bill saving ${direction}. Your payment is fixed, and stops after ` +
+      `${payYears} year${payYears === 1 ? "" : "s"}.`;
 
-  const horizonNote = years < WARRANTY_YEARS
-    ? ` The panels are warranted for ${WARRANTY_YEARS} years, so this period understates the life of the system.`
-    : years > WARRANTY_YEARS
-      ? ` Beyond the ${WARRANTY_YEARS}-year warranty the later years are an estimate.`
-      : '';
+  // const horizonNote = years < WARRANTY_YEARS
+  //   ? ` The panels are warranted for ${WARRANTY_YEARS} years, so this period understates the life of the system.`
+  //   : years > WARRANTY_YEARS
+  //     ? ` Beyond the ${WARRANTY_YEARS}-year warranty the later years are an estimate.`
+  //     : '';
 
   return {
-    years, monthlySave, pmt, payYears, directPurchase,
-    netFactor, direction, headline, subtitle, horizonNote,
+    years,
+    monthlySave,
+    pmt,
+    payYears,
+    directPurchase,
+    netFactor,
+    direction,
+    headline,
+    subtitle,
+    // horizonNote,
     totalOverHorizon: monthlySave.reduce((a, b) => a + b, 0) * 12,
     // The payment exceeds the monthly saving on most down-payment/tenor
     // combinations, so this is the COMMON case and is styled as information
     // rather than as a warning.
-    anyShortfall: !directPurchase
-      && monthlySave.slice(0, Math.ceil(payYears)).some(v => v < pmt),
+    anyShortfall:
+      !directPurchase &&
+      monthlySave.slice(0, Math.ceil(payYears)).some((v) => v < pmt),
     // v3-197 — the opposite case, for the legend: some year inside the payment
     // window where the saving already covers the payment (the LIGHT amber
     // bars). Same comparison as the bar fill, opposite side, so the legend
     // can name both shades instead of showing one swatch whose colour
     // silently depended on which case happened to exist (user-reported, Pat).
-    anySurplus: !directPurchase && payYears > 0
-      && monthlySave.slice(0, Math.ceil(payYears)).some(v => v >= pmt),
+    anySurplus:
+      !directPurchase &&
+      payYears > 0 &&
+      monthlySave.slice(0, Math.ceil(payYears)).some((v) => v >= pmt),
     showEndMarker: !directPurchase && payYears > 0 && payYears < years,
   };
 }
