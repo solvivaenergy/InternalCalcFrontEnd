@@ -1096,11 +1096,23 @@ export function cablingComponentPcts(panelCount, tiers) {
     const t = FALLBACK_CABLING_TIER;
     return CABLING_COMPONENT_FIELDS.map((f) => t[f] || 0);
   }
+  const at = (t) => CABLING_COMPONENT_FIELDS.map((f) => t[f] || 0);
+  // v3-212 — must track cablingTotalPct's model exactly. The admin test row
+  // renders these four cells beside a TOTAL taken from the engine, and the
+  // two are only equal by construction while both use the same lookup; under
+  // production parity these become the chosen tier's raw component values.
+  if (MATCH_PRODUCTION_PRICING) {
+    let chosen = list[0];
+    for (const tier of list) {
+      if (tier.minPanels <= panelCount) chosen = tier;
+      else break;
+    }
+    return at(chosen);
+  }
   const sorted = [...list].sort(
     (a, b) => (a.minPanels || 0) - (b.minPanels || 0),
   );
   const n = Math.max(1, panelCount || 0);
-  const at = (t) => CABLING_COMPONENT_FIELDS.map((f) => t[f] || 0);
   if (n <= sorted[0].minPanels) return at(sorted[0]);
   const last = sorted[sorted.length - 1];
   if (n >= last.minPanels) return at(last);
@@ -1127,9 +1139,25 @@ export function cablingInterpolationSpan(panelCount, tiers) {
   );
   const n = Math.max(1, panelCount || 0);
   const last = sorted[sorted.length - 1];
+  if (n >= last.minPanels) return { flat: "above", anchor: last.minPanels };
+  // v3-212 — under production parity nothing interpolates: a count sits INSIDE
+  // a band and pays that band's rate flat until the next tier begins. Reported
+  // as its own kind so the test row's caption states the real rule rather than
+  // describing an interpolation that is not happening.
+  if (MATCH_PRODUCTION_PRICING) {
+    let chosen = sorted[0];
+    let next = null;
+    for (const tier of sorted) {
+      if (tier.minPanels <= n) chosen = tier;
+      else {
+        next = tier.minPanels;
+        break;
+      }
+    }
+    return { flat: "step", anchor: chosen.minPanels, to: next };
+  }
   if (n <= sorted[0].minPanels)
     return { flat: "below", anchor: sorted[0].minPanels };
-  if (n >= last.minPanels) return { flat: "above", anchor: last.minPanels };
   let hi = 1;
   while (sorted[hi].minPanels < n) hi++;
   return {
@@ -1138,6 +1166,51 @@ export function cablingInterpolationSpan(panelCount, tiers) {
     to: sorted[hi].minPanels,
   };
 }
+
+// ─── v3-212 · PRODUCTION PRICING PARITY SWITCH ───────────────────────────────
+// TRUE  = price exactly as the LIVE PRODUCTION build (main) does.
+// FALSE = the v3-174 + v3-191 model this branch was developed against.
+//
+// WHY THIS EXISTS. The CEO set the package prices in production by working
+// BACKWARDS from a target price per package to the margin and tier figures
+// that produce it. Those figures are therefore not inputs anyone is free to
+// reinterpret — they are the solution to his pricing, and any change to how
+// the engine consumes them moves a number he personally signed off. Shipping
+// this branch on its own model would have re-priced live quotes without a
+// pricing decision behind it, so the release goes out PRICE-NEUTRAL and the
+// pricing change becomes its own approval, on its own timing.
+//
+// The two behaviours this gates, and what they cost when TRUE:
+//
+//   1. CABLING TIER LOOKUP — step (production) vs cost-space interpolation
+//      (v3-174). This is nearly all of the money. At panel counts between
+//      tier anchors the two disagree by thousands: 19 panels prices ₱36,505
+//      apart. At the anchors themselves they agree to within ₱15.
+//
+//      ⚠ The step lookup is NOT monotone. Cost rises across a tier then drops
+//      at the next boundary, so a LARGER system can be quoted CHEAPER cabling:
+//      on the current live table, 19 panels bills ₱41,698 MORE than 20, and
+//      7 panels ₱14,893 more than 8. Six such cliffs exist across 1–40 panels.
+//      This is why v3-174 replaced the lookup, and it is a live commercial
+//      defect in production TODAY, not something introduced here. It cannot be
+//      fixed by editing the tier table — the anchor rule only governs anchor
+//      to anchor, so the counts BETWEEN anchors stay exposed (raising the
+//      20-panel row to its floor makes it worse: seven cliffs, not six).
+//      Interpolation removes all of them. Flipping this switch to FALSE, with
+//      the 20-panel row raised to ≥50.4%, yields no cliffs at any size.
+//
+//   2. MOUNTING + CABLING PRICING SPACE — v3-191 decision D2. Production
+//      derives both from the panels' SELLING price; D2 derives them from the
+//      panels' COGS and prices each at its own component margin. Worth ≤₱21
+//      across 1–40 panels, so it is included here only to make parity exact.
+//      Note D2 is what lets those two lines carry a margin of their own: while
+//      this switch is TRUE they silently inherit the panel margin, and the
+//      `P` / `B` / `C` entries in componentMargins do not apply to them.
+//
+// TO CHANGE PRICING: flip this to false in a PR of its own, with the approval
+// referenced in the commit. Deliberately NOT an admin parameter — a control
+// that silently re-prices every quote must not be one click away in a console.
+export const MATCH_PRODUCTION_PRICING = true;
 
 export function cablingTotalPct(panelCount, adminParams, phase) {
   // v3-62: phase-aware tier selection. Three-phase installations use their
@@ -1180,6 +1253,23 @@ export function cablingTotalPct(panelCount, adminParams, phase) {
   // so every caller — package pricing, captions, gates — is untouched. The
   // panel price cancels out of the interpolation, so anchors are computed as
   // pct × minPanels without ever touching a price here.
+  // v3-212 — production parity: the pre-v3-174 STEP lookup, byte-for-byte the
+  // logic main still runs (last tier whose minPanels <= panelCount; tiers are
+  // read in STORED order, not sorted, exactly as production does). See
+  // MATCH_PRODUCTION_PRICING above for why, and for the cliffs this reinstates.
+  if (MATCH_PRODUCTION_PRICING) {
+    let chosen = tiers[0];
+    for (const tier of tiers) {
+      if (tier.minPanels <= panelCount) chosen = tier;
+      else break;
+    }
+    return (
+      chosen.dcCablePct +
+      chosen.acCablePct +
+      chosen.conduitsPct +
+      chosen.panelBoardPct
+    );
+  }
   const sorted = [...tiers].sort(
     (a, b) => (a.minPanels || 0) - (b.minPanels || 0),
   );
@@ -1371,8 +1461,19 @@ export function buildPackageLineItems(state, adminParams, schedule) {
           ap.mountingSupportFloorCogs,
           panelsCogsTotal * ap.mountingSupportPctOfPanels,
         );
+  // v3-212 — production parity: production takes the floor-vs-percentage max
+  // in PRICE space off the panels' selling price, which implicitly prices this
+  // line at the PANEL margin (marginFor("P") is not consulted). The COGS field
+  // above is unchanged either way, so the quote's cost column is identical.
   const mountingDirect =
-    panelsTotal === 0 ? 0 : directFromCogs(mountingCogs, ap, marginFor("P"));
+    panelsTotal === 0
+      ? 0
+      : MATCH_PRODUCTION_PRICING
+        ? Math.max(
+            ap.mountingSupportFloorPrice,
+            panelsTotal * ap.mountingSupportPctOfPanels,
+          )
+        : directFromCogs(mountingCogs, ap, marginFor("P"));
   items.push({
     key: "mounting",
     description: "Mounting Support",
@@ -1424,10 +1525,19 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   // COGS units before pricing.
   const cablingCompId = phase === "three" ? "C" : "B";
   const cablingCogs = panelsTotal === 0 ? 0 : cablingUnitsCharged * panelCogsEa;
+  // v3-212 — production parity: pct × the panels' SELLING price, unrounded,
+  // which implicitly prices this line at the PANEL margin (marginFor is not
+  // consulted). Expansion marginality still comes through cablingUnitsCharged,
+  // so the expansion path keeps its C(existing+new) − C(existing) shape; the
+  // per-panel price is the one production multiplies by. Note this yields a
+  // FRACTIONAL line price, as production's does — which is why production's
+  // equipment table and payment summary can disagree by ₱1 on the same quote.
   const cablingDirect =
     panelsTotal === 0
       ? 0
-      : directFromCogs(cablingCogs, ap, marginFor(cablingCompId));
+      : MATCH_PRODUCTION_PRICING
+        ? cablingUnitsCharged * panelPriceEa
+        : directFromCogs(cablingCogs, ap, marginFor(cablingCompId));
   items.push({
     key: "cabling",
     description: expansionMode

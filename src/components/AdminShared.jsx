@@ -420,12 +420,18 @@ export function CablingTierTable({ tiers, canEdit, onChange,
     ? cablingTotalPct(testN, { cablingTiers: tiers, cablingTiersThreePhase: [] }, 'single')
     : 0;
   const testSpan = showTestRow ? cablingInterpolationSpan(testN, tiers) : null;
+  // v3-212 \u2014 'step' is the production-parity model (MATCH_PRODUCTION_PRICING):
+  // the band's rate applies flat up to the next tier, so cost RISES across the
+  // band and can drop at the boundary. Said plainly here because that cliff is
+  // the whole reason the interpolated model exists.
   const testCaption = !testSpan ? ''
-    : testSpan.flat === 'below'
-      ? `Flat \u2014 at or below the ${testSpan.anchor}-panel anchor, so every count here prices identically.`
-      : testSpan.flat === 'above'
-        ? `Flat \u2014 at or above the ${testSpan.anchor}-panel anchor; the percentage holds, so cost keeps growing linearly.`
-        : `Interpolating between the ${testSpan.from}-panel and ${testSpan.to}-panel anchors.`;
+    : testSpan.flat === 'step'
+      ? `The ${testSpan.anchor}-panel rate applies flat${testSpan.to ? ` up to ${testSpan.to} panels` : ''} \u2014 cost rises across the band, then steps at the next tier.`
+      : testSpan.flat === 'below'
+        ? `Flat \u2014 at or below the ${testSpan.anchor}-panel anchor, so every count here prices identically.`
+        : testSpan.flat === 'above'
+          ? `Flat \u2014 at or above the ${testSpan.anchor}-panel anchor; the percentage holds, so cost keeps growing linearly.`
+          : `Interpolating between the ${testSpan.from}-panel and ${testSpan.to}-panel anchors.`;
   const testCellTop = { borderTop: `2px solid ${COLORS.brandGreenLight}`, paddingTop: 11 };
 
   return (
