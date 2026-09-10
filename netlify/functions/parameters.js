@@ -436,31 +436,22 @@ export default async (request, context) => {
         error: 'Refusing to save: cablingTiersThreePhase cannot be empty.',
       });
     }
-    // ─── v3-174 · cabling tier MONOTONICITY (hand-mirror of calculations.js
-    // findCablingTierViolation — functions cannot import from src/; the smoke
-    // suite diffs the two). Cabling costs pct × panels × panelPrice, so no
-    // tier may price a larger system CHEAPER than the tier before it:
-    //     total[i] × minPanels[i] ≥ total[i-1] × minPanels[i-1]
-    // The Engineering console enforces the same floor per field and blocks
-    // Save; this is the backstop for a hand-crafted PUT or a client skew.
-    for (const key of ['cablingTiers', 'cablingTiersThreePhase']) {
-      const tbl = merged.adminParams?.[key];
-      if (!Array.isArray(tbl) || tbl.length === 0) continue;
-      const tierTotal = (t) => (t.dcCablePct || 0) + (t.acCablePct || 0)
-                             + (t.conduitsPct || 0) + (t.panelBoardPct || 0);
-      const sorted = [...tbl].sort((a, b) => (a.minPanels || 0) - (b.minPanels || 0));
-      for (let i = 1; i < sorted.length; i++) {
-        const prev = sorted[i - 1];
-        const required = tierTotal(prev) * (prev.minPanels || 1) / (sorted[i].minPanels || 1);
-        if (tierTotal(sorted[i]) < required - 1e-9) {
-          return json(400, {
-            error: `Refusing to save: ${key} tier at ${sorted[i].minPanels} panels prices a `
-              + `larger system cheaper cabling than the ${prev.minPanels}-panel tier before it — `
-              + `its total must be at least ${(Math.ceil(required * 10000) / 100).toFixed(2)}%.`,
-          });
-        }
-      }
-    }
+    // ─── v3-174 · cabling tier MONOTONICITY — REMOVED AS A GUARD IN v3-211 ──
+    // Cabling costs pct × panels × panelPrice, so a ladder whose anchors dip
+    //     total[i] × minPanels[i]  <  total[i-1] × minPanels[i-1]
+    // prices a larger system cheaper cabling than a smaller one. That is
+    // commercially odd, NOT structurally invalid: cablingTotalPct interpolates
+    // whatever anchors it is handed and never divides by the gap, so a dipping
+    // table prices cleanly (unlike an EMPTY table, whose guard is above and
+    // stays). Rejecting the whole PUT over it meant one flagged cabling row
+    // blocked every unrelated parameter in the same save.
+    //
+    // It is now a RECOMMENDATION ONLY, surfaced client-side: the Inventory
+    // tier tables flag the row in amber with a one-click "Raise total to
+    // recommended", and AdminShell shows an advisory banner while leaving Save
+    // enabled. findCablingTierViolation() in src/lib/calculations.js is still
+    // the single definition of the floor — there is simply no server mirror of
+    // it to keep in sync any more.
     // Battery packages: at least one package must exist; calculations.js
     // assumes there's always an active package to compute costs from.
     if (Array.isArray(merged.adminParams?.batteryPackages)

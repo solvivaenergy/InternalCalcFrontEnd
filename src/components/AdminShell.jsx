@@ -138,8 +138,16 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
   // ─── Validation ───────────────────────────────────────────────────────────
   const tiersValid = Array.isArray(params.cablingTiers) && params.cablingTiers.length > 0;
   const tiers3pValid = Array.isArray(params.cablingTiersThreePhase) && params.cablingTiersThreePhase.length > 0;
-  // v3-174 — monotonicity gate (shared engine helper, never a local copy):
-  // no tier may price a larger system cheaper cabling than a smaller one.
+  // v3-174 — monotonicity check (shared engine helper, never a local copy):
+  // a tier that prices a larger system cheaper cabling than a smaller one.
+  // v3-211 — DOWNGRADED FROM A SAVE BLOCK TO A RECOMMENDATION (user-directed).
+  // The ladder is guidance, not an invariant: nothing in the engine divides by
+  // it or NaNs on a dip (cablingTotalPct just interpolates whatever anchors it
+  // is given), so a non-monotone table prices fine — it is only commercially
+  // odd. Blocking Save on it meant one flagged cabling row froze EVERY other
+  // parameter on the console, including edits in unrelated sections. These two
+  // now feed `validationWarnings` (advisory banner) instead of
+  // `validationError`; the server guard was dropped in the same change.
   const tiersMonotone = tiersValid ? findCablingTierViolation(params.cablingTiers) : null;
   const tiers3pMonotone = tiers3pValid ? findCablingTierViolation(params.cablingTiersThreePhase) : null;
   const validityDays = params.quoteValidityDays ?? DEFAULTS.quoteValidityDays;
@@ -402,8 +410,6 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
   const validationError =
     !tiersValid       ? 'Single-phase cabling tier table cannot be empty — add at least one row before saving.' :
     !tiers3pValid     ? 'Three-phase cabling tier table cannot be empty — add at least one row before saving.' :
-    tiersMonotone     ? `Single-phase cabling tier at ${tiersMonotone.minPanels} panels prices a larger system cheaper than the tier before it — its total must be at least ${(Math.ceil(tiersMonotone.requiredTotal * 10000) / 100).toFixed(2)}%.` :
-    tiers3pMonotone   ? `Three-phase cabling tier at ${tiers3pMonotone.minPanels} panels prices a larger system cheaper than the tier before it — its total must be at least ${(Math.ceil(tiers3pMonotone.requiredTotal * 10000) / 100).toFixed(2)}%.` :
     !battPkgsValid    ? 'At least one battery package must remain — add a package before saving.' :
     !validityDaysValid ? 'Quote validity must be a whole number of days, 1 or more.' :
     !promosValid.ok   ? promosValid.msg :
@@ -417,6 +423,17 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
     !duRefValid.ok ? duRefValid.msg :
     !irrYearsValid.ok ? irrYearsValid.msg :
     null;
+
+  // ─── v3-211 · ADVISORY WARNINGS (never block Save) ────────────────────────
+  // Same text the two cabling monotonicity checks used to fail the save with,
+  // reworded as a recommendation. Collected as a LIST rather than a first-match
+  // chain like validationError: both tables can dip at once, and an admin
+  // fixing one should see the other in the same pass instead of discovering it
+  // only after the first is clean.
+  const validationWarnings = [
+    tiersMonotone && `Single-phase cabling tier at ${tiersMonotone.minPanels} panels prices a larger system cheaper than the tier before it. Recommended total for that tier: at least ${(Math.ceil(tiersMonotone.requiredTotal * 10000) / 100).toFixed(2)}% (currently ${(tiersMonotone.total * 100).toFixed(2)}%).`,
+    tiers3pMonotone && `Three-phase cabling tier at ${tiers3pMonotone.minPanels} panels prices a larger system cheaper than the tier before it. Recommended total for that tier: at least ${(Math.ceil(tiers3pMonotone.requiredTotal * 10000) / 100).toFixed(2)}% (currently ${(tiers3pMonotone.total * 100).toFixed(2)}%).`,
+  ].filter(Boolean);
 
   // ─── Save / Discard ───────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -552,6 +569,23 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
         <div style={{ marginTop: 16 }}>
           <CalloutBox kind="error">
             <strong>Cannot save:</strong> {validationError}
+          </CalloutBox>
+        </div>
+      )}
+
+      {/* ─── v3-211 · Advisory warnings — Save stays enabled ─────────────── */}
+      {anyEdit && validationWarnings.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <CalloutBox kind="warn">
+            <strong>Recommendation{validationWarnings.length > 1 ? 's' : ''}:</strong>{' '}
+            {validationWarnings.length === 1 ? validationWarnings[0] : (
+              <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+                {validationWarnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
+            <div style={{ marginTop: 6, fontStyle: 'italic' }}>
+              You can still save — this does not block your changes.
+            </div>
           </CalloutBox>
         </div>
       )}

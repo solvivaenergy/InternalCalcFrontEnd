@@ -312,22 +312,28 @@ const gateStyles = {
 // ─── CablingTierTable ──────────────────────────────────────────────────────
 // v3-174 — PER-FIELD MONOTONICITY FLOORS (user-directed, Pat; mockup approved).
 // Cabling cost is pct × panels × panelPrice, so each row's cost at its own
-// minPanels is an anchor and the ladder must never step down. The floor per
-// row comes from cablingTierRequiredTotal() (the engine's own definition —
-// never a local copy); each FIELD then shows the least it may hold given its
-// three siblings: max(0, requiredTotal − sum(others)).
+// minPanels is an anchor and a ladder that steps down prices a larger system
+// cheaper than a smaller one. The recommended floor per row comes from
+// cablingTierRequiredTotal() (the engine's own definition — never a local
+// copy); each FIELD then shows the least it would hold given its three
+// siblings: max(0, requiredTotal − sum(others)).
 //
-// Enforcement is BLUR-SNAP, not per-keystroke (typing "1" en route to "15"
-// must not fight the admin): the field turns red while below its floor and
-// snaps UP to the floor on blur. Hard clamping alone cannot cover the cascade
-// cases — raising an EARLIER row, editing a panel count, or deleting a row can
-// strand a LATER row below a floor the admin never touched — so violating rows
-// also flag in place with a one-click "Raise total to minimum" (Option A, per
+// v3-211 — THE FLOORS ARE A RECOMMENDATION, NOT A HARD STOP (user-directed).
+// Previously the field snapped UP to its floor on blur, the row flagged in
+// red, AdminShell blocked Save, and the server mirrored the rule with a 400.
+// That made an intentional dip unenterable and — worse — one flagged cabling
+// row froze every unrelated parameter on the console. Nothing in the engine
+// requires monotonicity (cablingTotalPct just interpolates the anchors it is
+// given), so all four enforcement points are gone:
+//   • no blur-snap — a value below its floor STAYS as typed;
+//   • the row flags in AMBER as advice, not red as an error;
+//   • AdminShell shows an advisory banner and leaves Save enabled;
+//   • the server guard in netlify/functions/parameters.js was removed.
+// What remains is the guidance itself: the per-field "≥ x%" caption, the
+// flagged row, and the one-click "Raise total to recommended" (Option A, per
 // Pat: the whole shortfall lands on Conduits, the largest component, rounded
 // UP to whole points, so exactly one number visibly changes and the fix is
-// auditable). AdminShell blocks Save while any row violates; the server
-// mirrors the rule with a 400. A stale blob that already violates LOADS and
-// flags — it never blocks loading, only saving.
+// auditable). A stale blob that dips LOADS, flags, and saves back unchanged.
 // v3-178 — TEST ROW (user-directed, Pat; mockup approved, five decisions).
 // A non-editing row at the foot of each table: type a panel count, read the
 // resulting percentage under every component column. `testPanelCount` /
@@ -367,12 +373,16 @@ export function CablingTierTable({ tiers, canEdit, onChange,
     }
     onChange([...tiers, newRow].sort((a, b) => a.minPanels - b.minPanels));
   };
-  const fixRow = (idx) => {
-    // Option A (Pat): shortfall onto Conduits, rounded up to a whole point.
-    const short = cablingTierRequiredTotal(tiers, idx) - cablingTierTotal(tiers[idx]);
+  // Option A (Pat): shortfall onto Conduits, rounded up to a whole point.
+  // Takes the SORTED view (`sortedTiers` + view index) and the row's real
+  // index: the floor is defined against the panel-ordered ladder, and a row
+  // whose minPanels was just retyped can sit out of array order.
+  const fixRow = (sortedTiers, vi, realIdx) => {
+    const short = cablingTierRequiredTotal(sortedTiers, vi)
+                - cablingTierTotal(sortedTiers[vi]);
     if (short <= 0) return;
-    const conduits = Math.ceil((tiers[idx].conduitsPct + short) * 100) / 100;
-    updateRow(idx, { conduitsPct: conduits });
+    const conduits = Math.ceil((tiers[realIdx].conduitsPct + short) * 100) / 100;
+    updateRow(realIdx, { conduitsPct: conduits });
   };
   const pctInputStyle = {
     width: 56, padding: '4px 6px', textAlign: 'right',
@@ -380,7 +390,9 @@ export function CablingTierTable({ tiers, canEdit, onChange,
     backgroundColor: COLORS.inputTint, fontFamily: 'inherit', fontSize: 13,
     fontVariantNumeric: 'tabular-nums',
   };
-  const pctInputBad = { ...pctInputStyle, border: '1px solid #B91C1C', backgroundColor: '#FEE2E2' };
+  // v3-211 — amber, not red: below-floor is now advice, and the value the
+  // admin typed is what gets saved. Red read as "this input is rejected".
+  const pctInputBad = { ...pctInputStyle, border: '1px solid #D97706', backgroundColor: '#FEF3C7' };
   const numInputStyle = { ...pctInputStyle, width: 70 };
   const minStyle = { fontSize: 10.5, color: COLORS.textMuted, fontVariantNumeric: 'tabular-nums' };
   const minTight = { ...minStyle, color: '#B45309', fontWeight: 600 };
@@ -427,7 +439,7 @@ export function CablingTierTable({ tiers, canEdit, onChange,
             <th style={{ ...tableStyles.th, textAlign: 'right' }}>Conduits &amp; Fittings</th>
             <th style={{ ...tableStyles.th, textAlign: 'right' }}>Panel Board &amp; Protective</th>
             <th style={{ ...tableStyles.th, textAlign: 'right' }}>TOTAL</th>
-            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Min total</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Rec. min total</th>
             {canEdit && <th style={tableStyles.th} aria-label="actions" />}
           </tr>
         </thead>
@@ -458,27 +470,21 @@ export function CablingTierTable({ tiers, canEdit, onChange,
                           <span style={{ display: 'inline-flex', flexDirection: 'column',
                                          alignItems: 'flex-end', gap: 2 }}>
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                              {/* v3-211 — no onBlur snap: the typed value is
+                                  kept as entered. `below` only tints the
+                                  field amber as advice. */}
                               <input type="number" style={below ? pctInputBad : pctInputStyle}
                                 value={Math.round(t[field] * 100)} step={1} min={0} max={100}
-                                aria-label={`${field} percentage, minimum ${Math.ceil(fieldMin * 100)}%`}
+                                aria-label={`${field} percentage, recommended minimum ${Math.ceil(fieldMin * 100)}%`}
                                 onChange={e => updateRow(i, {
                                   [field]: Math.max(0, Math.min(1, (parseFloat(e.target.value) || 0) / 100)),
-                                })}
-                                onBlur={e => {
-                                  // v3-174 blur-snap: a value below the floor snaps UP to it.
-                                  const v = Math.max(0, Math.min(1, (parseFloat(e.target.value) || 0) / 100));
-                                  const fm = Math.max(0,
-                                    cablingTierRequiredTotal(sorted, vi) - (cablingTierTotal(t) - t[field]));
-                                  if (v < fm - 1e-9) {
-                                    updateRow(i, { [field]: Math.ceil(fm * 100) / 100 });
-                                  }
-                                }} />
+                                })} />
                               <span style={{ color: COLORS.textMuted }}>%</span>
                             </span>
                             <span style={vi === 0 ? minFree : (fieldMin <= 0 ? minFree : (tight ? minTight : minStyle))}>
                               {vi === 0 ? 'no floor'
                                 : fieldMin <= 0 ? 'free'
-                                : `≥ ${Math.ceil(fieldMin * 100)}%`}
+                                : `rec. ≥ ${Math.ceil(fieldMin * 100)}%`}
                             </span>
                           </span>
                         ) : `${(t[field] * 100).toFixed(0)}%`}
@@ -486,7 +492,7 @@ export function CablingTierTable({ tiers, canEdit, onChange,
                     );
                   })}
                   <td style={{ ...tableStyles.td, textAlign: 'right', fontWeight: 600,
-                               color: violating ? '#B91C1C' : '#15803D' }}>
+                               color: violating ? '#B45309' : '#15803D' }}>
                     {(total * 100).toFixed(0)}%
                   </td>
                   <td style={{ ...tableStyles.td, textAlign: 'right',
@@ -502,20 +508,24 @@ export function CablingTierTable({ tiers, canEdit, onChange,
                     </td>
                   )}
                 </tr>
+                {/* v3-211 — advisory, not blocking: amber wording, and the
+                    note says so explicitly so nobody hunts for a disabled
+                    Save button that no longer exists. */}
                 {violating && (
                   <tr>
                     <td colSpan={canEdit ? 8 : 7}
-                        style={{ ...tableStyles.td, textAlign: 'left', color: '#B91C1C',
+                        style={{ ...tableStyles.td, textAlign: 'left', color: '#B45309',
                                  fontSize: 11.5, fontWeight: 600, whiteSpace: 'normal' }}>
-                      ⚠ This tier prices a {t.minPanels}-panel system cheaper than the{' '}
-                      {sorted[vi - 1].minPanels}-panel tier before it — the total must be at least{' '}
-                      {(Math.ceil(required * 10000) / 100).toFixed(2)}%.
+                      ⚠ Recommendation: this tier prices a {t.minPanels}-panel system cheaper
+                      than the {sorted[vi - 1].minPanels}-panel tier before it. A total of at least{' '}
+                      {(Math.ceil(required * 10000) / 100).toFixed(2)}% would keep the ladder from
+                      stepping down. You can save this as-is.
                       {canEdit && (
-                        <button onClick={() => fixRow(i)}
-                                style={{ marginLeft: 8, border: '1px solid #B91C1C', background: '#fff',
-                                         color: '#B91C1C', borderRadius: 4, padding: '1px 8px',
+                        <button onClick={() => fixRow(sorted, vi, i)}
+                                style={{ marginLeft: 8, border: '1px solid #B45309', background: '#fff',
+                                         color: '#B45309', borderRadius: 4, padding: '1px 8px',
                                          fontSize: 10.5, cursor: 'pointer' }}>
-                          Raise total to minimum
+                          Raise total to recommended
                         </button>
                       )}
                     </td>
