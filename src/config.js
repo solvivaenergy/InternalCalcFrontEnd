@@ -270,6 +270,73 @@ export const LUZON_REGIONS = [
   ]},
 ];
 
+// ─── v3-215 — install-address ⇄ location-pick composition helpers ────────────
+// D1(b)/D3′: the Proposed Installation Address is COMPOSED at save time from a
+// street-only field plus the customer's 2E location pick (single source of
+// truth — the SAME state.location / locationRegion / locationCity the pricing
+// engine reads). The stored `installAddress` remains ONE string, so the
+// sessionStorage contact record, the lead payload's `installationAddress`, and
+// the PDF cover's INSTALLATION SITE block are all format-unchanged.
+//
+// These four helpers are the SINGLE SOURCE for both surfaces (desktop
+// ContactEditForm and mobile LeadScreen) — per the shared-helper house rule,
+// neither component composes or splits address strings on its own.
+
+// D2 — the region label is picker copy ("Region III — Central Luzon"), not
+// address copy. NCR maps to "Metro Manila"; every other region uses the
+// portion after the em-dash ("Central Luzon", "CALABARZON", …). NOTE: region
+// ≠ province (user-accepted D2 trade-off): a Malolos address composes as
+// "Malolos, Central Luzon", not "Malolos, Bulacan" — provinces are not
+// carried by LUZON_REGIONS.
+export function regionAddressName(code) {
+  const r = LUZON_REGIONS.find(x => x.code === code);
+  if (!r) return '';
+  if (r.code === 'NCR') return 'Metro Manila';
+  const i = r.label.indexOf('—');
+  return i >= 0 ? r.label.slice(i + 1).trim() : r.label;
+}
+
+// The location tail appended to the street text, derived from the live
+// calculator state: Luzon → "City, RegionName"; a dynamic delivery location
+// (Cebu-class) → its admin-editable label; "Other" (or a missing/stale pick)
+// → '' — the address field falls back to full free-text.
+export function installLocationSuffix(state, adminParams) {
+  if (!state) return '';
+  if (state.location === 'luzon') {
+    const rn = regionAddressName(state.locationRegion);
+    return [state.locationCity, rn].filter(Boolean).join(', ');
+  }
+  if (!state.location || state.location === 'other') return '';
+  const dyn = (adminParams?.deliveryLocations || [])
+    .find(l => l && l.id === state.location);
+  return dyn ? dyn.label : '';
+}
+
+// street + suffix → the single stored string. A trailing comma on the street
+// text is absorbed (typing "12 Rizal St.," doesn't double up), and a
+// street-less compose returns the suffix alone — VALIDATION, not this helper,
+// is what requires the street text (both forms key their required-address
+// check on the street field when a suffix is active).
+export function composeInstallAddress(street, suffix) {
+  const s = (street || '').trim().replace(/,\s*$/, '');
+  if (!suffix) return s;
+  return s ? `${s}, ${suffix}` : suffix;
+}
+
+// The inverse, for re-opening a form over a previously saved composed string:
+// if the stored address ends with the CURRENT suffix, the street portion is
+// everything before it; otherwise the whole string is treated as street text
+// (a pre-v3-215 record, or the pick changed since the save — the rep/customer
+// sees their full old text and the new suffix in the preview, nothing is
+// silently dropped).
+export function splitInstallAddress(full, suffix) {
+  const f = (full || '').trim();
+  if (!suffix || !f) return f;
+  if (f === suffix) return '';
+  const tail = `, ${suffix}`;
+  return f.endsWith(tail) ? f.slice(0, f.length - tail.length) : f;
+}
+
 export const AGENT = {
   // Default contact info shown in the header and on the contact gate.
   //

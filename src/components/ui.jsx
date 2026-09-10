@@ -168,6 +168,13 @@ export function RecommendationPill({ children, onClick, active }) {
 export function NumberInput({
   value, onChange, min, max, step = 1, suffix, prefix, width = 120,
   large, amber, compact, error, decimals,
+  // v3-217 — optional accessible name for the input (rendered as aria-label).
+  // Backwards-compatible: default undefined renders NO attribute, so every
+  // existing call site is byte-equivalent in output. Added for the cabling
+  // COGS ladder cells, whose per-field "minimum \u20B1X" labels would
+  // otherwise be lost in the switch from raw inputs (same class as the
+  // v3-185 `decimals` and v3-209 `unit` prop additions).
+  ariaLabel,
 }) {
   const dynamic = {
     ...(large ? inputStyles.inputLarge : null),
@@ -315,6 +322,7 @@ export function NumberInput({
         // (comma formatting needs it), so these are ARIA rather than native
         // min/max; the real enforcement is clampToBounds above.
         role="spinbutton"
+        aria-label={ariaLabel}
         aria-valuemin={typeof min === 'number' ? min : undefined}
         aria-valuemax={typeof max === 'number' ? max : undefined}
         aria-valuenow={typeof value === 'number' ? value : undefined}

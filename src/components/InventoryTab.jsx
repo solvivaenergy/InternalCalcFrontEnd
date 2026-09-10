@@ -4,8 +4,8 @@
 // Section order (per spec):
 //   1. Panel Settings        (existing, Inventory)
 //   2. Solar Panel & Mounting (moved here from Admin Parameters)
-//   3. SINGLE-PHASE AC/DC Cabling (% of Panels Price) (moved from Admin Params)
-//   3b. THREE-PHASE AC/DC Cabling (% of Panels Price) (NEW in v3-62)
+//   3. SINGLE-PHASE cabling COGS ladder (peso entry, v3-216)
+//   3b. THREE-PHASE cabling COGS ladder (peso entry, v3-216)
 //   3c. Variable Charges      (MOVED here from Engineering in v3-106 — cable/
 //                              labor/RSD charges + the RSD stock toggle)
 //   4. Single-phase Inverters (existing, Inventory)
@@ -84,34 +84,44 @@ export default function InventoryTab({
                hint="Customer pays max(floor, this % of panel price)" />
       </Section>
 
-      {/* ─── Cabling — SINGLE-PHASE (renamed in v3-62) ────────────────── */}
-      <Section title="SINGLE-PHASE AC/DC Cables, Conduits, Fittings, Panel Board & Other Devices (% of Panels Price)"
+      {/* ─── Cabling COGS ladder — SINGLE-PHASE (peso entry, v3-216) ──── */}
+      <Section title="SINGLE-PHASE AC/DC Cables, Conduits, Fittings, Panel Board & Other Devices (COGS, ₱)"
                canEdit={canEditSection('cabling')}
                anyEditRole={anyEdit}>
         <p style={{ fontSize: 13, color: COLORS.textMuted, margin: '0 0 10px' }}>
           Applies when the customer selects <strong>Single-phase</strong> in
-          Step 1A of the calculator.
+          Step 1A of the calculator. Enter each component group's{' '}
+          <strong>actual COGS in pesos</strong> at each panel-count anchor —
+          decoupled from panel COGS, so panel price changes never require
+          re-entering this ladder. The app derives the totals, per-panel, and
+          per-kWp figures (at the live {panelSingle && panelSingle.panelWatts ? panelSingle.panelWatts : '\u2014'} W
+          single-phase panel); an amber ▲ marks a per-kWp figure that
+          rises versus the row above. Between anchors, cost interpolates
+          linearly; above the last anchor the per-panel rate holds.
         </p>
-        <CablingTierTable tiers={params.cablingTiers || []}
-                          onChange={v => updateParam('cabling', 'cablingTiers', v)}
+        <CablingTierTable tiers={params.cablingCogsTiers || []}
+                          onChange={v => updateParam('cabling', 'cablingCogsTiers', v)}
                           canEdit={canEditSection('cabling')}
+                          panelWatts={panelSingle ? panelSingle.panelWatts : 0}
                           testPanelCount={testPanelsSingle}
                           onTestPanelCount={setTestPanelsSingle} />
       </Section>
 
-      {/* ─── Cabling — THREE-PHASE (NEW in v3-62) ─────────────────────── */}
-      <Section title="THREE-PHASE AC/DC Cables, Conduits, Fittings, Panel Board & Other Devices (% of Panels Price)"
+      {/* ─── Cabling COGS ladder — THREE-PHASE (peso entry, v3-216) ───── */}
+      <Section title="THREE-PHASE AC/DC Cables, Conduits, Fittings, Panel Board & Other Devices (COGS, ₱)"
                canEdit={canEditSection('cabling')}
                anyEditRole={anyEdit}>
         <p style={{ fontSize: 13, color: COLORS.textMuted, margin: '0 0 10px' }}>
           Applies when the customer selects <strong>3-phase</strong> in Step 1A
-          of the calculator. Defaults were seeded from the single-phase table
-          (DC ×1.0, AC ×1.5, Conduits ×1.2, Panel Board ×1.5) and are edited
-          independently here.
+          of the calculator. Seeded explicitly — no longer derived from the
+          single-phase table. Per-kWp figures use the live{' '}
+          {panelThree && panelThree.panelWatts ? panelThree.panelWatts : '\u2014'} W
+          three-phase panel.
         </p>
-        <CablingTierTable tiers={params.cablingTiersThreePhase || []}
-                          onChange={v => updateParam('cabling', 'cablingTiersThreePhase', v)}
+        <CablingTierTable tiers={params.cablingCogsTiersThreePhase || []}
+                          onChange={v => updateParam('cabling', 'cablingCogsTiersThreePhase', v)}
                           canEdit={canEditSection('cabling')}
+                          panelWatts={panelThree ? panelThree.panelWatts : 0}
                           testPanelCount={testPanelsThree}
                           onTestPanelCount={setTestPanelsThree} />
       </Section>

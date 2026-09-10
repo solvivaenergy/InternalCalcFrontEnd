@@ -125,9 +125,22 @@ const PARAM_KEY_TO_SECTION = {
   grossMarginMaxTp:              'margins',
   grossMarginNoInverterSp:       'margins',   // v3-191 — panels-without-inverter margins
   grossMarginNoInverterTp:       'margins',
+  batteryGmMinKwh:               'margins',   // v3-209 — battery GM curve anchors (kWh axis)
+  batteryGmMidKwh:               'margins',
+  batteryGmMaxKwh:               'margins',
+  batteryGmMin:                  'margins',
+  batteryGmMid:                  'margins',
+  batteryGmMax:                  'margins',
+  gmCurveModeSp:                 'margins',   // v3-211 — flat-mode option per curve
+  gmFlatSp:                      'margins',
+  gmCurveModeTp:                 'margins',
+  gmFlatTp:                      'margins',
+  batteryGmMode:                 'margins',
+  batteryGmFlat:                 'margins',
   componentMargins:              'margins',   // v3-191 — per-component margin table (B–Q)
   grossMarginReference:          'returnsAssumptions',  // v3-190 — moved to FinCo; UI label renamed, key kept
   merchantDiscountRate:          'margins',
+  salesCommissionRate:           'margins',   // v3-210 — sales commission allowance (VAT-exclusive base)
   rateAnchorMax:                 'interestRates',
   rateAnchorMid:                 'interestRates',
   rateAnchorMin:                 'interestRates',
@@ -156,8 +169,10 @@ const PARAM_KEY_TO_SECTION = {
   luzonOver30FixedFeeCogs:         'location',
   luzonOver30PerKmCogs:            'location',
   // Cabling
-  cablingTiers:                  'cabling',
-  cablingTiersThreePhase:        'cabling',   // NEW v3-62 — 3-phase tier table
+  // v3-216 — pct keys RETIRED (absent = a stale client's cablingTiers /
+  // cablingTiersThreePhase PUT entries are section-filtered out, tolerated).
+  cablingCogsTiers:              'cabling',   // NEW v3-216 — peso COGS ladder
+  cablingCogsTiersThreePhase:    'cabling',   // NEW v3-216 — 3-phase peso ladder
   // Battery Packages (v3-54: replaces 6 flat keys with a single array)
   batteryPackages:               'batteryPackage',
   // Standalone Retrofit Charges
@@ -419,44 +434,60 @@ export default async (request, context) => {
       }
     }
 
-    // ─── Validation: don't accept a write that empties cablingTiers ────────
-    // Empty cablingTiers crashes calculations.cablingTotalPct() and would
-    // brick the live site. (See Admin.jsx for the same client-side check.)
-    if (Array.isArray(merged.adminParams?.cablingTiers)
-        && merged.adminParams.cablingTiers.length === 0) {
+    // ─── Validation: don't accept a write that empties a cabling ladder ────
+    // An empty ladder would drop pricing to the hardcoded fallback row for
+    // every quote. (See AdminShell.jsx for the same client-side check.)
+    // v3-216: guards moved to the PESO-COGS keys; the retired pct keys are
+    // dead data in old blobs and are deliberately NOT validated.
+    if (Array.isArray(merged.adminParams?.cablingCogsTiers)
+        && merged.adminParams.cablingCogsTiers.length === 0) {
       return json(400, {
-        error: 'Refusing to save: cablingTiers cannot be empty.',
+        error: 'Refusing to save: cablingCogsTiers cannot be empty.',
       });
     }
-    // v3-62: same guard for the 3-phase table. (Absent key is fine — the
-    // client migration-seeds it on load; an explicit EMPTY array is not.)
-    if (Array.isArray(merged.adminParams?.cablingTiersThreePhase)
-        && merged.adminParams.cablingTiersThreePhase.length === 0) {
+    if (Array.isArray(merged.adminParams?.cablingCogsTiersThreePhase)
+        && merged.adminParams.cablingCogsTiersThreePhase.length === 0) {
       return json(400, {
-        error: 'Refusing to save: cablingTiersThreePhase cannot be empty.',
+        error: 'Refusing to save: cablingCogsTiersThreePhase cannot be empty.',
       });
     }
-    // ─── v3-174 · cabling tier MONOTONICITY (hand-mirror of calculations.js
-    // findCablingTierViolation — functions cannot import from src/; the smoke
-    // suite diffs the two). Cabling costs pct × panels × panelPrice, so no
-    // tier may price a larger system CHEAPER than the tier before it:
-    //     total[i] × minPanels[i] ≥ total[i-1] × minPanels[i-1]
-    // The Engineering console enforces the same floor per field and blocks
-    // Save; this is the backstop for a hand-crafted PUT or a client skew.
-    for (const key of ['cablingTiers', 'cablingTiersThreePhase']) {
+    // ─── v3-216 · cabling COGS ladder validation (hand-mirror of
+    // calculations.js — functions cannot import from src/; the smoke suite
+    // checks the two stay in step). Two rules:
+    //   1. FIELD SHAPE: every component COGS a finite number ≥ 0; minPanels a
+    //      finite number ≥ 1. A bad entry would price a whole component group
+    //      at NaN on every quote.
+    //   2. PESO MONOTONICITY (Pat's ruling): each row's entered TOTAL must be
+    //      ≥ the prior row's — a later anchor never prices a larger system's
+    //      bundle cheaper than a smaller one's.
+    for (const key of ['cablingCogsTiers', 'cablingCogsTiersThreePhase']) {
       const tbl = merged.adminParams?.[key];
       if (!Array.isArray(tbl) || tbl.length === 0) continue;
-      const tierTotal = (t) => (t.dcCablePct || 0) + (t.acCablePct || 0)
-                             + (t.conduitsPct || 0) + (t.panelBoardPct || 0);
+      const FIELDS = ['dcCableCogs', 'acCableCogs', 'conduitsCogs', 'panelBoardCogs'];
+      for (const row of tbl) {
+        if (typeof row?.minPanels !== 'number' || !Number.isFinite(row.minPanels) || row.minPanels < 1) {
+          return json(400, {
+            error: `Refusing to save: ${key} has a row with an invalid panel count — it must be a number of at least 1.`,
+          });
+        }
+        for (const f of FIELDS) {
+          if (typeof row[f] !== 'number' || !Number.isFinite(row[f]) || row[f] < 0) {
+            return json(400, {
+              error: `Refusing to save: ${key} row at ${row.minPanels} panels has an invalid ${f} — component COGS must be a non-negative peso amount.`,
+            });
+          }
+        }
+      }
+      const tierTotal = (t) => (t.dcCableCogs || 0) + (t.acCableCogs || 0)
+                             + (t.conduitsCogs || 0) + (t.panelBoardCogs || 0);
       const sorted = [...tbl].sort((a, b) => (a.minPanels || 0) - (b.minPanels || 0));
       for (let i = 1; i < sorted.length; i++) {
-        const prev = sorted[i - 1];
-        const required = tierTotal(prev) * (prev.minPanels || 1) / (sorted[i].minPanels || 1);
+        const required = tierTotal(sorted[i - 1]);
         if (tierTotal(sorted[i]) < required - 1e-9) {
           return json(400, {
-            error: `Refusing to save: ${key} tier at ${sorted[i].minPanels} panels prices a `
-              + `larger system cheaper cabling than the ${prev.minPanels}-panel tier before it — `
-              + `its total must be at least ${(Math.ceil(required * 10000) / 100).toFixed(2)}%.`,
+            error: `Refusing to save: ${key} row at ${sorted[i].minPanels} panels prices a `
+              + `larger system's bundle cheaper than the ${sorted[i - 1].minPanels}-panel row before it — `
+              + `its total must be at least \u20B1${Math.ceil(required).toLocaleString('en-PH')}.`,
           });
         }
       }
@@ -675,6 +706,47 @@ export default async (request, context) => {
         });
       }
     }
+    // v3-209 — the battery GM curve anchors: same monotonicity rules as the
+    // panels anchors, on a kWh axis. A bad set NaNs or explodes all six
+    // battery-package prices on every quote carrying a battery.
+    if (['batteryGmMin','batteryGmMid','batteryGmMax'].some(k => k in ap_)) {
+      const q1 = ap_.batteryGmMin, q2 = ap_.batteryGmMid, q3 = ap_.batteryGmMax;
+      if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 < q2 && q2 < q3)) {
+        return json(400, {
+          error: 'Refusing to save: battery gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.',
+        });
+      }
+    }
+    if (['batteryGmMinKwh','batteryGmMidKwh','batteryGmMaxKwh'].some(k => k in ap_)) {
+      const x1 = ap_.batteryGmMinKwh, x2 = ap_.batteryGmMidKwh, x3 = ap_.batteryGmMaxKwh;
+      if (![x1, x2, x3].every(v => Number.isFinite(v) && v > 0) || !(x1 < x2 && x2 < x3)) {
+        return json(400, {
+          error: 'Refusing to save: battery gross-margin capacity breakpoints must be positive, strictly increasing kWh: MinKwh < MidKwh < MaxKwh.',
+        });
+      }
+    }
+    // v3-211 — flat-mode option per curve: each mode must be exactly 'curve'
+    // or 'flat' (a typo'd mode silently pricing the wrong shape is worse than
+    // a refused save), and each flat value a fraction in [0,1). Anchor
+    // validation above stays ACTIVE in flat mode — anchors persist while
+    // flat, and a save must never park an invalid set behind the switch.
+    for (const k of ['gmCurveModeSp', 'gmCurveModeTp', 'batteryGmMode']) {
+      if (k in ap_ && ap_[k] !== 'curve' && ap_[k] !== 'flat') {
+        return json(400, {
+          error: `Refusing to save: ${k} must be exactly "curve" or "flat".`,
+        });
+      }
+    }
+    for (const k of ['gmFlatSp', 'gmFlatTp', 'batteryGmFlat']) {
+      if (k in ap_) {
+        const v = ap_[k];
+        if (!Number.isFinite(v) || v < 0 || v >= 1) {
+          return json(400, {
+            error: 'Refusing to save: a flat gross margin must be a fraction between 0% and (strictly) 100%.',
+          });
+        }
+      }
+    }
     // v3-191 — the per-phase panels-without-inverter margins. Same [0,1)
     // fraction rule as every other margin: a value >= 1 divides by zero and
     // blanks every panels-only price.
@@ -694,6 +766,11 @@ export default async (request, context) => {
     // Validate shape and range on every entry present; ids beyond the known
     // set are refused so a typo'd key can't sit silently in the blob.
     if ('componentMargins' in ap_) {
+      // v3-209 — 'K' stays in KNOWN as a TOLERATED legacy id only: the
+      // battery package now rides its own kWh curve and the client drops K
+      // on normalize, but a stale open admin tab may still send it and must
+      // not be hard-400'd mid-session. A present K row is validated for
+      // shape like any other and is dead on arrival at the resolver.
       const KNOWN = ['B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q'];
       const cm = ap_.componentMargins;
       if (!cm || typeof cm !== 'object' || Array.isArray(cm)) {
@@ -744,6 +821,31 @@ export default async (request, context) => {
         return json(400, {
           error: `Refusing to save: merchant discount rate must be between 0% and ${(MDR_CEILING * 100).toFixed(1)}%. `
                + 'At or above that, the acquirer\'s cut plus the VAT remittance exceeds the entire sale and every price in the app would be zero or negative.',
+        });
+      }
+    }
+    // v3-210 — the sales commission allowance: a fraction in [0,1) on its own,
+    // and JOINTLY with the MDR the retention R = 1.12×(1−MDR) − commission −
+    // 0.12 must stay positive, or every price in the app goes to zero. The
+    // joint check fires whenever EITHER lever is in the payload — the app's
+    // margins save always carries both, but a partial hand-crafted PUT must
+    // not slip a combination past the guard, so a missing side falls back to
+    // its bundled seed (0.15 / 0.02), the value the engine would price with
+    // only if the blob truly lacks the key.
+    if ('salesCommissionRate' in ap_) {
+      const v = ap_.salesCommissionRate;
+      if (!Number.isFinite(v) || v < 0 || v >= 1) {
+        return json(400, {
+          error: 'Refusing to save: the sales commission allowance must be a fraction between 0% and (strictly) 100%.',
+        });
+      }
+    }
+    if ('salesCommissionRate' in ap_ || 'merchantDiscountRate' in ap_) {
+      const m = 'merchantDiscountRate' in ap_ ? ap_.merchantDiscountRate : 0.15;
+      const cr = 'salesCommissionRate' in ap_ ? ap_.salesCommissionRate : 0.02;
+      if (Number.isFinite(m) && Number.isFinite(cr) && !(1.12 * (1 - m) - cr - 0.12 > 0)) {
+        return json(400, {
+          error: 'Refusing to save: together, the MDR allowance, the sales commission allowance, and the VAT remittance would take the entire sale or more — the retention 1.12 × (1 − MDR) − commission − 0.12 must stay above zero, or every price in the app would be zero or negative.',
         });
       }
     }

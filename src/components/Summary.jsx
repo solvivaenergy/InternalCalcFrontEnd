@@ -139,10 +139,11 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
             {pricesShown ? 'Hide prices' : '\u{1F512}'}
           </button>
         </div>
-        {/* v3-135 — the admin price reveal is now a FIVE-column waterfall
-            (user-directed): COGS · Gross Margin · MDR allowance · VAT ·
-            Direct Purchase Price, with the first four summing EXACTLY to the
-            fifth on every line (decomposeDirectPrice puts the rounding
+        {/* v3-135 — the admin price reveal is a waterfall
+            (user-directed): COGS · Gross Margin · [Commissions when the
+            v3-210 allowance is above zero] · MDR allowance · VAT ·
+            Direct Purchase Price, with the leading columns summing EXACTLY to
+            the DP on every line (decomposeDirectPrice puts the rounding
             residual in the GM cell). v3-194 — the GM header is PLAIN
             (user-directed, Pat): under per-component margins (v3-191) no
             single percentage describes the column, so each GM cell carries
@@ -155,12 +156,22 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
             gate, same PDF force-hide as v3-117/134. */}
         {(() => {
           const mdrRate = adminParams.merchantDiscountRate ?? 0;
+          // v3-210 — the commission leg (user-directed, Pat; D2/D4). The
+          // column renders ONLY when the allowance is above zero (D4), so a
+          // zeroed rate reproduces the five-column reveal byte-for-byte; the
+          // Description column narrows 28% -> 24% to seat the sixth column at
+          // today's font sizes (mockup approved). Commission is on the
+          // VAT-EXCLUSIVE price, the MDR on the VAT-INCLUSIVE dp; GM stays
+          // the residual so every row still sums exactly to its DP.
+          const commRate = adminParams.salesCommissionRate ?? 0;
+          const commOn = commRate > 0;
           const rows = visibleItems.map(it =>
-            ({ it, d: decomposeDirectPrice(it.directPrice, it.cogs, mdrRate) }));
+            ({ it, d: decomposeDirectPrice(it.directPrice, it.cogs, mdrRate, commRate) }));
           const tot = rows.reduce((a, { d }) => ({
             cogs: a.cogs + (d.cogsKnown ? d.cogs : 0), gm: a.gm + d.gm,
+            commAmt: a.commAmt + d.commAmt,
             mdrAmt: a.mdrAmt + d.mdrAmt, vat: a.vat + d.vat, dp: a.dp + d.dp,
-          }), { cogs: 0, gm: 0, mdrAmt: 0, vat: 0, dp: 0 });
+          }), { cogs: 0, gm: 0, commAmt: 0, mdrAmt: 0, vat: 0, dp: 0 });
           const netRevTot = tot.gm + tot.cogs;
           const gmPct = netRevTot > 0 ? (tot.gm / netRevTot) * 100 : 0;
           const gmPctOf = (gm, cogsVal, known) => {
@@ -192,9 +203,10 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
             <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={{ ...styles.th, width: pricesShown ? '28%' : '100%' }}>Description</th>
+                  <th style={{ ...styles.th, width: pricesShown ? (commOn ? '24%' : '28%') : '100%' }}>Description</th>
                   {pricesShown && <th style={numTh}>COGS (pre-VAT)</th>}
                   {pricesShown && <th style={numTh}>Gross Margin</th>}
+                  {pricesShown && commOn && <th style={numTh}>{pct(commRate)}% Allow. for Commissions</th>}
                   {pricesShown && <th style={numTh}>{pct(mdrRate)}% Allow. for MDR</th>}
                   {pricesShown && <th style={numTh}>12% VAT</th>}
                   {pricesShown && <th style={numTh}>Direct Purchase Price</th>}
@@ -217,15 +229,16 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                   if (catRows.length === 0) return null;
                   const sub = catRows.reduce((a, { it, d }) => ({
                     cogs: a.cogs + (d.cogsKnown ? d.cogs : 0), gm: a.gm + d.gm,
+                    commAmt: a.commAmt + d.commAmt,
                     mdrAmt: a.mdrAmt + d.mdrAmt, vat: a.vat + d.vat, dp: a.dp + d.dp,
                     direct: a.direct + it.directPrice,
-                  }), { cogs: 0, gm: 0, mdrAmt: 0, vat: 0, dp: 0, direct: 0 });
+                  }), { cogs: 0, gm: 0, commAmt: 0, mdrAmt: 0, vat: 0, dp: 0, direct: 0 });
                   const subTd = { ...styles.td, fontWeight: 700 };
                   const subNum = { ...mutedTd, fontWeight: 700 };
                   return (
                     <React.Fragment key={cat.id}>
                       <tr>
-                        <td colSpan={pricesShown ? 6 : 2} style={styles.categoryHeader}>
+                        <td colSpan={pricesShown ? (commOn ? 7 : 6) : 2} style={styles.categoryHeader}>
                           {cat.letter} &middot; {cat.label}
                         </td>
                       </tr>
@@ -235,7 +248,7 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                           the PDF picks it up through the page-4 snapshot. */}
                       {cat.id === 'solar' && model.expansionActive && (
                         <tr>
-                          <td colSpan={pricesShown ? 6 : 2}
+                          <td colSpan={pricesShown ? (commOn ? 7 : 6) : 2}
                               style={{ ...styles.td, fontSize: 11.5, color: '#075985',
                                        fontStyle: 'italic' }}>
                             Connects to the customer&rsquo;s existing{' '}
@@ -252,6 +265,7 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                             <td style={mutedTd}>{d.cogsKnown ? fmt.peso(d.cogs) : '\u2014'}</td>
                           )}
                           {pricesShown && <td style={mutedTd}>{gmCell(d.gm, d.cogs, d.cogsKnown)}</td>}
+                          {pricesShown && commOn && <td style={mutedTd}>{fmt.peso(d.commAmt)}</td>}
                           {pricesShown && <td style={mutedTd}>{fmt.peso(d.mdrAmt)}</td>}
                           {pricesShown && <td style={mutedTd}>{fmt.peso(d.vat)}</td>}
                           {pricesShown && <td style={numTd}>{fmt.peso(d.dp)}</td>}
@@ -261,6 +275,7 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                         <td style={subTd}>{cat.label} Subtotal</td>
                         {pricesShown && <td style={subNum}>{fmt.peso(sub.cogs)}</td>}
                         {pricesShown && <td style={subNum}>{gmCell(sub.gm, sub.cogs, sub.cogs > 0)}</td>}
+                        {pricesShown && commOn && <td style={subNum}>{fmt.peso(sub.commAmt)}</td>}
                         {pricesShown && <td style={subNum}>{fmt.peso(sub.mdrAmt)}</td>}
                         {pricesShown && <td style={subNum}>{fmt.peso(sub.vat)}</td>}
                         <td style={{ ...styles.td, ...styles.tdNum, fontWeight: 700 }}>
@@ -286,6 +301,9 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                         </span>
                       )}
                     </td>
+                  )}
+                  {pricesShown && commOn && (
+                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.commAmt)}</td>
                   )}
                   {pricesShown && (
                     <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.mdrAmt)}</td>

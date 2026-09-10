@@ -46,7 +46,7 @@ export default function Step3Payoff({ state, model, adminParams }) {
   if (!p) return null;
   const {
     years, monthlySave, pmt, payYears, directPurchase,
-    headline, subtitle, horizonNote, totalOverHorizon, anyShortfall, anySurplus, showEndMarker,
+    headline, subtitle, totalOverHorizon, anyShortfall, anySurplus, showEndMarker,
   } = p;
 
   // ── geometry ──
@@ -159,7 +159,7 @@ export default function Step3Payoff({ state, model, adminParams }) {
           )}
         </div>
         <div style={styles.total}>
-          Total saved over {years} years: <strong>{fmt.peso(totalOverHorizon)}</strong>.{horizonNote}
+          Total saved over {years} years: <strong>{fmt.peso(totalOverHorizon)}</strong>.
         </div>
       </div>
     </div>

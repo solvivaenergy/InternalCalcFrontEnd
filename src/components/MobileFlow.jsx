@@ -41,7 +41,12 @@ import { DEVICES } from '../data/devices.js';
 import { useMemo } from 'react';
 import { availableDeliveryLocations, availableBatteryPackages, optimizeBatteryPackage,
          DISCLAIMERS } from '../data/adminParams.js';
-import { LUZON_REGIONS, LUZON_FREE_TRAVEL_KM } from '../config.js';
+import { LUZON_REGIONS, LUZON_FREE_TRAVEL_KM,
+         // v3-215 — street-only lead-form address composed with the Screen-5
+         // location pick (D1b/D2/D5 — mobile shows a read-only composed line,
+         // not duplicate dropdowns; the full picker is Screen 5).
+         installLocationSuffix, composeInstallAddress,
+         splitInstallAddress } from '../config.js';
 import { formatHour12, optimizeSystem } from '../lib/schedule.js';
 import {
   allowedDpOptions, resolveMinDpPct, DP_EPS,
@@ -513,7 +518,7 @@ function MobilePayoff({ state, model, adminParams }) {
   const p = buildPayoffModel({ state, model, adminParams, maxYears: WARRANTY_YEARS });
   if (!p) return null;
   const { years, monthlySave, pmt, payYears, directPurchase,
-          headline, subtitle, horizonNote, totalOverHorizon } = p;
+          headline, subtitle, totalOverHorizon } = p;
 
   // Full-bleed: the card's own padding is cancelled so the chart gets the whole
   // width (374px rather than 328px on a 390px screen).
@@ -587,7 +592,7 @@ function MobilePayoff({ state, model, adminParams }) {
           </div>
         )}
         <div className="f">
-          Total saved over {years} years: <strong>{fmtPeso(totalOverHorizon)}</strong>.{horizonNote}
+          Total saved over {years} years: <strong>{fmtPeso(totalOverHorizon)}</strong>.
         </div>
       </div>
     </div>
@@ -670,8 +675,7 @@ function ReturnsSheet({ screen, state, model, updateState }) {
             </div>
             <div className="mfl-dusctl">
               <button type="button" aria-label="Decrease assumed annual DU rate increase by 0.25%"
-                      // disabled={duBp <= DU_MIN_BP}
-                      disabled={true}
+                      disabled={duBp <= DU_MIN_BP}
                       onClick={() => setDu(duBp - DU_STEP_BP)}>&minus;</button>
               <div className="mfl-dusval"
                    role="spinbutton"
@@ -682,8 +686,7 @@ function ReturnsSheet({ screen, state, model, updateState }) {
                 {(duBp / 100).toFixed(2)}%
               </div>
               <button type="button" aria-label="Increase assumed annual DU rate increase by 0.25%"
-                      // disabled={duBp >= DU_MAX_BP}
-                      disabled={true}
+                      disabled={duBp >= DU_MAX_BP}
                       onClick={() => setDu(duBp + DU_STEP_BP)}>+</button>
             </div>
           </div>
@@ -1431,9 +1434,18 @@ function InvestmentScreen({ state, updateState, model, adminParams, go, onPropos
 }
 
 function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent }) {
+  // v3-215 — the address input is STREET-ONLY when the Screen-5 location pick
+  // yields a suffix ("City, Region" for Luzon, the delivery-location label for
+  // Cebu-class); the composed single string is built at send by the shared
+  // config.js helpers. "Other" picks yield no suffix — the field stays a full
+  // free-text address, exactly the pre-v3-215 behavior.
+  const suffix = installLocationSuffix(state, adminParams);
   const [draft, setDraft] = useState({
     name: contact.name || '', email: contact.email || '',
-    mobile: contact.mobile || '', installAddress: contact.installAddress || '',
+    mobile: contact.mobile || '',
+    // Street portion only: strip the current suffix off a previously composed
+    // record; old/mismatched records surface whole (nothing silently dropped).
+    installAddress: splitInstallAddress(contact.installAddress || '', suffix),
   });
   const [consent, setConsent] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
@@ -1448,13 +1460,17 @@ function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent
   const canSend = !err.name && !err.email && !err.mobile && !err.installAddress && consent;
   const send = async () => {
     if (!canSend) { setShowErrors(true); return; }
-    setContact(draft);
+    // v3-215 — the stored/submitted record carries the COMPOSED address (one
+    // string, format-unchanged for sessionStorage, lead payload, and rep).
+    const full = { ...draft,
+      installAddress: composeInstallAddress(draft.installAddress, suffix) };
+    setContact(full);
     setStatus('sending');
     try {
       const now = new Date();
-      const reference = makeLeadRef(now, draft);
+      const reference = makeLeadRef(now, full);
       const payload = buildLeadPayload({
-        state, model, contact: draft,
+        state, model, contact: full,
         submittedAt: now.toISOString(), reference, adminParams,
       });
       await submitLead(payload);
@@ -1503,10 +1519,21 @@ function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent
                placeholder="09XX XXX XXXX"
                onChange={e => setDraft(d => ({ ...d, mobile: e.target.value }))} />
         {showErrors && err.mobile && <span className="mfl-errmsg">A valid PH mobile number is required.</span>}
-        <label className="mfl-field" style={{ marginTop: 14 }}>Installation address</label>
+        <label className="mfl-field" style={{ marginTop: 14 }}>
+          {suffix ? 'Street address' : 'Installation address'}
+        </label>
         <input className={inputCls(err.installAddress)} value={draft.installAddress}
+               placeholder={suffix ? 'Unit/house no., street, barangay, ZIP' : undefined}
                onChange={e => setDraft(d => ({ ...d, installAddress: e.target.value }))} />
-        {showErrors && err.installAddress && <span className="mfl-errmsg">The installation address is required.</span>}
+        {suffix && (
+          <span className="mfl-hint" style={{ display: 'block', marginTop: 6 }}>
+            {suffix} &mdash; from your location selection. Your address saves
+            as &ldquo;{composeInstallAddress(draft.installAddress || '\u2026', suffix)}&rdquo;.
+          </span>
+        )}
+        {showErrors && err.installAddress && <span className="mfl-errmsg">
+          {suffix ? 'Your street address is required.' : 'The installation address is required.'}
+        </span>}
         <label className="mfl-consent">
           <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />
           <span>{LEAD_CONSENT_TEXT}</span>

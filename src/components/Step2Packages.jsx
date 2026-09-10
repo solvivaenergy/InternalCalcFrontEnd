@@ -166,8 +166,11 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
   // uses, with the same order-shape inputs (v3-176 has-inverter flag
   // included). The old capacity-scalar call would show a price 2F never
   // bills whenever L is set to Fixed or the order is not a full system.
+  // v3-209 — the resolver signature gained the order's battery kWh (the 'K'
+  // route); 'L' resolution is unaffected, but the display call passes the
+  // same order-shape inputs as the engine on principle.
   const miscDisplayMargin = buildMarginResolver(adminParams, sizing.systemKwp, panelCount,
-    effectiveInverters.some(i => i), phase)('L');
+    effectiveInverters.some(i => i), phase, state.batteryKwh || 0)('L');
   // Only IN-STOCK items are offerable. A row already holding a now-hidden id
   // re-injects it below so the Select never renders blank.
   const miscCatalogOptions = availableMiscCatalog(adminParams).map(m => ({
@@ -267,44 +270,45 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           })}
         </div>
 
-        {/* v3-143 — Battery-only shortcut (rep-only). One click zeroes the
-            solar array for a storage-only order and pins the battery the rep
-            is seeing so it survives the loss of the solar-excess battery
-            recommendation (which drops to 0 without solar). Unchecking
-            restores the full auto solar + battery recommendation. */}
-        {!isCustomer && panelsAvailable && anyBatteryInStock && (
-          <div style={styles.consvBlock}>
-            <label style={styles.consvRow}>
-              <input
-                type="checkbox"
-                checked={panelCount === 0}
-                onChange={e => {
-                  if (e.target.checked) {
-                    const patch = { panelCount: 0 };
-                    // Pin the current battery so a storage-only order doesn't
-                    // silently drop to 0 kWh (rec can't size storage w/o solar).
-                    if (state.batteryKwh == null && batteryKwh > 0) {
-                      patch.batteryKwh = batteryKwh;
-                    }
-                    updateState(patch);
-                  } else {
-                    updateState({ panelCount: null, batteryKwh: null });
-                  }
-                }}
-                style={styles.consvCheckbox}
-              />
-              <span>
-                <span style={styles.consvLabel}>Battery-only order (no solar panels)</span>
-                <span style={styles.consvHint}>
-                  Storage-only quote: zeroes the solar array and prices the
-                  battery package on its own (standalone labor, plus ATS &amp;
-                  critical-loads materials unless unbundled below). The inverter
-                  is treated as client-supplied unless you add one in 2C.
-                </span>
+        {/* v3-213 — Battery-only order checkbox (user-directed, Pat; approved
+            mockup; D1–D5). PURE SUGAR over the existing panel-count field —
+            no new state: checked DERIVES from the effective panel count being
+            0 (the very state typing 0 produces, so a typed 0 lights it up,
+            by design and Pat's ruling: "it should work no different than
+            typing in zero"); checking writes panelCount: 0; unchecking
+            writes panelCount: null (= track the recommendation — the
+            selection reverts to recommended AND keeps following it, like a
+            fresh session); typing any count above 0 derives it unchecked
+            with no event wiring at all. During a panels stock-out the model
+            forces 0 panels for everyone, so the box renders checked +
+            disabled (D5) rather than pretending to be a choice. The
+            expansion gate keys on panelCount > 0 and disarms naturally at 0;
+            expansion inputs stay in place, inert (D4). Engine untouched —
+            0-panel orders were already the supported standalone path (v3-68
+            floor exemption; standalone battery labor; K on its own curve in
+            every shape). ⚠ Customer-facing copy — Lili bundle (D2). */}
+        <div style={styles.consvBlock}>
+          <label style={styles.consvRow}>
+            <input
+              type="checkbox"
+              checked={panelCount === 0}
+              disabled={panelsAvailable === false}
+              onChange={e => updateState({ panelCount: e.target.checked ? 0 : null })}
+              style={styles.consvCheckbox}
+            />
+            <span>
+              <span style={styles.consvLabel}>
+                Battery-only order (no solar panels)
               </span>
-            </label>
-          </div>
-        )}
+              <span style={styles.consvHint}>
+                Storage-only quote: zeroes the solar array and prices the battery
+                package on its own (standalone labor, plus ATS &amp; critical-loads
+                materials unless unbundled below). The inverter is treated as
+                client-supplied unless you add one in 2C.
+              </span>
+            </span>
+          </label>
+        </div>
 
         {/* v3-106 — panels out of stock for the selected phase. The quote is
             NOT blocked: the solar array is forced to 0 panels and the rest
@@ -575,16 +579,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             // standalone retrofit path).
                             const floor = recommended?.minPanelsFloor || 0;
                             const c = (v > 0 && v < floor) ? floor : v;
-                            const patch = { panelCount: c === recPanelCount ? null : c };
-                            // v3-143 — going standalone (0 panels) zeroes the
-                            // solar-excess battery recommendation; pin the
-                            // battery the rep is seeing so a battery-only
-                            // order doesn't silently drop to 0 kWh, matching
-                            // the Battery-only checkbox above.
-                            if (c === 0 && state.batteryKwh == null && batteryKwh > 0) {
-                              patch.batteryKwh = batteryKwh;
-                            }
-                            updateState(patch);
+                            updateState({ panelCount: c === recPanelCount ? null : c });
                           }}
                           min={0}
                           step={1}

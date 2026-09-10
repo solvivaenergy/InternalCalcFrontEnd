@@ -7,7 +7,7 @@
 //
 //   • Section            — section heading + read-only-for-your-role badge
 //   • Param              — single editable parameter row (peso / pct / num)
-//   • CablingTierTable   — 12-row % allocation editor (Inventory tab)
+//   • CablingTierTable   — peso COGS ladder editor (Inventory tab, v3-216)
 //   • BatteryPackagesEditor — N-package list with 9 fields each (Inventory tab)
 //   • PromoCodesTable    — promo code list (Product tab)
 //   • MinDpTiersTable    — tiered minimum-DP editor (Product tab, v3-75)
@@ -23,8 +23,8 @@ import { COLORS, fmt, NumberInput } from './ui.jsx';
 import { cablingTierTotal, cablingTierRequiredTotal } from '../lib/calculations.js';
 // v3-178 — the test row's figures come from the ENGINE, never a local copy
 // (v3-144 post-mortem, fifth application).
-import { cablingComponentPcts, cablingInterpolationSpan, cablingTotalPct,
-         CABLING_COMPONENT_FIELDS } from '../lib/calculations.js';
+import { cablingComponentCogs, cablingInterpolationSpan, cablingCogsTotal,
+         CABLING_COGS_COMPONENT_FIELDS } from '../lib/calculations.js';
 import { PACKAGE_CATEGORIES, normalizeCategory,
          PROMO_TYPES, normalizePromoType } from '../data/adminParams.js';   // v3-150 / v3-151
 
@@ -139,8 +139,8 @@ export function Param({ label, value, onChange, canEdit, isPct, isPeso, suffix, 
 // v3-94 — a margin anchor and its capacity breakpoint on ONE row, side by side,
 // so the pairing is unambiguous (was two stacked Param rows). Left: the anchor
 // label + hint. Right: the margin % input, "at", then the kWp input.
-// v3-208 — `unit` lets the battery curve's rows read "kWh" (production main:
-// the battery margin axis is battery capacity, not solar kWp).
+// v3-209 — `unit` prop added (default 'kWp', unchanged for every existing
+// caller); the battery GM curve rows pass 'kWh'. Display-only.
 export function MarginAnchorRow({ label, hint, marginValue, onMargin, kwpValue, onKwp, canEdit, unit = 'kWp' }) {
   const setM = (v) => { if (canEdit && v != null) onMargin(Math.max(0, Math.min(99, v)) / 100); };
   const setK = (v) => { if (canEdit && v != null) onKwp(Math.max(0, v)); };
@@ -310,111 +310,107 @@ const gateStyles = {
 };
 
 // ─── CablingTierTable ──────────────────────────────────────────────────────
-// v3-174 — PER-FIELD MONOTONICITY FLOORS (user-directed, Pat; mockup approved).
-// Cabling cost is pct × panels × panelPrice, so each row's cost at its own
-// minPanels is an anchor and the ladder must never step down. The floor per
-// row comes from cablingTierRequiredTotal() (the engine's own definition —
-// never a local copy); each FIELD then shows the least it may hold given its
-// three siblings: max(0, requiredTotal − sum(others)).
-//
-// Enforcement is BLUR-SNAP, not per-keystroke (typing "1" en route to "15"
-// must not fight the admin): the field turns red while below its floor and
-// snaps UP to the floor on blur. Hard clamping alone cannot cover the cascade
-// cases — raising an EARLIER row, editing a panel count, or deleting a row can
-// strand a LATER row below a floor the admin never touched — so violating rows
-// also flag in place with a one-click "Raise total to minimum" (Option A, per
-// Pat: the whole shortfall lands on Conduits, the largest component, rounded
-// UP to whole points, so exactly one number visibly changes and the fix is
-// auditable). AdminShell blocks Save while any row violates; the server
-// mirrors the rule with a 400. A stale blob that already violates LOADS and
-// flags — it never blocks loading, only saving.
-// v3-178 — TEST ROW (user-directed, Pat; mockup approved, five decisions).
-// A non-editing row at the foot of each table: type a panel count, read the
-// resulting percentage under every component column. `testPanelCount` /
-// `onTestPanelCount` are LIFTED to AdminShell so the value survives tab
-// switches — and, critically, so that the only writer in the path is admin
-// state. There is NO route from this control back into calculator state, which
-// is what guarantees the count cannot follow the admin out on logout.
-// Rendered only when `canEdit` — which for the 'cabling' section is exactly
-// Super Admin + Engineering (decision 1a: Audit and Product do not see it, a
-// disabled input on a row whose whole purpose is typing being a dead control).
-export function CablingTierTable({ tiers, canEdit, onChange,
+// v3-216 — PESO COGS LADDER EDITOR (user-directed, Pat; mockup approved).
+// Anjon enters each component group's ABSOLUTE PESO COGS at each anchor panel
+// count — decoupled from panel COGS, so a panel price change never forces a
+// re-tune of this table. The app derives everything else (Pat's ruling (a):
+// "the calculator should be totalling this, not Anjon"):
+//   • per-kWp figure under EVERY component entry (D7a) at the LIVE per-phase
+//     panel wattage, with an amber ▲ wherever the per-kWp RISES versus the
+//     row above (D7b — display-only diagnostic for "does COGS per kWp decline
+//     as the array grows"; the ONLY enforced rule stays the peso total floor);
+//   • TOTAL (+ its peso floor hint), TOTAL per PANEL, TOTAL per kWp columns.
+// FLOOR (Pat's ruling): each row's total ≥ the prior row's, in pesos.
+// Enforcement is BLUR-SNAP (v3-174 pattern): the field reddens below its
+// per-field minimum — max(0, prevTotal − siblings) — and snaps UP on blur;
+// cascade violations (edits to earlier rows, count edits, deletions) flag in
+// place with one-click "Raise total to minimum" landing the whole shortfall
+// on Conduits & Fittings rounded UP to the whole peso (Option A, per Pat).
+// ADD (Pat, this session): "+ Add tier" appends at lastAnchor+50 panels with
+// the LAST ROW'S FOUR VALUES COPIED VERBATIM — total equals the prior total,
+// so a new row can never itself violate the floor. DELETE keeps the confirm;
+// the button is HIDDEN on the final remaining row (the server's empty-table
+// 400 backstops a hand-crafted PUT).
+// v3-178 test row carried over, now in pesos: type a count, read the
+// interpolated/extrapolated COGS per component plus derived total, per-panel,
+// and per-kWp — every figure from the SHIPPED engine, never a local copy.
+export function CablingTierTable({ tiers, canEdit, onChange, panelWatts = 0,
                                    testPanelCount = null, onTestPanelCount = null }) {
   const updateRow = (idx, patch) => {
     const next = tiers.map((t, i) => i === idx ? { ...t, ...patch } : t);
     onChange(next);
   };
   const deleteRow = (idx) => {
-    if (!window.confirm(`Remove tier starting at ${tiers[idx].minPanels} panels?`)) return;
+    if (!window.confirm(`Remove the ladder row starting at ${tiers[idx].minPanels} panels?`)) return;
     onChange(tiers.filter((_, i) => i !== idx));
   };
   const addRow = () => {
-    // v3-174 — new rows seed AT their floor in the last row's component
-    // proportions, so "+ Add tier" can never itself create a violation.
+    // v3-216 — a new row copies the last row's component pesos VERBATIM, so
+    // its total equals the prior total and the floor holds by construction.
     const sorted = [...tiers].sort((a, b) => a.minPanels - b.minPanels);
     const lastT = sorted[sorted.length - 1];
     const minPanels = (lastT ? lastT.minPanels : 0) + 50;
-    let newRow;
-    if (lastT) {
-      const tot = cablingTierTotal(lastT);
-      const req = tot * lastT.minPanels / minPanels;
-      const f = tot > 0 ? req / tot : 0;
-      const r2 = (x) => Math.ceil(x * f * 100) / 100;
-      newRow = { minPanels, dcCablePct: r2(lastT.dcCablePct), acCablePct: r2(lastT.acCablePct),
-                 conduitsPct: r2(lastT.conduitsPct), panelBoardPct: r2(lastT.panelBoardPct) };
-    } else {
-      newRow = { minPanels, dcCablePct: 0.05, acCablePct: 0.03, conduitsPct: 0.05, panelBoardPct: 0.02 };
-    }
+    const newRow = lastT
+      ? { minPanels, dcCableCogs: lastT.dcCableCogs, acCableCogs: lastT.acCableCogs,
+          conduitsCogs: lastT.conduitsCogs, panelBoardCogs: lastT.panelBoardCogs }
+      : { minPanels, dcCableCogs: 6623, acCableCogs: 4549,
+          conduitsCogs: 14246, panelBoardCogs: 11142 };
     onChange([...tiers, newRow].sort((a, b) => a.minPanels - b.minPanels));
   };
   const fixRow = (idx) => {
-    // Option A (Pat): shortfall onto Conduits, rounded up to a whole point.
+    // Option A (Pat): the whole shortfall lands on Conduits & Fittings,
+    // rounded UP to the whole peso, so exactly one number visibly changes.
     const short = cablingTierRequiredTotal(tiers, idx) - cablingTierTotal(tiers[idx]);
     if (short <= 0) return;
-    const conduits = Math.ceil((tiers[idx].conduitsPct + short) * 100) / 100;
-    updateRow(idx, { conduitsPct: conduits });
+    updateRow(idx, { conduitsCogs: Math.ceil((tiers[idx].conduitsCogs || 0) + short) });
   };
-  const pctInputStyle = {
-    width: 56, padding: '4px 6px', textAlign: 'right',
+  const pesoInputStyle = {
+    width: 74, padding: '4px 6px', textAlign: 'right',
     border: `1px solid ${COLORS.inputBorder}`, borderRadius: 4,
     backgroundColor: COLORS.inputTint, fontFamily: 'inherit', fontSize: 13,
     fontVariantNumeric: 'tabular-nums',
   };
-  const pctInputBad = { ...pctInputStyle, border: '1px solid #B91C1C', backgroundColor: '#FEE2E2' };
-  const numInputStyle = { ...pctInputStyle, width: 70 };
-  const minStyle = { fontSize: 10.5, color: COLORS.textMuted, fontVariantNumeric: 'tabular-nums' };
-  const minTight = { ...minStyle, color: '#B45309', fontWeight: 600 };
-  const minFree  = { ...minStyle, color: '#A8A29E' };
+  // v3-217 — pesoInputBad removed with the raw inputs (NumberInput's `error`
+  // style carries the below-floor red); pesoInputStyle survives only as the
+  // base for the two COUNT inputs (minPanels + test row), which stay plain —
+  // they are counts, not pesos.
+  const numInputStyle = { ...pesoInputStyle, width: 58 };
+  const subStyle  = { fontSize: 10.5, color: COLORS.textMuted, fontVariantNumeric: 'tabular-nums' };
+  const subUp     = { ...subStyle, color: '#B45309', fontWeight: 600 };
+  const minStyle  = { ...subStyle };
+  const minTight  = { ...subStyle, color: '#B45309', fontWeight: 600 };
 
-  const FIELDS = ['dcCablePct', 'acCablePct', 'conduitsPct', 'panelBoardPct'];
-  // Sorted VIEW indices → real indices, so floors always read off the ladder
-  // in panel order even while an edited minPanels is mid-flight.
+  const FIELDS = CABLING_COGS_COMPONENT_FIELDS;
+  // Sorted VIEW indices → real indices, so floors and ▲ markers always read
+  // off the ladder in panel order even while an edited minPanels is mid-flight.
   const order = tiers.map((t, i) => i).sort((a, b) => tiers[a].minPanels - tiers[b].minPanels);
   const sorted = order.map(i => tiers[i]);
 
-  // ─── v3-178 · test row derivation ─────────────────────────────────────────
-  // Gated on canEdit (Super Admin + Engineering for 'cabling') AND on the
-  // setter actually being wired, so a caller that has not adopted the props
-  // renders exactly the pre-v3-178 table rather than a broken half-row.
+  // D7c — per-kWp figures divide by minPanels × the LIVE per-phase wattage.
+  // No wattage (0 / missing) → the per-kWp layer renders nothing rather than
+  // Infinity; the section caption names the wattage in use.
+  const pw = Number.isFinite(panelWatts) && panelWatts > 0 ? panelWatts : null;
+  const perKwp = (pesos, panels) => pw ? pesos / (panels * pw / 1000) : null;
+
+  // ─── v3-178/v3-216 · test row derivation — figures from the SHIPPED engine.
   const showTestRow = canEdit && typeof onTestPanelCount === 'function';
   const testN = Math.max(1, testPanelCount || 1);
-  const testPcts = showTestRow ? cablingComponentPcts(testN, tiers) : [];
-  // The TOTAL cell reads the ENGINE, not the sum of the four cells above it.
-  // cablingTotalPct takes (panelCount, adminParams, phase) and picks a table
-  // off adminParams, so it is handed a synthetic params object carrying THIS
-  // table as the single-phase list — the same numbers a quote would price,
-  // without this component needing to know which phase it is rendering.
+  const testComps = showTestRow ? cablingComponentCogs(testN, tiers) : [];
+  // The TOTAL cell reads the ENGINE's quote-path function via a synthetic
+  // params object carrying THIS table as the single-phase ladder — the same
+  // pesos a quote would price, phase-agnostic here by construction.
   const testTotal = showTestRow
-    ? cablingTotalPct(testN, { cablingTiers: tiers, cablingTiersThreePhase: [] }, 'single')
+    ? cablingCogsTotal(testN, { cablingCogsTiers: tiers, cablingCogsTiersThreePhase: [] }, 'single')
     : 0;
   const testSpan = showTestRow ? cablingInterpolationSpan(testN, tiers) : null;
   const testCaption = !testSpan ? ''
     : testSpan.flat === 'below'
       ? `Flat \u2014 at or below the ${testSpan.anchor}-panel anchor, so every count here prices identically.`
       : testSpan.flat === 'above'
-        ? `Flat \u2014 at or above the ${testSpan.anchor}-panel anchor; the percentage holds, so cost keeps growing linearly.`
+        ? `At or above the ${testSpan.anchor}-panel anchor \u2014 the per-panel rate holds, so cost keeps growing linearly (D2).`
         : `Interpolating between the ${testSpan.from}-panel and ${testSpan.to}-panel anchors.`;
   const testCellTop = { borderTop: `2px solid ${COLORS.brandGreenLight}`, paddingTop: 11 };
+  const NCOLS = canEdit ? 9 : 8;
 
   return (
     <div>
@@ -426,8 +422,9 @@ export function CablingTierTable({ tiers, canEdit, onChange,
             <th style={{ ...tableStyles.th, textAlign: 'right' }}>AC Cabling</th>
             <th style={{ ...tableStyles.th, textAlign: 'right' }}>Conduits &amp; Fittings</th>
             <th style={{ ...tableStyles.th, textAlign: 'right' }}>Panel Board &amp; Protective</th>
-            <th style={{ ...tableStyles.th, textAlign: 'right' }}>TOTAL</th>
-            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Min total</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Total</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Per panel</th>
+            <th style={{ ...tableStyles.th, textAlign: 'right' }}>Per kWp</th>
             {canEdit && <th style={tableStyles.th} aria-label="actions" />}
           </tr>
         </thead>
@@ -437,11 +434,21 @@ export function CablingTierTable({ tiers, canEdit, onChange,
             const total = cablingTierTotal(t);
             const required = cablingTierRequiredTotal(sorted, vi);
             const violating = total < required - 1e-9;
-            const tight = !violating && vi > 0 && (total - required) < 0.02;
+            const tight = !violating && vi > 0 && (total - required) < 1;
+            const prevRow = vi > 0 ? sorted[vi - 1] : null;
+            const rowKwpUp = (field) => {
+              // D7b — amber ▲ when THIS row's per-kWp exceeds the prior row's
+              // for the same component (or the total). Display-only.
+              if (!pw || !prevRow) return false;
+              const cur  = (field === '__total' ? total : (t[field] || 0)) / t.minPanels;
+              const prev = (field === '__total' ? cablingTierTotal(prevRow)
+                                                : (prevRow[field] || 0)) / prevRow.minPanels;
+              return cur > prev + 1e-9;
+            };
             return (
               <React.Fragment key={i}>
                 <tr>
-                  <td style={tableStyles.td}>
+                  <td style={{ ...tableStyles.td, verticalAlign: 'top' }}>
                     {canEdit ? (
                       <input type="number" style={numInputStyle}
                         value={t.minPanels} step={1} min={1}
@@ -449,67 +456,92 @@ export function CablingTierTable({ tiers, canEdit, onChange,
                     ) : t.minPanels}
                   </td>
                   {FIELDS.map(field => {
-                    const others = total - t[field];
+                    const others = total - (t[field] || 0);
                     const fieldMin = Math.max(0, required - others);
-                    const below = t[field] < fieldMin - 1e-9;
+                    const below = (t[field] || 0) < fieldMin - 1e-9;
+                    const kv = perKwp(t[field] || 0, t.minPanels);
+                    const up = rowKwpUp(field);
                     return (
-                      <td key={field} style={{ ...tableStyles.td, textAlign: 'right' }}>
-                        {canEdit ? (
-                          <span style={{ display: 'inline-flex', flexDirection: 'column',
-                                         alignItems: 'flex-end', gap: 2 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                              <input type="number" style={below ? pctInputBad : pctInputStyle}
-                                value={Math.round(t[field] * 100)} step={1} min={0} max={100}
-                                aria-label={`${field} percentage, minimum ${Math.ceil(fieldMin * 100)}%`}
-                                onChange={e => updateRow(i, {
-                                  [field]: Math.max(0, Math.min(1, (parseFloat(e.target.value) || 0) / 100)),
-                                })}
-                                onBlur={e => {
-                                  // v3-174 blur-snap: a value below the floor snaps UP to it.
-                                  const v = Math.max(0, Math.min(1, (parseFloat(e.target.value) || 0) / 100));
-                                  const fm = Math.max(0,
-                                    cablingTierRequiredTotal(sorted, vi) - (cablingTierTotal(t) - t[field]));
-                                  if (v < fm - 1e-9) {
-                                    updateRow(i, { [field]: Math.ceil(fm * 100) / 100 });
-                                  }
-                                }} />
-                              <span style={{ color: COLORS.textMuted }}>%</span>
+                      <td key={field} style={{ ...tableStyles.td, textAlign: 'right', verticalAlign: 'top' }}>
+                        <span style={{ display: 'inline-flex', flexDirection: 'column',
+                                       alignItems: 'flex-end', gap: 2 }}>
+                          {canEdit ? (
+                            /* v3-217 — the four component cells use the SAME
+                               shipped peso control as every other ₱ field in
+                               the console (NumberInput, v3-46 formatting:
+                               ₱ prefix token + thousands commas at rest, raw
+                               digits while focused — v3-144 single-source, no
+                               new formatter). The v3-174 floor blur-snap moves
+                               to a WRAPPER onBlur (React blur bubbles):
+                               NumberInput commits the typed value first, then
+                               this settles it — rounded to the whole peso (D6)
+                               and snapped UP to the field's peso floor. */
+                            <span onBlur={() => {
+                              const cur = t[field] || 0;
+                              const fm = Math.max(0,
+                                cablingTierRequiredTotal(sorted, vi) - (cablingTierTotal(t) - cur));
+                              const settled = Math.max(Math.round(cur), Math.ceil(fm));
+                              if (settled !== cur) updateRow(i, { [field]: settled });
+                            }}>
+                              <NumberInput prefix="₱" compact width={112} min={0}
+                                value={t[field] ?? 0}
+                                error={below}
+                                ariaLabel={`${field} in pesos, minimum \u20B1${Math.ceil(fieldMin).toLocaleString('en-PH')}`}
+                                onChange={v => updateRow(i, { [field]: Math.max(0, v ?? 0) })} />
                             </span>
-                            <span style={vi === 0 ? minFree : (fieldMin <= 0 ? minFree : (tight ? minTight : minStyle))}>
-                              {vi === 0 ? 'no floor'
-                                : fieldMin <= 0 ? 'free'
-                                : `≥ ${Math.ceil(fieldMin * 100)}%`}
+                          ) : fmt.peso(Math.round(t[field] || 0))}
+                          {kv != null && (
+                            <span style={up ? subUp : subStyle}>
+                              {up ? '\u25B2 ' : ''}{fmt.peso(Math.round(kv))}/kWp
                             </span>
-                          </span>
-                        ) : `${(t[field] * 100).toFixed(0)}%`}
+                          )}
+                          {canEdit && fieldMin > 0 && (
+                            <span style={tight ? minTight : minStyle}>
+                              ≥ {fmt.peso(Math.ceil(fieldMin))}
+                            </span>
+                          )}
+                        </span>
                       </td>
                     );
                   })}
-                  <td style={{ ...tableStyles.td, textAlign: 'right', fontWeight: 600,
-                               color: violating ? '#B91C1C' : '#15803D' }}>
-                    {(total * 100).toFixed(0)}%
+                  <td style={{ ...tableStyles.td, textAlign: 'right', verticalAlign: 'top',
+                               fontVariantNumeric: 'tabular-nums' }}>
+                    <span style={{ display: 'inline-flex', flexDirection: 'column',
+                                   alignItems: 'flex-end', gap: 2 }}>
+                      <span style={{ fontWeight: 600, color: violating ? '#B91C1C' : '#15803D' }}>
+                        {fmt.peso(Math.round(total))}
+                      </span>
+                      <span style={tight ? minTight : subStyle}>
+                        {vi === 0 ? 'no floor' : `min ${fmt.peso(Math.ceil(required))}`}
+                      </span>
+                    </span>
                   </td>
-                  <td style={{ ...tableStyles.td, textAlign: 'right',
-                               ...(tight ? { color: '#B45309', fontWeight: 600 } : { color: COLORS.textMuted }) }}>
-                    {vi === 0 ? '—' : `${(Math.ceil(required * 100 * 100) / 100).toFixed(2)}%`}
+                  <td style={{ ...tableStyles.td, textAlign: 'right', verticalAlign: 'top',
+                               fontVariantNumeric: 'tabular-nums' }}>
+                    {fmt.peso(Math.round(total / t.minPanels))}
+                  </td>
+                  <td style={{ ...tableStyles.td, textAlign: 'right', verticalAlign: 'top',
+                               fontVariantNumeric: 'tabular-nums',
+                               ...(rowKwpUp('__total') ? { color: '#B45309', fontWeight: 600 } : {}) }}>
+                    {pw ? `${rowKwpUp('__total') ? '\u25B2 ' : ''}${fmt.peso(Math.round(total / (t.minPanels * pw / 1000)))}` : '\u2014'}
                   </td>
                   {canEdit && (
-                    <td style={{ ...tableStyles.td, textAlign: 'right' }}>
+                    <td style={{ ...tableStyles.td, textAlign: 'right', verticalAlign: 'top' }}>
                       {tiers.length > 1 && (
                         <button onClick={() => deleteRow(i)} style={tableStyles.deleteBtn}
-                                title="Remove this tier">×</button>
+                                title="Remove this ladder row">×</button>
                       )}
                     </td>
                   )}
                 </tr>
                 {violating && (
                   <tr>
-                    <td colSpan={canEdit ? 8 : 7}
+                    <td colSpan={NCOLS}
                         style={{ ...tableStyles.td, textAlign: 'left', color: '#B91C1C',
                                  fontSize: 11.5, fontWeight: 600, whiteSpace: 'normal' }}>
-                      ⚠ This tier prices a {t.minPanels}-panel system cheaper than the{' '}
-                      {sorted[vi - 1].minPanels}-panel tier before it — the total must be at least{' '}
-                      {(Math.ceil(required * 10000) / 100).toFixed(2)}%.
+                      ⚠ This row prices a {t.minPanels}-panel system's bundle cheaper than the{' '}
+                      {sorted[vi - 1].minPanels}-panel row before it — the total must be at least{' '}
+                      {fmt.peso(Math.ceil(required))}.
                       {canEdit && (
                         <button onClick={() => fixRow(i)}
                                 style={{ marginLeft: 8, border: '1px solid #B91C1C', background: '#fff',
@@ -525,13 +557,6 @@ export function CablingTierTable({ tiers, canEdit, onChange,
             );
           })}
         </tbody>
-        {/* ─── v3-178 · TEST ROW ───────────────────────────────────────────
-            Percentages only (decision 3 — no peso column). The TOTAL cell
-            calls the ENGINE's cablingTotalPct rather than summing the four
-            component cells: the two are identical by construction (see the
-            proof at cablingComponentPcts) and the smoke suite asserts it, so
-            a divergence fails the gate instead of quietly showing Anjon a
-            total his own columns contradict. */}
         {showTestRow && (
           <tbody>
             <tr>
@@ -545,24 +570,30 @@ export function CablingTierTable({ tiers, canEdit, onChange,
                   aria-label="Test panel count — preview only, does not affect the calculator"
                   onChange={e => onTestPanelCount(Math.max(1, parseInt(e.target.value, 10) || 1))} />
               </td>
-              {testPcts.map((p, ci) => (
-                <td key={CABLING_COMPONENT_FIELDS[ci]}
+              {testComps.map((c, ci) => (
+                <td key={FIELDS[ci]}
                     style={{ ...tableStyles.td, ...testCellTop, textAlign: 'right',
                              fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-                  {(p * 100).toFixed(2)}%
+                  {fmt.peso(Math.round(c))}
                 </td>
               ))}
               <td style={{ ...tableStyles.td, ...testCellTop, textAlign: 'right',
                            fontWeight: 800, color: '#15803D',
                            fontVariantNumeric: 'tabular-nums' }}>
-                {(testTotal * 100).toFixed(2)}%
+                {fmt.peso(Math.round(testTotal))}
               </td>
               <td style={{ ...tableStyles.td, ...testCellTop, textAlign: 'right',
-                           color: COLORS.textMuted }}>&mdash;</td>
-              <td style={{ ...tableStyles.td, ...testCellTop }} />
+                           fontVariantNumeric: 'tabular-nums' }}>
+                {fmt.peso(Math.round(testTotal / testN))}
+              </td>
+              <td style={{ ...tableStyles.td, ...testCellTop, textAlign: 'right',
+                           fontVariantNumeric: 'tabular-nums' }}>
+                {pw ? `${fmt.peso(Math.round(testTotal / (testN * pw / 1000)))}` : '\u2014'}
+              </td>
+              {canEdit && <td style={{ ...tableStyles.td, ...testCellTop }} />}
             </tr>
             <tr>
-              <td colSpan={8} style={{ ...tableStyles.td, textAlign: 'left', fontSize: 11,
+              <td colSpan={NCOLS} style={{ ...tableStyles.td, textAlign: 'left', fontSize: 11,
                                        color: COLORS.textMuted, fontStyle: 'italic',
                                        whiteSpace: 'normal', paddingTop: 0 }}>
                 {testCaption} Preview only &mdash; this row changes nothing in the

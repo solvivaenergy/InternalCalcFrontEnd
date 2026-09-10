@@ -58,8 +58,8 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
   const canEditMaintenance = canEditAdminSection(accessLevel, 'maintenance');
   const canEditInv = canEditInventory(accessLevel);
 
-  // Server auth is the Supabase session JWT (see paramsService.save), not a
-  // shared per-role password as in upstream v3-207.
+  // DEPLOYMENT DIVERGENCE: server auth is the Supabase session JWT attached
+  // inside paramsService.save(), not a shared per-role password as upstream.
 
   // ─── Unified state (persists across tab switches) ─────────────────────────
   const [params, setParams] = useState(() => JSON.parse(JSON.stringify(ADMIN_PARAMS)));
@@ -136,12 +136,12 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
   };
 
   // ─── Validation ───────────────────────────────────────────────────────────
-  const tiersValid = Array.isArray(params.cablingTiers) && params.cablingTiers.length > 0;
-  const tiers3pValid = Array.isArray(params.cablingTiersThreePhase) && params.cablingTiersThreePhase.length > 0;
+  const tiersValid = Array.isArray(params.cablingCogsTiers) && params.cablingCogsTiers.length > 0;
+  const tiers3pValid = Array.isArray(params.cablingCogsTiersThreePhase) && params.cablingCogsTiersThreePhase.length > 0;
   // v3-174 — monotonicity gate (shared engine helper, never a local copy):
   // no tier may price a larger system cheaper cabling than a smaller one.
-  const tiersMonotone = tiersValid ? findCablingTierViolation(params.cablingTiers) : null;
-  const tiers3pMonotone = tiers3pValid ? findCablingTierViolation(params.cablingTiersThreePhase) : null;
+  const tiersMonotone = tiersValid ? findCablingTierViolation(params.cablingCogsTiers) : null;
+  const tiers3pMonotone = tiers3pValid ? findCablingTierViolation(params.cablingCogsTiersThreePhase) : null;
   const validityDays = params.quoteValidityDays ?? DEFAULTS.quoteValidityDays;
   const validityDaysValid = Number.isInteger(params.quoteValidityDays) && params.quoteValidityDays >= 1;
   const promosValid = (() => {
@@ -276,6 +276,40 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
         `Merchant discount rate must be below ${(MDR_CEILING * 100).toFixed(1)}% — at or above it, `
         + 'the acquirer\'s cut plus the VAT remittance exceeds the whole sale and every price would be zero.' };
     }
+    // v3-211 — flat-mode option per curve (mirrors the server guard): modes
+    // exactly 'curve'|'flat'; flat values fractions in [0,1). Anchor checks
+    // above stay active in flat mode — anchors persist behind the switch.
+    for (const [k, label] of [['gmCurveModeSp', 'single-phase panels'],
+                              ['gmCurveModeTp', 'three-phase panels'],
+                              ['batteryGmMode', 'battery package']]) {
+      const v = params[k];
+      if (v !== 'curve' && v !== 'flat') {
+        return { ok: false, msg: `The ${label} margin shape must be Curve or Flat.` };
+      }
+    }
+    for (const [k, label] of [['gmFlatSp', 'single-phase panels'],
+                              ['gmFlatTp', 'three-phase panels'],
+                              ['batteryGmFlat', 'battery package']]) {
+      const v = params[k];
+      if (!Number.isFinite(v) || v < 0 || v >= 1) {
+        return { ok: false, msg: `The ${label} flat gross margin must be a fraction in [0%, 100%).` };
+      }
+    }
+    // v3-210 — the sales commission allowance: [0,1) alone, and jointly with
+    // the MDR the retention 1.12×(1−MDR) − commission − 0.12 must stay
+    // positive (mirrors the server guard).
+    {
+      const cr = params.salesCommissionRate;
+      if (!Number.isFinite(cr) || cr < 0 || cr >= 1) {
+        return { ok: false, msg: 'The sales commission allowance must be a fraction in [0%, 100%).' };
+      }
+      if (!(1.12 * (1 - mdr) - cr - 0.12 > 0)) {
+        return { ok: false, msg:
+          'Together, the MDR allowance, the sales commission allowance, and the VAT remittance would '
+          + 'take the entire sale or more — the retention 1.12 × (1 − MDR) − commission − 0.12 must stay '
+          + 'above zero, or every price in the app would be zero.' };
+      }
+    }
     // v3-199 — the Luzon free-delivery radius (mirrors the server guard).
     {
       const v = params.luzonFreeTravelKm;
@@ -302,23 +336,22 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
           `The ${label} panels-without-inverter margin must be a fraction in [0%, 100%).` };
       }
     }
-    // v3-208 — the battery curve anchors. Margins may be flat (Min ≤ Med ≤
-    // Max — production main allows a constant curve); the kWh breakpoints
-    // must be positive and strictly increasing (mirrors the server guard).
-    {
-      const { grossMarginBatteryMin: b1, grossMarginBatteryMid: b2, grossMarginBatteryMax: b3,
-              grossMarginBatteryMinKwh: c1, grossMarginBatteryMidKwh: c2, grossMarginBatteryMaxKwh: c3 } = params;
-      if (![b1, b2, b3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(b1 <= b2 && b2 <= b3)) {
-        return { ok: false, msg: 'Battery gross-margin anchors must be non-decreasing fractions in [0%, 100%): Min ≤ Med ≤ Max.' };
-      }
-      if (![c1, c2, c3].every(v => Number.isFinite(v) && v > 0) || !(c1 < c2 && c2 < c3)) {
-        return { ok: false, msg: 'Battery gross-margin capacity breakpoints (kWh) must be positive and strictly increasing: MinKwh < MidKwh < MaxKwh.' };
-      }
+    // v3-209 — the battery GM curve anchors: identical monotonicity rules on
+    // a kWh axis (mirrors the server guard). A bad set NaNs or explodes all
+    // six battery-package prices on every quote carrying a battery.
+    const { batteryGmMin: b1, batteryGmMid: b2, batteryGmMax: b3,
+            batteryGmMinKwh: w1, batteryGmMidKwh: w2, batteryGmMaxKwh: w3 } = params;
+    if (![b1, b2, b3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(b1 < b2 && b2 < b3)) {
+      return { ok: false, msg: 'Battery gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.' };
     }
-    // v3-191 — the componentMargins table (B–Q; K moved to the battery
-    // curve in v3-208). Shape + range on every entry;
+    if (![w1, w2, w3].every(v => Number.isFinite(v) && v > 0) || !(w1 < w2 && w2 < w3)) {
+      return { ok: false, msg: 'Battery gross-margin capacity breakpoints (kWh) must be positive and strictly increasing: MinKwh < MidKwh < MaxKwh.' };
+    }
+    // v3-191 — the componentMargins table. Shape + range on every entry;
     // a bad entry would price an entire component group at NaN or a >=1 margin
     // on every quote (mirrors the server guard).
+    // v3-209 — 'K' is out of the required set: the battery package rides its
+    // own kWh curve (anchors validated just above) and normalize drops K.
     const cm = params.componentMargins;
     if (!cm || typeof cm !== 'object' || Array.isArray(cm)) {
       return { ok: false, msg: 'Component gross margins are missing or malformed.' };
@@ -400,10 +433,10 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
       : { ok: false, msg: 'Default IRR & LCOE period must be 10, 15, 20, 25 or 30 years.' };
 
   const validationError =
-    !tiersValid       ? 'Single-phase cabling tier table cannot be empty — add at least one row before saving.' :
-    !tiers3pValid     ? 'Three-phase cabling tier table cannot be empty — add at least one row before saving.' :
-    tiersMonotone     ? `Single-phase cabling tier at ${tiersMonotone.minPanels} panels prices a larger system cheaper than the tier before it — its total must be at least ${(Math.ceil(tiersMonotone.requiredTotal * 10000) / 100).toFixed(2)}%.` :
-    tiers3pMonotone   ? `Three-phase cabling tier at ${tiers3pMonotone.minPanels} panels prices a larger system cheaper than the tier before it — its total must be at least ${(Math.ceil(tiers3pMonotone.requiredTotal * 10000) / 100).toFixed(2)}%.` :
+    !tiersValid       ? 'Single-phase cabling COGS ladder cannot be empty — add at least one row before saving.' :
+    !tiers3pValid     ? 'Three-phase cabling COGS ladder cannot be empty — add at least one row before saving.' :
+    tiersMonotone     ? `Single-phase cabling COGS row at ${tiersMonotone.minPanels} panels prices a larger system's bundle cheaper than the row before it — its total must be at least \u20B1${Math.ceil(tiersMonotone.requiredTotal).toLocaleString('en-PH')}.` :
+    tiers3pMonotone   ? `Three-phase cabling COGS row at ${tiers3pMonotone.minPanels} panels prices a larger system's bundle cheaper than the row before it — its total must be at least \u20B1${Math.ceil(tiers3pMonotone.requiredTotal).toLocaleString('en-PH')}.` :
     !battPkgsValid    ? 'At least one battery package must remain — add a package before saving.' :
     !validityDaysValid ? 'Quote validity must be a whole number of days, 1 or more.' :
     !promosValid.ok   ? promosValid.msg :
@@ -485,8 +518,7 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
 
       {!anyEdit && (
         <CalloutBox kind="info">
-          You are in read-only mode. Your account has view-only access — ask an
-          administrator to change your role if you need to make changes.
+          You are in read-only mode. Sign in with an editor password to make changes.
         </CalloutBox>
       )}
       {anyEdit && savingDisabled && (
@@ -596,6 +628,8 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
 // view cannot edit), per ROLE_ADMIN_SECTIONS in permissions.js.
 export function MaintenanceModeBlock({ accessLevel, savingDisabled }) {
   const canEdit = canEditAdminSection(accessLevel, 'maintenance');
+  // DEPLOYMENT DIVERGENCE: server auth is the Supabase session JWT attached
+  // inside paramsService.save(), not a shared per-role password as upstream.
   const [enabled, setEnabled] = useState(!!(ADMIN_PARAMS.gateAuthEnabled ?? true));
   const [saveStatus, setSaveStatus] = useState(null);
 

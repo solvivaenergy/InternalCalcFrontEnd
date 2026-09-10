@@ -7,7 +7,11 @@ import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
          availableBatteryPackages, availableDeliveryLocations } from '../data/adminParams.js';
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
-         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS } from '../config.js';
+         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
+         // v3-215 — the contact form mirrors the 2E location trio (D3′/D4)
+         // and composes the installation address from street + pick (D1b/D2).
+         LUZON_REGIONS, installLocationSuffix, composeInstallAddress,
+         splitInstallAddress } from '../config.js';
 import {
   computeRecommendedPanels, recommendInverters, buildPackageLineItems,
   computePaymentTerms, popularTenorsTable, systemSizing,
@@ -31,15 +35,14 @@ import Calculator from './Calculator.jsx';
 import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
+import AuthDialog from './AuthDialog.jsx';
+// ── Deployment-only modules (no upstream counterpart) ───────────────────────
 import AuditHistory from './AuditHistory.jsx';
-import MobileFlow from './MobileFlow.jsx';
-// ── Supabase user management (this deployment's replacement for upstream
-// v3-207's shared-password AuthDialog sign-in). Identity and role come from
-// Supabase Auth + public.user_roles; the staff-key password dialog is gone.
 import Login from './Login.jsx';
 import ChangePasswordDialog from './ChangePasswordDialog.jsx';
 import ResetPassword from './ResetPassword.jsx';
 import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS } from '../lib/supabaseClient.js';
+import MobileFlow from './MobileFlow.jsx';
 import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
 
 // v3-70: Step 1 defaults are now Product-settable (ADMIN_PARAMS
@@ -223,36 +226,13 @@ export function makeInitialState(kind = 'all') {
 const CONTACT_STORAGE_KEY = 'solviva_contact';
 const STATE_STORAGE_KEY   = 'solviva_state';
 const GENERATED_DATE_KEY  = 'solviva_generated_date';
-// v3-208 — stale-chunk PDF recovery. The pdfGenerator and html2canvas
-// bundles are hashed, code-split chunks loaded via import() only when a rep
-// clicks Generate PDF. If a deploy lands while a tab is open, the old chunk
-// hash no longer exists on the CDN and the import throws "Failed to fetch
-// dynamically imported module". All quote/contact/agent state is already
-// sessionStorage-persisted, so a reload is lossless: flag the pending PDF,
-// reload once onto the fresh bundle, and auto-resume generation on mount.
-const PDF_RESUME_KEY    = 'solviva_pdf_resume_after_reload';
-const CHUNK_RELOAD_KEY  = 'solviva_chunk_reloaded_at';
-// Chrome: "Failed to fetch dynamically imported module"; Firefox: "error
-// loading dynamically imported module"; Safari: "Importing a module script
-// failed." — one regex covers all three.
-function isChunkLoadError(err) {
-  const msg = String(err?.message || err || '');
-  return /dynamically imported module|module script failed/i.test(msg);
-}
 // v3-203 — the four admin tab ids, valid as activeTab values only while
 // adminAccess !== 'none'. Shared by App (content mount, bounce effect,
 // LiveTotalBar suppression) and Tabs (strip composition). Order here IS the
 // strip order after the divider.
 const ADMIN_TAB_IDS = ['inventory', 'engineering', 'product', 'finco', 'audit-history'];
-// Labels for the admin half of the v3-203 tab strip. Order here IS the strip
-// order. EVERY admin tier sees all four (v3-203 D2) — the read/write split is
-// per-section inside each tab, not per-tab.
-const ADMIN_TAB_META = [
-  { id: 'inventory',   label: 'Inventory',   admin: true },
-  { id: 'engineering', label: 'Engineering', admin: true },
-  { id: 'product',     label: 'Product',     admin: true },
-  { id: 'finco',       label: 'FinCo',       admin: true },
-];
+// Deployment-only fifth admin tab. Management ('edit') ONLY — the parameter
+// audit trail has no upstream counterpart, so it is not in ADMIN_TAB_META.
 const ADMIN_AUDIT_TAB = { id: 'audit-history', label: 'Audit History', admin: true };
 
 // v3-203 — Staff Sign-in key glyph (approved option E): the Solviva radiant
@@ -441,7 +421,7 @@ function BootSplash() {
 }
 
 function CalculatorApp({ role, repIdentity, onSignOut }) {
-  // Role → access routing. ADMIN_ROLE_TO_ACCESS maps the DB role ('admin',
+  // Role -> access routing. ADMIN_ROLE_TO_ACCESS maps the DB role ('admin',
   // 'engineering', 'product', 'inventory', 'finco') onto the calculator's
   // internal access levels; 'rep' opens the full sales-rep calculator and
   // everyone else gets the customer view.
@@ -503,19 +483,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // the same browser session but is cleared automatically when the tab/
     // browser closes — handles the shared-laptop case where one agent's
     // info shouldn't carry into another agent's later session.
-    // DEPLOYMENT DIVERGENCE: record version 3 (upstream ships 2). When a sales
-    // rep is signed in, their own name/email/mobile become the default agent
-    // identity, pulled from their Supabase account rather than typed in. The
-    // stored record also carries the rep's uid so one rep's edits never leak
-    // into another rep's session on a shared device.
-    const AGENT_RECORD_VERSION = 3;
-    const repDefault = repIdentity
-      ? {
-          name:  repIdentity.name || '',
-          email: repIdentity.email || AGENT.email,
-          phone: repIdentity.phone ? formatPhPhone(repIdentity.phone) : '',
-        }
-      : { name: AGENT.name, email: AGENT.email, phone: AGENT.phone };
+    const AGENT_RECORD_VERSION = 2;
     try {
       // One-time cleanup: prior versions stored agent details in localStorage.
       // Wipe any stale record so it doesn't persist past today's deploy.
@@ -524,35 +492,27 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       const saved = sessionStorage.getItem('solviva_agent');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Reuse a saved record only when it matches the current format AND the
-        // signed-in rep (uid). For non-rep views (no repIdentity) any
-        // current-format record is fine.
-        const sameUser = !repIdentity || parsed.uid === repIdentity.uid;
-        if (parsed._v === AGENT_RECORD_VERSION && sameUser) {
+        if (parsed._v === AGENT_RECORD_VERSION) {
           // Use saved values as-stored; do NOT use `||` fallback to AGENT
           // defaults, because that would resurrect old defaults whenever
           // the agent intentionally clears a field.
           return {
-            name:  parsed.name  ?? repDefault.name,
-            email: parsed.email ?? repDefault.email,
-            phone: parsed.phone ?? repDefault.phone,
+            name:  parsed.name  ?? '',
+            email: parsed.email ?? AGENT.email,
+            phone: parsed.phone ?? AGENT.phone,
           };
         }
-        // Stale record (old format or a different rep) — wipe it and fall
-        // through to the rep/config defaults.
+        // Stale record from an older format — wipe it and fall through to defaults.
         sessionStorage.removeItem('solviva_agent');
       }
     } catch (_) { /* ignore */ }
-    return repDefault;
+    return { name: AGENT.name, email: AGENT.email, phone: AGENT.phone };
   });
   const updateAgent = (a) => {
     setAgent(a);
     try {
-      // Persist with version sentinel + the signed-in rep's uid so future
-      // loads can tell whose edits these were.
-      sessionStorage.setItem('solviva_agent', JSON.stringify({
-        ...a, uid: repIdentity?.uid ?? null, _v: 3,
-      }));
+      // Persist with version sentinel so future code can detect this format.
+      sessionStorage.setItem('solviva_agent', JSON.stringify({ ...a, _v: 2 }));
     } catch (_) { /* ignore */ }
   };
 
@@ -705,12 +665,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // v3-203 — adminPage is GONE. The four admin surfaces are now tabs inside
   // the ONE tab strip (activeTab ∈ calculator/summary/schedule/inventory/
   // engineering/product/finco); adminAccess !== 'none' is what reveals the
-  // admin group.
-  //
-  // DEPLOYMENT DIVERGENCE: upstream seeds this to 'none' and raises it when a
-  // staff password is accepted. Here the Supabase role decides it at sign-in,
-  // so it is seeded from the role and never re-entered in-app. Sign-out (not a
-  // password prompt) is the way out.
+  // admin four. In-memory only, as before: a reload drops admin access (the
+  // rep-mode half persists via sessionStorage) and the key must be re-entered.
   const [adminAccess, setAdminAccess] = useState(initialAdminAccess);
 
   // ─── Mode: 'customer' (default, simplified public view) | 'rep' (full sales-
@@ -721,11 +677,6 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // When a user clicks it, we open AuthDialog in rep-only mode; on success
   // we flip to 'rep' and persist. The header shows a small "Rep mode" pill
   // with a "Lock" button to return to customer mode.
-  // DEPLOYMENT DIVERGENCE: a signed-in rep or admin starts in 'rep' (the full
-  // view) because Supabase already established who they are — upstream had to
-  // wait for a password. A signed-in staff user can still drop to the customer
-  // view via the header pill's Lock, and that choice persists in
-  // sessionStorage exactly as upstream.
   const [mode, setMode] = useState(() => {
     try {
       const raw = sessionStorage.getItem(MODE_STORAGE_KEY);
@@ -758,6 +709,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // dialog for every tier: rep/maintenance passwords flip mode to 'rep';
   // admin passwords flip mode to 'rep' AND set adminAccess to their level
   // (Pat's ruling: Audit included — every staff tier sees all seven tabs).
+  const [staffAuthOpen, setStaffAuthOpen] = useState(false);
 
   // Lock-confirm dialog visibility — opens when a rep clicks the "Lock"
   // button on the rep-mode pill in the header. On confirm, we reset the
@@ -938,24 +890,6 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       console.error('[generateProposalPdf]', err);
       // Restore on error
       setActiveTab(originalTab);
-      // v3-208 — a deploy landed while this tab was open and replaced the
-      // hashed pdfGenerator/html2canvas chunk the import() above points at.
-      // Reload once (sessionStorage keeps the whole quote, contacts, agent
-      // and mode, so nothing is lost) and auto-resume the PDF on the fresh
-      // bundle via PDF_RESUME_KEY. The 15s guard breaks a reload loop if
-      // the new chunk still can't be fetched (e.g. CDN mid-propagation) —
-      // second failure falls through to the plain error alert.
-      if (isChunkLoadError(err)) {
-        const lastReload = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) || 0);
-        if (Date.now() - lastReload > 15000) {
-          sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
-          sessionStorage.setItem(PDF_RESUME_KEY, '1');
-          alert('The app was updated in the background. Click OK — the page will reload once (your quote is preserved) and the PDF will generate automatically.');
-          window.location.reload();
-          return;
-        }
-        sessionStorage.removeItem(PDF_RESUME_KEY);
-      }
       alert('PDF generation failed: ' + (err?.message || 'unknown error') +
             '\n\nIf this keeps happening, please flag it to the dev team.');
     } finally {
@@ -973,19 +907,6 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     if (pdfDetailsComplete(contact, agent)) handleGeneratePdf();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfGatePending, editingContacts, contact, agent]);
-
-  // v3-208 — resume a PDF interrupted by a stale-chunk reload (see the
-  // catch in handleGeneratePdf). Waits for paramsService.load()
-  // (paramsLoading → false) so the PDF prices from live server params,
-  // exactly as a fresh click would. handleGeneratePdf re-runs its own
-  // details gate, so an incomplete contact record reopens the dialog.
-  useEffect(() => {
-    if (paramsLoading) return;
-    if (sessionStorage.getItem(PDF_RESUME_KEY) !== '1') return;
-    sessionStorage.removeItem(PDF_RESUME_KEY);
-    handleGeneratePdf();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paramsLoading]);
 
   // If a customer-mode user somehow has activeTab === 'summary' or 'schedule'
   // (e.g. a rep was just on one of those, then locked back to customer mode),
@@ -1259,15 +1180,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         (activeTab === 'summary' || activeTab === 'schedule')) {
       setActiveTab('calculator');
     }
-    // Bounce off the admin tabs only when the user holds no admin access at
-    // all. Per-tab gating is deliberately absent (v3-203 D2): every admin tier
-    // may OPEN every admin tab; what differs is whether its sections are
-    // editable or read-only.
-    if (
-      (adminAccess === 'none' || adminAccess !== 'edit') &&
-      activeTab === 'audit-history'
-    ) {
-      setActiveTab('calculator');
+    if (adminAccess !== 'edit' && activeTab === 'audit-history') {
+      setActiveTab('calculator');   // deployment-only tab, Management only
     } else if (adminAccess === 'none' && ADMIN_TAB_IDS.includes(activeTab)) {
       setActiveTab('calculator');
     }
@@ -1277,6 +1191,26 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   const resetStep2 = () => setState(s => ({ ...s, ...makeInitialState('step2') }));
   const resetStep3 = () => setState(s => ({ ...s, ...makeInitialState('step3') }));
   const updateState = (patch) => setState(s => ({ ...s, ...patch }));
+
+  // v3-214 — DU-rate lock for SALES REPS (user-directed, Pat; D1 reps only —
+  // admin tiers keep working steppers, their lever is the FinCo default
+  // itself; Coby/D3: the public keeps full control on both surfaces). THE
+  // INVARIANT, enforced here as the single mechanism rather than a one-shot
+  // revert in handleStaffAuth: in PURE REP mode (mode 'rep' with no admin
+  // tier) the DU inflation rate IS the FinCo default, always — on entry
+  // (public→rep, admin→rep via the v3-205 switcher, which already clears the
+  // tier) and continuously after, so no code path can park an override on a
+  // rep. The steppers and the reference snap button are ALSO disabled in
+  // Step 4 (belt and suspenders — the UI says why, this effect guarantees
+  // it). "Go back to Public View" resets all state (v3-207), so a pinned
+  // value never leaks into a customer session.
+  useEffect(() => {
+    if (mode === 'rep' && adminAccess === 'none') {
+      const def = ADMIN_PARAMS.duRateInflationDefault ?? 0;
+      if (state.duRateInflation !== def) updateState({ duRateInflation: def });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, adminAccess, state.duRateInflation]);
 
   const today = new Date();
   const quoteExpired = today > validUntil;
@@ -1291,11 +1225,15 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // key switches between staff views only and the dialog never reports
   // 'public'. Admin "Sign out" (AdminShell) still drops admin access and
   // keeps rep mode; the bounce effect walks the user off a hidden admin tab.
-  // DEPLOYMENT DIVERGENCE: upstream's staff-key password dialog
-  // (handleStaffKeyClick / handleStaffAuth) is removed — Supabase decides the
-  // tier at sign-in, so there is nothing to re-enter. AdminShell's "Sign out"
-  // therefore signs the user out of Supabase entirely rather than merely
-  // dropping adminAccess in memory.
+  const handleStaffKeyClick = () => setStaffAuthOpen(true);
+  const handleStaffAuth = (level) => {
+    setStaffAuthOpen(false);
+    updateMode('rep');
+    setAdminAccess(level === 'rep' ? 'none' : level);
+  };
+  // DEPLOYMENT DIVERGENCE: access derives from the Supabase role, so dropping
+  // adminAccess in memory would be re-granted on the next render. Sign out for
+  // real instead.
   const handleAdminLogout = () => { onSignOut(); };
 
   // Show a brief loading screen while parameters fetch on first load.
@@ -1316,10 +1254,29 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     );
   }
 
-  // DEPLOYMENT DIVERGENCE: upstream v3-203's unified staff sign-in dialog is
-  // removed here — <Login /> in the auth wrapper above is the single sign-in
-  // surface, and admin content still renders as tabs inside the main layout
-  // (v3-203 D2/D3), so Calculator / Summary / Schedule stay visible throughout.
+  // v3-203 — ONE Staff Sign-in dialog for every tier (D1), replacing BOTH the
+  // per-tier Admin dialog and the generic-accept Rep dialog that used to live
+  // here. Same accept set as before (v3-53 parity: all six passwords +
+  // maintenance), but the dialog now reports WHICH tier matched so an admin
+  // password buys admin tabs, not just rep view. The separate full-page admin
+  // branch is GONE (D2/D3): admin content renders as tabs inside the main
+  // layout below, so Calculator / Summary / Schedule stay visible throughout.
+  if (staffAuthOpen) {
+    return (
+      <AuthDialog
+        unified
+        editPassword={AUTH.editPassword}
+        engineeringPassword={AUTH.engineeringPassword}
+        productPassword={AUTH.productPassword}
+        fincoPassword={AUTH.fincoPassword}
+        viewPassword={AUTH.viewPassword}
+        repPassword={AUTH.repPassword}
+        testingPassword={AUTH.testingPassword}
+        onAuth={handleStaffAuth}
+        onCancel={() => setStaffAuthOpen(false)}
+      />
+    );
+  }
 
   // Maintenance-mode gate (v3-51). Three-signal activation, same as v3-50
   // ContactGate's passwordRequired derivation:
@@ -1350,7 +1307,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           agent={agent}
           brand={BRAND}
         />
-        <FooterFixed onSignOut={onSignOut} />
+        <FooterFixed onStaffKeyClick={handleStaffKeyClick} />
       </>
     );
   }
@@ -1383,8 +1340,10 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               requireForPdf={pdfGateRequired}
               mode={mode} onLockMode={() => setLockConfirmOpen(true)}
               adminAccess={adminAccess}
-              onSignOut={onSignOut}
-              leadState={state} leadModel={model} />
+              onStaffKeyClick={handleStaffKeyClick}
+              leadState={state} leadModel={model}
+              updateLeadState={updateState}
+              onSignOut={onSignOut} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             adminAccess={adminAccess}
@@ -1394,7 +1353,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         {activeTab === 'calculator' && (
           <Calculator state={state} updateState={updateState} model={model}
                       adminParams={ADMIN_PARAMS} disclaimers={DISCLAIMERS}
-                      mode={mode}
+                      mode={mode} adminAccess={adminAccess}
                       resetStep1={resetStep1} resetStep2={resetStep2} resetStep3={resetStep3}
                       onContactRep={() => {
                         // v3-98 — the contact form renders inside the header at
@@ -1433,17 +1392,17 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               <AuditHistory accessLevel={adminAccess} />
             ) : (
               <>
-                <MaintenanceModeBlock
-                  accessLevel={adminAccess}
-                  savingDisabled={!paramsLoadedFromServer}
-                />
-                <AdminShell
-                  tab={activeTab}
-                  accessLevel={adminAccess}
-                  onLogout={handleAdminLogout}
-                  savingDisabled={!paramsLoadedFromServer}
-                  calcPanelCount={model.panelCount}
-                />
+            <MaintenanceModeBlock
+              accessLevel={adminAccess}
+              savingDisabled={!paramsLoadedFromServer}
+            />
+            <AdminShell
+              tab={activeTab}
+              accessLevel={adminAccess}
+              onLogout={handleAdminLogout}
+              savingDisabled={!paramsLoadedFromServer}
+              calcPanelCount={model.panelCount}
+            />
               </>
             )}
           </>
@@ -1488,7 +1447,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       )}
       <Footer brand={BRAND}
               mode={mode} adminAccess={adminAccess}
-              onSignOut={onSignOut} />
+              onStaffKeyClick={handleStaffKeyClick} />
       {lockConfirmOpen && (
         <ConfirmDialog
           title="Return to customer view?"
@@ -1506,7 +1465,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
 function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
                   generatedDate, validUntil, quoteExpired,
                   editing, setEditing, requireForPdf,
-                  mode, onLockMode, onSignOut, leadState, leadModel }) {
+                  mode, onLockMode, onStaffKeyClick, leadState, leadModel,
+                  updateLeadState, onSignOut }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
@@ -1522,6 +1482,8 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
               agent={agent} updateAgent={updateAgent}
               mode={mode} requireAll={requireForPdf}
               leadState={leadState} leadModel={leadModel}
+              updateLeadState={updateLeadState}
+              onSignOut={onSignOut}
               onDone={() => setEditing(false)}
             />
           </div>
@@ -1579,26 +1541,21 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
               Go back to Public View
             </button>
           )}
-          {/* DEPLOYMENT DIVERGENCE: upstream v3-203/205 put a staff-key glyph
-              here that opened the shared-password dialog. Under Supabase the
-              tier is already known, so the slot carries account controls —
-              change password and sign out — instead of a view switcher. */}
-          {onSignOut && (
+          {/* v3-203 — Staff Sign-in key (glyph only; replaces BOTH the Rep
+              button and the Admin button, D1). v3-205 — ALWAYS visible
+              (Pat): the key is the universal view switcher — customer, rep,
+              or any admin tier — so it no longer hides after admin sign-in.
+              Whichever password is submitted is the view you get; an empty
+              submit exits to the public view via the reset confirmation. */}
+          {onStaffKeyClick && (
             <button
-              onClick={() => setShowChangePw(true)}
-              style={styles.signOutBtn}
-              title="Change password"
+              onClick={onStaffKeyClick}
+              style={styles.staffKeyBtn}
+              className="desktop-only-admin"
+              title="Staff sign-in"
+              aria-label="Staff sign-in"
             >
-              Change password
-            </button>
-          )}
-          {onSignOut && (
-            <button
-              onClick={onSignOut}
-              style={styles.signOutBtn}
-              title="Sign out"
-            >
-              Sign out
+              <StaffKeyIcon height={13} />
             </button>
           )}
           <button onClick={() => setEditing(true)} style={styles.editBtn}>
@@ -1636,9 +1593,33 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
 // the customer-facing render already handles agent.name === '' by
 // falling back to "Solviva Customer Support" automatically.
 function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requireAll = false,
-                           leadState, leadModel, onDone }) {
+                           leadState, leadModel, updateLeadState, onDone }) {
   const [draftCustomer, setDraftCustomer] = useState(contact);
   const [draftAgent, setDraftAgent] = useState(agent);
+
+  // ─── v3-215 — location-synced address composition (D1b/D2/D3′/D4) ─────────
+  // The form mirrors the FULL 2E trio (Installation location → Region → City)
+  // bound to the SAME state keys the pricing engine reads — updateLeadState IS
+  // App's updateState, so a city change here reprices the live quote and moves
+  // the 2E picker, and vice versa (true two-way sync, no copies). The address
+  // is stored as ONE string: street text + installLocationSuffix, composed by
+  // the shared config.js helpers. locationSync guards the whole feature so any
+  // Header instance not wired with state+updater falls back to the legacy
+  // free-text textarea unchanged.
+  const locationSync = !!leadState && typeof updateLeadState === 'function';
+  const suffix = locationSync ? installLocationSuffix(leadState, ADMIN_PARAMS) : '';
+  // Street-only draft, seeded by stripping the CURRENT suffix off the stored
+  // composed string (splitInstallAddress: pre-v3-215 or pick-changed records
+  // surface as full street text — nothing silently dropped).
+  const [draftStreet, setDraftStreet] = useState(() =>
+    splitInstallAddress(contact.installAddress, suffix));
+  // Keep draftCustomer.installAddress continuously equal to the composed
+  // string, so the untouched save()/validation/lead-payload path reads the
+  // final address exactly as it will be stored.
+  useEffect(() => {
+    if (!locationSync) return;
+    setDraftCustomer(d => ({ ...d, installAddress: composeInstallAddress(draftStreet, suffix) }));
+  }, [locationSync, draftStreet, suffix]);
   // When the form is opened by the PDF gate (requireAll), surface validation
   // immediately so the rep can see exactly which fields are missing.
   const [showErrors, setShowErrors] = useState(requireAll);
@@ -1661,7 +1642,10 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     custMobile: !isValidPhPhone(draftCustomer.mobile),
     // Install address is required at the PDF gate AND in the lead flow (it's the
     // authoritative "where" Solviva receives); optional for ordinary rep edits.
-    custAddress: (requireAll || isLeadFlow) && !draftCustomer.installAddress?.trim(),
+    // v3-215 — under locationSync the requirement keys on the STREET text: a
+    // composed "Quezon City, Metro Manila" with no street is not an address.
+    custAddress: (requireAll || isLeadFlow)
+      && !(locationSync ? draftStreet.trim() : draftCustomer.installAddress?.trim()),
     agentName:  !draftAgent.name?.trim(),
     agentEmail: !validEmail(draftAgent.email),
     agentPhone: !isValidPhPhone(draftAgent.phone),
@@ -1816,6 +1800,86 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                    placeholder="0917-867-5309" />
             {errMsg(err.custMobile, 'Enter a valid PH mobile number.')}
           </div>
+          {/* v3-215 — Proposed installation address. With locationSync the
+              block carries the mirrored 2E trio + a street-only field and a
+              live "Saves as" preview of the composed string; without it (a
+              Header not wired with state+updater) the legacy free-text
+              textarea renders exactly as before. */}
+          {locationSync ? (() => {
+            const region = LUZON_REGIONS.find(r => r.code === leadState.locationRegion) || LUZON_REGIONS[0];
+            const cities = region.cities;
+            const city   = cities.find(c => c.name === leadState.locationCity) || cities[0];
+            const isLuzon = leadState.location === 'luzon';
+            const composed = composeInstallAddress(draftStreet, suffix);
+            const subLabel = {
+              fontSize: 10.5, fontWeight: 600, color: '#9CA3AF',
+              textTransform: 'uppercase', letterSpacing: 0.4, display: 'block', marginBottom: 3,
+            };
+            return (
+              <div>
+                <span style={labelStyle}>Proposed installation address</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div>
+                    <span style={subLabel}>Installation location</span>
+                    <select style={inputStyle} value={leadState.location}
+                            onChange={e => updateLeadState({ location: e.target.value })}>
+                      <option value="luzon">Luzon main island</option>
+                      {availableDeliveryLocations(ADMIN_PARAMS).map(l => (
+                        <option key={l.id} value={l.id}>{l.label}</option>
+                      ))}
+                      <option value="other">{isCustomer ? 'Other' : 'Other (Specify in 2F)'}</option>
+                    </select>
+                  </div>
+                  {isLuzon && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div>
+                        <span style={subLabel}>Region</span>
+                        <select style={inputStyle} value={region.code}
+                                onChange={e => {
+                                  const r = LUZON_REGIONS.find(x => x.code === e.target.value) || LUZON_REGIONS[0];
+                                  const first = r.cities[0];
+                                  updateLeadState({ locationRegion: r.code, locationCity: first.name, locationKm: first.km });
+                                }}>
+                          {LUZON_REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <span style={subLabel}>City / municipality</span>
+                        <select style={inputStyle} value={city ? city.name : ''}
+                                onChange={e => {
+                                  const c = cities.find(x => x.name === e.target.value) || cities[0];
+                                  updateLeadState({ locationCity: c.name, locationKm: c.km });
+                                }}>
+                          {cities.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ fontSize: 10.5, color: '#6B7280', fontStyle: 'italic' }}>
+                    Synced with the Installation Location in Step 2E — changing it here updates your quote.
+                  </div>
+                  <div>
+                    <span style={subLabel}>{suffix ? 'Street address' : 'Full address'}</span>
+                    <textarea style={{ ...inp(err.custAddress), minHeight: 54, resize: 'vertical' }}
+                           value={draftStreet}
+                           onChange={e => setDraftStreet(e.target.value)}
+                           placeholder={suffix
+                             ? 'Unit/house no., street, barangay, ZIP'
+                             : 'Unit/house no., street, barangay, city, province, ZIP'} />
+                    {errMsg(err.custAddress, suffix
+                      ? 'Street address is required for the proposal.'
+                      : 'Installation address is required for the proposal.')}
+                  </div>
+                  {suffix && composed ? (
+                    <div style={{ fontSize: 11.5, color: '#374151', background: '#F3F4F6',
+                                  borderRadius: 6, padding: '6px 10px' }}>
+                      Saves as: <span style={{ fontWeight: 600 }}>{composed}</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })() : (
           <div>
             <span style={labelStyle}>Proposed installation address</span>
             <textarea style={{ ...inp(err.custAddress), minHeight: 54, resize: 'vertical' }}
@@ -1824,6 +1888,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                    placeholder="Unit/house no., street, barangay, city, province, ZIP" />
             {errMsg(err.custAddress, 'Installation address is required for the proposal.')}
           </div>
+          )}
         </div>
       </div>
 
@@ -2037,17 +2102,14 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
       { id: 'summary', label: 'Summary' },
       { id: 'schedule', label: 'Schedule of Payments' },
     ] : []),
-    // v3-203 (D2) — every admin tier sees ALL FOUR admin tabs; the strip is
-    // deliberately NOT role-gated (same model as the deleted AdminTabs, v3-54).
-    // Access control happens one level down: each tab renders every section,
-    // and sections outside the role's allowlist come up READ-ONLY via
-    // canEditAdminSection() / canEditInventory(). So Engineering can read the
-    // Product and FinCo tabs but not edit them, and vice versa. The backend
-    // re-enforces the same allowlist on PUT /api/parameters, so read-only here
-    // is a UI affordance over a real server-side boundary, not the boundary.
-    ...(adminAccess !== 'none'
-      ? [...ADMIN_TAB_META, ...(adminAccess === 'edit' ? [ADMIN_AUDIT_TAB] : [])]
-      : []),
+    ...(adminAccess !== 'none' ? [
+      { id: 'inventory',   label: 'Inventory',   admin: true },
+      { id: 'engineering', label: 'Engineering', admin: true },
+      { id: 'product',     label: 'Product',     admin: true },
+      { id: 'finco',       label: 'FinCo',       admin: true },
+      // Deployment-only, Management tier only.
+      ...(adminAccess === 'edit' ? [ADMIN_AUDIT_TAB] : []),
+    ] : []),
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
   const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;
@@ -2264,24 +2326,25 @@ const confirmStyles = {
   },
 };
 
-function Footer({ brand, mode, adminAccess = 'none', onSignOut }) {
+function Footer({ brand, mode, adminAccess = 'none', onStaffKeyClick }) {
   return (
     <footer style={styles.footer}>
       <div className="footer-inner" style={styles.footerInner}>
         <div style={{ opacity: 0.7, fontSize: 12 }}>
           © 2026 {brand.legalEntity}. An AboitizPower Company.
         </div>
-        {/* DEPLOYMENT DIVERGENCE: upstream's footer staff key is replaced by a
-            plain sign-out, shown only in the customer view (in rep/admin views
-            the header already carries the account controls). */}
-        {mode === 'customer' && adminAccess === 'none' && onSignOut && (
+        {/* v3-203 — Staff Sign-in key (glyph only), same visibility rule as
+            the header key: shown until an admin tier is signed in. Once in
+            rep mode the header pill's Lock is the exit, as before. */}
+        {mode === 'customer' && adminAccess === 'none' && onStaffKeyClick && (
           <button
-            onClick={onSignOut}
-            style={styles.signOutBtn}
+            onClick={onStaffKeyClick}
+            style={styles.staffKeyBtn}
             className="desktop-only-admin"
-            title="Sign out"
+            title="Staff sign-in"
+            aria-label="Staff sign-in"
           >
-            Sign out
+            <StaffKeyIcon height={13} />
           </button>
         )}
       </div>
@@ -2295,16 +2358,15 @@ function Footer({ brand, mode, adminAccess = 'none', onSignOut }) {
 //
 // Hidden on mobile via the desktop-only-admin CSS class — admin features
 // are desktop-only per product direction.
-function FooterFixed({ onSignOut }) {
-  // DEPLOYMENT DIVERGENCE: upstream's gate-corner staff key becomes a sign-out
-  // — the maintenance gate is reached only while signed in under Supabase.
+function FooterFixed({ onStaffKeyClick }) {
+  // v3-203 — the gate corner's 🔒 Rep + Admin pair collapses to the ONE
+  // staff key, routing to the same unified dialog as the header/footer keys.
   return (
     <div className="desktop-only-admin" style={styles.footerFixed}>
-      {onSignOut && (
-        <button onClick={onSignOut} style={styles.agentLink} title="Sign out">
-          Sign out
-        </button>
-      )}
+      <button onClick={onStaffKeyClick} style={styles.agentLink}
+              title="Staff sign-in" aria-label="Staff sign-in">
+        <StaffKeyIcon height={13} />
+      </button>
     </div>
   );
 }
@@ -2385,14 +2447,6 @@ const styles = {
     cursor: 'pointer',
     fontFamily: 'inherit',
     marginLeft: 2,
-  },
-  // Supabase account controls (Change password / Sign out) — this deployment's
-  // replacement for the upstream staff-key glyph. Same discreet treatment.
-  signOutBtn: {
-    background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
-    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',
-    cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-    flexShrink: 0,
   },
   // v3-203 — Staff Sign-in key button (header + footer). Same discreet
   // treatment the old Rep lock had: hairline border, muted stroke; glyph

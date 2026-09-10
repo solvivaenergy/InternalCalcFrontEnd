@@ -50,6 +50,7 @@ export default function Calculator({
   state, updateState, model,
   adminParams, disclaimers,
   mode = 'rep',
+  adminAccess = 'none',   // v3-214 — threads to Step4Returns for the rep DU lock
   resetStep1, resetStep2, resetStep3,
   onContactRep,
 }) {
@@ -93,6 +94,7 @@ export default function Calculator({
             disclaimers={disclaimers}
             adminParams={adminParams}
             mode={mode}
+            adminAccess={adminAccess}
           />
         </div>
       </div>

@@ -29,9 +29,8 @@
 import React from 'react';
 import { COLORS, NumberInput, Select } from './ui.jsx';
 import {
-  grossMarginCurve, grossMarginNoInverter, componentMarginFor, directFromCogs,
-  cablingTotalPct, availableInverters, recommendInverters, COMPONENT_MARGIN_IDS,
-  batteryMarginCurve,
+  grossMarginCurve, grossMarginNoInverter, batteryGrossMarginCurve, componentMarginFor, directFromCogs,
+  cablingCogsTotal, availableInverters, recommendInverters, COMPONENT_MARGIN_IDS,
 } from '../lib/calculations.js';
 import { PANEL_SETTINGS } from '../data/inventory.js';
 import {
@@ -164,26 +163,32 @@ export default function ProductTab({
             Pat). The curve applies ONLY to the Solar Panels line, and ONLY
             when panels are purchased with at least one inverter; Follow/Fixed
             for every other component applies on that same full-system shape
-            only, with `otherwise` covering every order missing either leg.
-            v3-208 — the battery package now rides its OWN curve over total
-            battery kWh (production-main rule), independent of the solar
-            array's size — see the Battery package curve section below. */}
+            only, with `otherwise` covering every order missing either leg. */}
         <div style={{ marginBottom: 12, fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
           Each phase has its own gross-margin curve over rated capacity (kWp), fitted through its
           Min / Med / Max anchors. A curve applies <strong>only to the Solar Panels line, and only
           when the panels are purchased with at least one inverter</strong>. A panels-only order —
           extra panels with no inverter — never rides the curve: it prices at the
-          panels-without-inverter margin below. Every other component carries its own setting in
+          panels-without-inverter margin below. The <strong>Battery Package</strong> rides its own
+          curve over the order&rsquo;s total selected battery kWh — in every order shape, one curve
+          for both phases, covering all six package prices including both labor variants — set by
+          its own anchors below. Every other component carries its own setting in
           the table: on an order with <strong>both panels and an inverter</strong> it either
           follows the panels&rsquo; curve (of the order&rsquo;s phase) or uses its own fixed
-          margin; in every other case it uses its Otherwise margin. <strong>The battery package
-          is the exception</strong> — it ignores the panels curves and the component table
-          entirely and prices off its own curve below, at the order&rsquo;s total battery kWh.
+          margin; in every other case it uses its Otherwise margin.
         </div>
-        <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
-                      textTransform: 'uppercase', letterSpacing: '0.03em', margin: '14px 0 2px' }}>
-          Single-phase panels curve
-        </div>
+        <CurveModeHeading text="Single-phase panels curve"
+               mode={params.gmCurveModeSp}
+               onMode={v => updateParam('margins', 'gmCurveModeSp', v)}
+               canEdit={canEditSection('margins')} />
+        {params.gmCurveModeSp === 'flat' ? (
+          <Param label="Flat gross margin (single-phase panels)" isPct step={0.5} min={0} max={99}
+                 value={params.gmFlatSp}
+                 onChange={v => updateParam('margins', 'gmFlatSp', v)}
+                 canEdit={canEditSection('margins')}
+                 hint="One margin at every rated capacity. The curve anchors are kept and restored exactly if you switch back to Curve." />
+        ) : (
+          <React.Fragment>
         <MarginAnchorRow label="Min gross margin (small systems)"
                hint="Margin floor, applied at and below its capacity."
                marginValue={params.grossMarginMin} onMargin={v => updateParam('margins', 'grossMarginMin', v)}
@@ -199,10 +204,25 @@ export default function ProductTab({
                marginValue={params.grossMarginMax} onMargin={v => updateParam('margins', 'grossMarginMax', v)}
                kwpValue={params.grossMarginMaxKwp} onKwp={v => updateParam('margins', 'grossMarginMaxKwp', v)}
                canEdit={canEditSection('margins')} />
-        <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
-                      textTransform: 'uppercase', letterSpacing: '0.03em', margin: '14px 0 2px' }}>
-          Three-phase panels curve
-        </div>
+          </React.Fragment>
+        )}
+        <Param label="Single-phase panels without an inverter" isPct step={0.5} min={0} max={99}
+               value={params.grossMarginNoInverterSp}
+               onChange={v => updateParam('margins', 'grossMarginNoInverterSp', v)}
+               canEdit={canEditSection('margins')}
+               hint="Margin for the single-phase Solar Panels line whenever the order carries no inverter — extra-panels-only purchases, panels-only expansions, panels quoted during an inverter stock-out. The curve never applies to these orders." />
+        <CurveModeHeading text="Three-phase panels curve"
+               mode={params.gmCurveModeTp}
+               onMode={v => updateParam('margins', 'gmCurveModeTp', v)}
+               canEdit={canEditSection('margins')} />
+        {params.gmCurveModeTp === 'flat' ? (
+          <Param label="Flat gross margin (three-phase panels)" isPct step={0.5} min={0} max={99}
+                 value={params.gmFlatTp}
+                 onChange={v => updateParam('margins', 'gmFlatTp', v)}
+                 canEdit={canEditSection('margins')}
+                 hint="One margin at every rated capacity. The curve anchors are kept and restored exactly if you switch back to Curve." />
+        ) : (
+          <React.Fragment>
         <MarginAnchorRow label="Min gross margin (small systems)"
                hint="Margin floor, applied at and below its capacity."
                marginValue={params.grossMarginMinTp} onMargin={v => updateParam('margins', 'grossMarginMinTp', v)}
@@ -218,57 +238,72 @@ export default function ProductTab({
                marginValue={params.grossMarginMaxTp} onMargin={v => updateParam('margins', 'grossMarginMaxTp', v)}
                kwpValue={params.grossMarginMaxKwpTp} onKwp={v => updateParam('margins', 'grossMarginMaxKwpTp', v)}
                canEdit={canEditSection('margins')} />
-        <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
-                      textTransform: 'uppercase', letterSpacing: '0.03em', margin: '14px 0 2px' }}>
-          Battery package curve
-        </div>
-        <div style={{ marginBottom: 4, fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
-          The battery package rides its <strong>own</strong> curve over the order&rsquo;s
-          <strong> total battery kWh</strong> — not the solar array&rsquo;s kWp — so a panel-light,
-          battery-heavy order still gets the right battery margin. It applies to all six battery
-          package prices (units, rack, ATS, critical loads, both labor variants), whatever the
-          panels/inverter shape of the order; a no-battery order prices at the Max anchor
-          (ceiling).
-        </div>
-        <MarginAnchorRow label="Min gross margin (small batteries)"
-               hint="Margin floor, applied at and below its capacity."
-               unit="kWh"
-               marginValue={params.grossMarginBatteryMin} onMargin={v => updateParam('margins', 'grossMarginBatteryMin', v)}
-               kwpValue={params.grossMarginBatteryMinKwh} onKwp={v => updateParam('margins', 'grossMarginBatteryMinKwh', v)}
-               canEdit={canEditSection('margins')} />
-        <MarginAnchorRow label="Med gross margin (mid batteries)"
-               hint="Sets the curvature between min and max."
-               unit="kWh"
-               marginValue={params.grossMarginBatteryMid} onMargin={v => updateParam('margins', 'grossMarginBatteryMid', v)}
-               kwpValue={params.grossMarginBatteryMidKwh} onKwp={v => updateParam('margins', 'grossMarginBatteryMidKwh', v)}
-               canEdit={canEditSection('margins')} />
-        <MarginAnchorRow label="Max gross margin (large batteries)"
-               hint="Margin ceiling, applied at and above its capacity — and on no-battery orders."
-               unit="kWh"
-               marginValue={params.grossMarginBatteryMax} onMargin={v => updateParam('margins', 'grossMarginBatteryMax', v)}
-               kwpValue={params.grossMarginBatteryMaxKwh} onKwp={v => updateParam('margins', 'grossMarginBatteryMaxKwh', v)}
-               canEdit={canEditSection('margins')} />
-        <Param label="Single-phase panels without an inverter" isPct step={0.5} min={0} max={99}
-               value={params.grossMarginNoInverterSp}
-               onChange={v => updateParam('margins', 'grossMarginNoInverterSp', v)}
-               canEdit={canEditSection('margins')}
-               hint="Margin for the single-phase Solar Panels line whenever the order carries no inverter — extra-panels-only purchases, panels-only expansions, panels quoted during an inverter stock-out. The curve never applies to these orders." />
+          </React.Fragment>
+        )}
+        {/* v3-209 — battery GM curve anchors (user-directed, Pat; D1–D5).
+            One curve over the order's total selected battery kWh, applied in
+            every order shape and both phases, covering all six battery
+            package prices including both labor variants. */}
         <Param label="Three-phase panels without an inverter" isPct step={0.5} min={0} max={99}
                value={params.grossMarginNoInverterTp}
                onChange={v => updateParam('margins', 'grossMarginNoInverterTp', v)}
                canEdit={canEditSection('margins')}
                hint="Same rule for the three-phase Solar Panels line." />
+        <CurveModeHeading text="Battery package curve"
+               mode={params.batteryGmMode}
+               onMode={v => updateParam('margins', 'batteryGmMode', v)}
+               canEdit={canEditSection('margins')} />
+        {params.batteryGmMode === 'flat' ? (
+          <Param label="Flat gross margin (battery package)" isPct step={0.5} min={0} max={99}
+                 value={params.batteryGmFlat}
+                 onChange={v => updateParam('margins', 'batteryGmFlat', v)}
+                 canEdit={canEditSection('margins')}
+                 hint="One margin at every total battery kWh, in every order shape. The curve anchors are kept and restored exactly if you switch back to Curve." />
+        ) : (
+          <React.Fragment>
+        <MarginAnchorRow label="Min gross margin (small batteries)" unit="kWh"
+               hint="Margin floor, applied at and below its total battery kWh."
+               marginValue={params.batteryGmMin} onMargin={v => updateParam('margins', 'batteryGmMin', v)}
+               kwpValue={params.batteryGmMinKwh} onKwp={v => updateParam('margins', 'batteryGmMinKwh', v)}
+               canEdit={canEditSection('margins')} />
+        <MarginAnchorRow label="Med gross margin (mid batteries)" unit="kWh"
+               hint="Sets the curvature between min and max."
+               marginValue={params.batteryGmMid} onMargin={v => updateParam('margins', 'batteryGmMid', v)}
+               kwpValue={params.batteryGmMidKwh} onKwp={v => updateParam('margins', 'batteryGmMidKwh', v)}
+               canEdit={canEditSection('margins')} />
+        <MarginAnchorRow label="Max gross margin (large batteries)" unit="kWh"
+               hint="Margin ceiling, applied at and above its total battery kWh."
+               marginValue={params.batteryGmMax} onMargin={v => updateParam('margins', 'batteryGmMax', v)}
+               kwpValue={params.batteryGmMaxKwh} onKwp={v => updateParam('margins', 'batteryGmMaxKwh', v)}
+               canEdit={canEditSection('margins')} />
+          </React.Fragment>
+        )}
+        {/* v3-210 — D5 (Pat, from a screenshot): the two gross-up allowances
+            get their OWN labeled block with a hairline divider, so the MDR no
+            longer reads as part of the Battery package curve above it. */}
+        <div style={{ borderTop: '1px solid #E5E7EB', marginTop: 18, paddingTop: 14 }}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+                        textTransform: 'uppercase', letterSpacing: '0.03em', margin: '0 0 2px' }}>
+            Price gross-up allowances
+          </div>
+        </div>
         <Param label="Allowance for Merchant Discount Rate" isPct step={0.01} min={0} max={89}
                value={params.merchantDiscountRate}
                onChange={v => updateParam('margins', 'merchantDiscountRate', v)}
                canEdit={canEditSection('margins')}
-               hint="The acquirer's cut. Taken from the VAT-inclusive amount the customer is charged, while the full output VAT is still remitted — so the effective retention is 1.12 × (1 − MDR) − 0.12, not (1 − MDR)." />
+               hint="The acquirer's cut. Taken from the VAT-inclusive amount the customer is charged, while the full output VAT is still remitted — so the retention is 1.12 × (1 − MDR) − commission − 0.12, not (1 − MDR)." />
+        <Param label="Allowance for Sales Commissions" isPct step={0.01} min={0} max={89}
+               value={params.salesCommissionRate}
+               onChange={v => updateParam('margins', 'salesCommissionRate', v)}
+               canEdit={canEditSection('margins')}
+               hint="Charged on the VAT-EXCLUSIVE direct purchase price — unlike the MDR — so it enters the retention without the 1.12 factor. Every COGS-derived price grosses up to fund it, protecting the set gross margin. Together with the MDR the retention 1.12 × (1 − MDR) − commission − 0.12 must stay above zero." />
         <ComponentMarginsTable componentMargins={params.componentMargins}
                                canEdit={canEditSection('margins')}
                                mdr={params.merchantDiscountRate}
+                               comm={params.salesCommissionRate}
                                onChange={next => updateParam('margins', 'componentMargins', next)} />
         <GrossMarginPreview params={params} />
-        <BatteryMarginPreview params={params} />
+        <BatteryGmPreview params={params} />
         <FullSystemPerKwpChart params={params} phase="single" />
         <FullSystemPerKwpChart params={params} phase="three" />
       </Section>
@@ -286,6 +321,32 @@ export default function ProductTab({
 }
 
 
+// ─── v3-211 · Curve-block heading with the Curve/Flat shape select ───────────
+// D3 (Pat): the select sits beside the heading; Flat hides the three anchor
+// rows below it and shows a single Flat-gross-margin row in their place.
+// Anchors persist in the blob either way.
+function CurveModeHeading({ text, mode, onMode, canEdit }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  margin: '14px 0 2px' }}>
+      <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+                    textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+        {text}
+      </div>
+      {canEdit ? (
+        <Select value={mode === 'flat' ? 'flat' : 'curve'}
+                onChange={onMode} width={128}
+                options={[{ value: 'curve', label: 'Curve' },
+                          { value: 'flat',  label: 'Flat margin' }]} />
+      ) : (
+        <span style={{ fontSize: 12, color: '#6B7280' }}>
+          {mode === 'flat' ? 'Flat margin' : 'Curve'}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // v3-92/93 → v3-191 — Gross margin vs solar array capacity (kWp), BOTH phases.
 // The GENLINV curves the pricing engine actually calls (grossMarginCurve with
 // each phase), anchors marked per phase. Axes auto-scale to whichever anchor
@@ -301,8 +362,15 @@ function GrossMarginPreview({ params }) {
     && s.q1 < s.q2 && s.q2 < s.q3 && s.x1 < s.x2 && s.x2 < s.x3;
   const sp = setOf(false), tp = setOf(true);
   const spOk = okOf(sp), tpOk = okOf(tp);
+  // v3-211 — flat mode draws through the SAME shipped fn (a horizontal line)
+  // regardless of anchor validity; anchor dots render only in curve mode,
+  // since retained anchors need not lie on a flat line.
+  const spFlat = params.gmCurveModeSp === 'flat';
+  const tpFlat = params.gmCurveModeTp === 'flat';
+  const spDraw = spFlat ? Number.isFinite(params.gmFlatSp) : spOk;
+  const tpDraw = tpFlat ? Number.isFinite(params.gmFlatTp) : tpOk;
 
-  if (!spOk && !tpOk) {
+  if (!spDraw && !tpDraw) {
     return (
       <div style={rsStyles.warn}>
         Anchors must satisfy <strong>Min &lt; Mid &lt; Max</strong> — for both the margins and the
@@ -311,11 +379,16 @@ function GrossMarginPreview({ params }) {
     );
   }
 
-  const xHi = Math.max(spOk ? sp.x3 + (sp.x3 - sp.x1) * 0.12 : 0,
-                       tpOk ? tp.x3 + (tp.x3 - tp.x1) * 0.12 : 0);
+  const xHi0 = Math.max(spOk ? sp.x3 + (sp.x3 - sp.x1) * 0.12 : 0,
+                        tpOk ? tp.x3 + (tp.x3 - tp.x1) * 0.12 : 0);
+  const xHi = xHi0 > 0 ? xHi0 : 30;   // v3-211 — flat-only with no valid anchors
   const [xMin, xMax] = niceAxis(0, xHi, 7);
-  const qLo = Math.min(spOk ? sp.q1 : Infinity, tpOk ? tp.q1 : Infinity);
-  const qHi = Math.max(spOk ? sp.q3 : -Infinity, tpOk ? tp.q3 : -Infinity);
+  const qLo = Math.min(spOk ? sp.q1 : Infinity, tpOk ? tp.q1 : Infinity,
+                       spFlat && spDraw ? params.gmFlatSp : Infinity,
+                       tpFlat && tpDraw ? params.gmFlatTp : Infinity);
+  const qHi = Math.max(spOk ? sp.q3 : -Infinity, tpOk ? tp.q3 : -Infinity,
+                       spFlat && spDraw ? params.gmFlatSp : -Infinity,
+                       tpFlat && tpDraw ? params.gmFlatTp : -Infinity);
   const yPad = (qHi - qLo) * 100 * 0.10 || 1;
   const [yMin, yMax, yStep] = niceAxis(qLo * 100 - yPad, qHi * 100 + yPad, 6);
   const yTicks = [];
@@ -325,8 +398,8 @@ function GrossMarginPreview({ params }) {
   const data = Array.from({ length: N + 1 }, (_, i) => {
     const kwp = xMin + (xMax - xMin) * i / N;
     const pt = { kwp: +kwp.toFixed(3) };
-    if (spOk) pt.sp = +(grossMarginCurve(kwp, params, 'single') * 100).toFixed(3);
-    if (tpOk) pt.tp = +(grossMarginCurve(kwp, params, 'three') * 100).toFixed(3);
+    if (spDraw) pt.sp = +(grossMarginCurve(kwp, params, 'single') * 100).toFixed(3);
+    if (tpDraw) pt.tp = +(grossMarginCurve(kwp, params, 'three') * 100).toFixed(3);
     return pt;
   });
   const noInvSp = grossMarginNoInverter(params, 'single');
@@ -343,8 +416,10 @@ function GrossMarginPreview({ params }) {
         phase&rsquo;s no-inverter margin ({(noInvSp * 100).toFixed(1)}% single-phase,
         {' '}{(noInvTp * 100).toFixed(1)}% three-phase); every order missing panels or an inverter
         uses each component&rsquo;s Otherwise margin.
-        {!spOk && ' (Single-phase anchors invalid — that curve is hidden.)'}
-        {!tpOk && ' (Three-phase anchors invalid — that curve is hidden.)'}
+        {spFlat && ' Single-phase is set to a FLAT margin.'}
+        {tpFlat && ' Three-phase is set to a FLAT margin.'}
+        {!spOk && !spFlat && ' (Single-phase anchors invalid — that curve is hidden.)'}
+        {!tpOk && !tpFlat && ' (Three-phase anchors invalid — that curve is hidden.)'}
       </div>
       <div style={{ height: 280 }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -358,13 +433,13 @@ function GrossMarginPreview({ params }) {
             <Tooltip formatter={(v, name) => [`${(+v).toFixed(2)}%`, name === 'sp' ? 'Single-phase' : 'Three-phase']}
                      labelFormatter={l => `${(+l).toFixed(2)} kWp`} />
             <Legend formatter={v => (v === 'sp' ? 'Single-phase' : 'Three-phase')} />
-            {spOk && <Line type="monotone" dataKey="sp" stroke="#1b8a5a" strokeWidth={2} dot={false} isAnimationActive={false} />}
-            {tpOk && <Line type="monotone" dataKey="tp" stroke="#B45309" strokeWidth={2} dot={false} isAnimationActive={false} />}
-            {spOk && [[sp.x1, sp.q1], [sp.x2, sp.q2], [sp.x3, sp.q3]].map(([x, q], i) => (
+            {spDraw && <Line type="monotone" dataKey="sp" stroke="#1b8a5a" strokeWidth={2} dot={false} isAnimationActive={false} />}
+            {tpDraw && <Line type="monotone" dataKey="tp" stroke="#B45309" strokeWidth={2} dot={false} isAnimationActive={false} />}
+            {spOk && !spFlat && [[sp.x1, sp.q1], [sp.x2, sp.q2], [sp.x3, sp.q3]].map(([x, q], i) => (
               <ReferenceDot key={`sp${i}`} x={x} y={+(q * 100).toFixed(2)} r={4.5}
                             fill="#1b8a5a" stroke="#fff" strokeWidth={1.5} />
             ))}
-            {tpOk && [[tp.x1, tp.q1], [tp.x2, tp.q2], [tp.x3, tp.q3]].map(([x, q], i) => (
+            {tpOk && !tpFlat && [[tp.x1, tp.q1], [tp.x2, tp.q2], [tp.x3, tp.q3]].map(([x, q], i) => (
               <ReferenceDot key={`tp${i}`} x={x} y={+(q * 100).toFixed(2)} r={4.5}
                             fill="#B45309" stroke="#fff" strokeWidth={1.5} />
             ))}
@@ -375,45 +450,60 @@ function GrossMarginPreview({ params }) {
   );
 }
 
-// ─── v3-208 · Battery margin vs total battery capacity (kWh) ─────────────────
-// The battery package's own curve, plotted from the same anchors the engine
-// calls (batteryMarginCurve). Same visual idiom as GrossMarginPreview: anchors
-// outlined, flat at floor and ceiling. Axis runs 0 → 15% past the Max anchor.
-function BatteryMarginPreview({ params }) {
-  const q1 = params.grossMarginBatteryMin, q2 = params.grossMarginBatteryMid,
-        q3 = params.grossMarginBatteryMax;
-  const x1 = params.grossMarginBatteryMinKwh, x2 = params.grossMarginBatteryMidKwh,
-        x3 = params.grossMarginBatteryMaxKwh;
-  const ok = [q1, q2, q3, x1, x2, x3].every(Number.isFinite)
-    && q1 <= q2 && q2 <= q3 && x1 < x2 && x2 < x3;
-  if (!ok) {
+// ─── v3-209 · Battery GM curve preview ───────────────────────────────────────
+// The GENLINV curve the engine actually calls (batteryGrossMarginCurve) over
+// the order's total selected battery kWh. One curve, both phases, every order
+// shape. Derived from the anchors above; nothing here is stored. Mirrors
+// GrossMarginPreview's invalid-anchor behavior: a broken set shows the rule
+// instead of a blank chart.
+function BatteryGmPreview({ params }) {
+  const q1 = params.batteryGmMin,    q2 = params.batteryGmMid,    q3 = params.batteryGmMax;
+  const x1 = params.batteryGmMinKwh, x2 = params.batteryGmMidKwh, x3 = params.batteryGmMaxKwh;
+  const okB = [q1, q2, q3, x1, x2, x3].every(Number.isFinite)
+    && q1 < q2 && q2 < q3 && x1 < x2 && x2 < x3;
+  // v3-211 — flat mode: draw the shipped fn's horizontal line regardless of
+  // anchor validity; suppress the anchor dots (retained anchors need not lie
+  // on the flat line).
+  const bFlat = params.batteryGmMode === 'flat';
+  const bDraw = bFlat ? Number.isFinite(params.batteryGmFlat) : okB;
+
+  if (!bDraw) {
     return (
       <div style={rsStyles.warn}>
-        Battery anchors must satisfy <strong>Min ≤ Med ≤ Max</strong> on the margins and
-        <strong> Min &lt; Mid &lt; Max</strong> on the kWh capacities for the curve to be defined.
-        Fix the anchors above to see it.
+        Battery anchors must satisfy <strong>Min &lt; Mid &lt; Max</strong> — for both the margins
+        and the kWh breakpoints — for the battery curve to be defined. Fix the anchors above to
+        see it.
       </div>
     );
   }
-  const xHi = x3 + (x3 - x1) * 0.15;
-  const [xMin, xMax] = niceAxis(0, xHi, 7);
-  const yPad = (q3 - q1) * 100 * 0.10 || 1;
-  const [yMin, yMax, yStep] = niceAxis(q1 * 100 - yPad, q3 * 100 + yPad, 6);
+
+  const [xMin, xMax] = niceAxis(0, okB ? x3 + (x3 - x1) * 0.12 : 20, 7);
+  const fLo = bFlat ? params.batteryGmFlat : Infinity;
+  const fHi = bFlat ? params.batteryGmFlat : -Infinity;
+  const qLoB = Math.min(okB ? q1 : Infinity, fLo), qHiB = Math.max(okB ? q3 : -Infinity, fHi);
+  const yPad = (qHiB - qLoB) * 100 * 0.10 || 1;
+  const [yMin, yMax, yStep] = niceAxis(qLoB * 100 - yPad, qHiB * 100 + yPad, 6);
   const yTicks = [];
   for (let t = yMin; t <= yMax + 1e-9; t += yStep) yTicks.push(+t.toFixed(2));
+
   const N = 80;
   const data = Array.from({ length: N + 1 }, (_, i) => {
     const kwh = xMin + (xMax - xMin) * i / N;
-    return { kwh: +kwh.toFixed(3), gm: +(batteryMarginCurve(kwh, params) * 100).toFixed(3) };
+    return { kwh: +kwh.toFixed(3),
+             gm: +(batteryGrossMarginCurve(kwh, params) * 100).toFixed(3) };
   });
+
   return (
     <div style={rsStyles.wrap}>
       <div style={rsStyles.caption}>
-        Battery gross margin vs total battery capacity. Derived from the anchors above; nothing
-        here is stored. Outlined points are the anchors; the curve is flat at its floor and
-        ceiling. It prices every battery package line at the order&rsquo;s total battery kWh,
-        independent of the solar array&rsquo;s size or phase; an order with no battery prices at
-        the Max anchor ({(q3 * 100).toFixed(1)}%).
+        <strong>Battery package gross margin</strong> vs the order&rsquo;s total selected battery
+        kWh. One curve for both phases; it prices all six battery package prices — equipment,
+        materials, and both labor variants — in every order shape, with or without panels or an
+        inverter.{' '}
+        {bFlat
+          ? 'Set to a FLAT margin — one value at every total battery kWh.'
+          : 'Flat at its floor below the min anchor and at its ceiling above the max anchor.'}
+        {' '}Derived from the settings above; nothing here is stored.
       </div>
       <div style={{ height: 240 }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -424,12 +514,12 @@ function BatteryMarginPreview({ params }) {
                    label={{ value: 'Total battery capacity (kWh)', position: 'insideBottom', offset: -4, fontSize: 11 }} />
             <YAxis type="number" domain={[yMin, yMax]} ticks={yTicks} tick={{ fontSize: 11 }}
                    tickFormatter={v => `${v}%`} width={44} />
-            <Tooltip formatter={(v) => [`${(+v).toFixed(2)}%`, 'Battery']}
-                     labelFormatter={l => `${(+l).toFixed(1)} kWh`} />
-            <Line type="monotone" dataKey="gm" stroke="#7C3AED" strokeWidth={2} dot={false} isAnimationActive={false} />
-            {[[x1, q1], [x2, q2], [x3, q3]].map(([x, q], i) => (
+            <Tooltip formatter={(v) => [`${(+v).toFixed(2)}%`, 'Battery GM']}
+                     labelFormatter={l => `${(+l).toFixed(2)} kWh`} />
+            <Line type="monotone" dataKey="gm" stroke="#0F766E" strokeWidth={2} dot={false} isAnimationActive={false} />
+            {okB && !bFlat && [[x1, q1], [x2, q2], [x3, q3]].map(([x, q], i) => (
               <ReferenceDot key={`b${i}`} x={x} y={+(q * 100).toFixed(2)} r={4.5}
-                            fill="#7C3AED" stroke="#fff" strokeWidth={1.5} />
+                            fill="#0F766E" stroke="#fff" strokeWidth={1.5} />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -442,11 +532,9 @@ function BatteryMarginPreview({ params }) {
 // Edits ONE structured param (componentMargins). Follow/Fixed applies on
 // full-system orders only (panels + inverter); Otherwise covers every order
 // missing either leg. N never prices on a full system, so it carries a single
-// margin and shows no mode control. v3-208 — K (Battery Package) is no longer
-// in this table: the battery rides its own kWh curve above. Margins are stored
-// as fractions and edited in whole/half percent, clamped to [0, 99] — the
-// [0,1) save rule is enforced by the pre-save validator and the server, this
-// clamp is the input layer.
+// margin and shows no mode control. Margins are stored as fractions and edited
+// in whole/half percent, clamped to [0, 99] — the [0,1) save rule is enforced
+// by the pre-save validator and the server, this clamp is the input layer.
 const COMPONENT_LABELS = {
   B: ['Single-Phase Cabling Bundle', '% of panels — notional COGS = tier pct × panels COGS'],
   C: ['Three-Phase Cabling Bundle',  '% of panels — notional COGS = tier pct × panels COGS'],
@@ -457,6 +545,8 @@ const COMPONENT_LABELS = {
   H: ['RSD — Fixed Transmitter',     'standalone RSD orders price at Otherwise'],
   I: ['Single-Phase Inverters',      'inverter-only orders price at Otherwise'],
   J: ['Three-Phase Inverters',       'inverter-only orders price at Otherwise'],
+  // v3-209 — K (Battery Package) is out of this table: it rides its own
+  // curve over total battery kWh, set in the anchors above.
   L: ['Misc Catalog',                'one margin for every row; reversals stay sign-symmetric'],
   M: ['Location / Delivery',         'Luzon >30 km pair and every dynamic row'],
   N: ['Standalone Retrofit Charges', 'only prices in no-panel orders — single margin'],
@@ -465,7 +555,7 @@ const COMPONENT_LABELS = {
   Q: ['Roof Preparation',            'asphalt / concrete per kWp'],
 };
 
-function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr }) {
+function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr, comm }) {
   const cm = componentMargins || {};
   const setRow = (id, patch) => {
     if (!canEdit) return;
@@ -477,7 +567,7 @@ function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr }) {
                fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em',
                color: COLORS.textMuted, whiteSpace: 'nowrap' };
   const td = { padding: '7px 8px', borderBottom: `1px solid ${COLORS.divider}`, verticalAlign: 'top' };
-  const retained = (1.12 * (1 - (mdr || 0)) - 0.12);
+  const retained = (1.12 * (1 - (mdr || 0)) - (comm || 0) - 0.12);   // v3-210 — commission in the denominator
 
   return (
     <div style={{ marginTop: 18 }}>
@@ -488,7 +578,9 @@ function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr }) {
         <strong>Full system</strong> — the order includes both solar panels and at least one
         inverter — is the only case where Follow / Fixed applies; &ldquo;Follow&rdquo; rides the
         curve of the order&rsquo;s phase. <strong>Otherwise</strong> applies whenever either leg
-        is missing: panels without an inverter, inverter-only, battery / RSD standalone. Direct
+        is missing: panels without an inverter, inverter-only, RSD standalone. The Battery
+        Package is not in this table — it rides its own curve over total battery kWh, set in
+        the anchors above, in every order shape. Direct
         Purchase Price for every line: ⌈ COGS × 1.12 ÷ (1 − margin) ÷ {retained.toFixed(4)} ⌉;
         for B, C, and P the COGS is <em>notional</em> — the percentage applied to the
         panels&rsquo; COGS.
@@ -572,7 +664,7 @@ function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr }) {
 // recommended in-stock Inverters (I/J) — one point per whole panel count, so
 // Product can see whether per-kWp pricing runs flat, rising, or falling as
 // systems grow. Everything is computed through the SHIPPED engine functions
-// (grossMarginCurve, componentMarginFor, directFromCogs, cablingTotalPct,
+// (grossMarginCurve, componentMarginFor, directFromCogs, cablingCogsTotal,
 // recommendInverters) against the LIVE params/inventory, so the chart is a
 // view of the engine, not a reimplementation (v3-172/178 grid precedent).
 //
@@ -643,7 +735,9 @@ function FullSystemPerKwpChart({ params, phase }) {
     const gmA = panelsOnly ? noInv : grossMarginCurve(kwp, params, phase);
     const gmOf = (id) => componentMarginFor(id, params, fullSystem, gmA);
     const dpA = n * directFromCogs(cogsEa, params, gmA);
-    const dpCab = directFromCogs(cablingTotalPct(n, params, phase) * n * cogsEa, params, gmOf(cabId));
+    // v3-216 — the bundle's COGS reads the peso ladder directly (decoupled
+    // from panel COGS), matching the quote path exactly.
+    const dpCab = directFromCogs(cablingCogsTotal(n, params, phase), params, gmOf(cabId));
     const dpF = kwp * directFromCogs(params.laborInstallationPerKwpCogs, params, gmOf('F'));
     const gmO = gmOf('O');
     const dpO = OVERHEAD.reduce((s, k) => s + directFromCogs(params[k], params, gmO), 0);

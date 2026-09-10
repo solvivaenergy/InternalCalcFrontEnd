@@ -55,7 +55,12 @@ function tooltipFor(entry) {
   );
 }
 
-export default function Step4Returns({ state, updateState, model, disclaimers, adminParams, mode = 'rep' }) {
+export default function Step4Returns({ state, updateState, model, disclaimers, adminParams, mode = 'rep', adminAccess = 'none' }) {
+  // v3-214 — D1: the DU-rate lock applies to PURE REPS ONLY (staff mode with
+  // no admin tier). Admin tiers keep working steppers; the public always has
+  // them. The App-level invariant effect pins the value; this flag disables
+  // the controls and explains why.
+  const duLocked = mode === 'rep' && adminAccess === 'none';
   const { cashFlows } = model;
 
   // paybackNote indices: 0-3 are per-metric definitions, 4 is the
@@ -187,6 +192,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
       <DuInflationControl
         value={duRate}
         onChange={v => updateState({ duRateInflation: v })}
+        locked={duLocked}
         params={adminParams}
       />
 
@@ -246,7 +252,7 @@ export function clampDuRateBp(bp) {
 // the 0.25% grid (4.90% is not) one action offers the nearest reachable step.
 // It renders NOTHING when the FinCo reference inputs are absent or invalid —
 // a half-built sentence there would be worse than silence.
-function DuInflationControl({ value, onChange, params }) {
+function DuInflationControl({ value, onChange, params, locked }) {
   const bp = clampDuRateBp(Math.round((value || 0) * 10000));
   const atMin = bp <= DU_MIN_BP;
   const atMax = bp >= DU_MAX_BP;
@@ -258,6 +264,7 @@ function DuInflationControl({ value, onChange, params }) {
   // reads as feedback rather than as a caution about doing nothing.
   const [bumped, setBumped] = React.useState(null);
   const set = (nextBp) => {
+    if (locked) return;   // v3-214 — reps cannot move the rate by any path
     const clamped = clampDuRateBp(nextBp);
     if (clamped === bp) { setBumped(nextBp < bp ? 'min' : 'max'); return; }
     setBumped(null);
@@ -280,7 +287,10 @@ function DuInflationControl({ value, onChange, params }) {
   const atGuide = showRef && Math.abs((value || 0) - step) < 1e-9;
   const url = params?.duInflationSourceUrl;
 
-  const hint = (atMax && bumped === 'max') ? 'Maximum 10.00%.'
+  // v3-214 — the rep-lock hint REPLACES the bound hints (a rep never pushed
+  // a bound; the only message that matters is why the control is fixed).
+  const hint = locked ? 'Set by the FinCo default — fixed for sales-rep quotes.'
+             : (atMax && bumped === 'max') ? 'Maximum 10.00%.'
              : (atMin && bumped === 'min') ? 'Minimum 0.00%.'
              : '';
 
@@ -296,11 +306,10 @@ function DuInflationControl({ value, onChange, params }) {
           {hint && <div style={styles.duStepHint}>{hint}</div>}
         </div>
         <div style={styles.duStepper}>
-          {/* <button type="button" onClick={() => set(bp - DU_STEP_BP)} //disabled={atMin}
-            disabled={true}
-                  style={btn(atMin)} aria-label="Decrease assumed annual DU rate increase by 0.25%">
+          <button type="button" onClick={() => set(bp - DU_STEP_BP)} disabled={locked || atMin}
+                  style={btn(locked || atMin)} aria-label="Decrease assumed annual DU rate increase by 0.25%">
             &minus;
-          </button> */}
+          </button>
           <div style={styles.duStepValue}
                role="spinbutton"
                aria-valuemin={DU_MIN_BP / 100}
@@ -310,11 +319,10 @@ function DuInflationControl({ value, onChange, params }) {
                aria-label="Assumed annual DU rate increase">
             {(bp / 100).toFixed(2)}%
           </div>
-          {/* <button type="button" onClick={() => set(bp + DU_STEP_BP)} //disabled={atMax}
-          disabled={true}
-                  style={btn(atMax)} aria-label="Increase assumed annual DU rate increase by 0.25%">
+          <button type="button" onClick={() => set(bp + DU_STEP_BP)} disabled={locked || atMax}
+                  style={btn(locked || atMax)} aria-label="Increase assumed annual DU rate increase by 0.25%">
             +
-          </button> */}
+          </button>
         </div>
       </div>
 
@@ -342,7 +350,9 @@ function DuInflationControl({ value, onChange, params }) {
             <div style={styles.duGuideFine}>
               <strong>Your setting matches this reference.</strong>
             </div>
-          ) : (
+          ) : locked ? null : (
+            /* v3-214 — this button ALSO writes the rate, so the rep lock
+               gates it too; the reference text above stays (advisory). */
             <button type="button" style={styles.duGuideBtn}
                     onClick={() => { setBumped(null); onChange(step); }}>
               Use {(step * 100).toFixed(2)}% — the nearest step
@@ -402,7 +412,6 @@ const styles = {
   duStepValue: {
     minWidth: 86, textAlign: 'center', fontSize: 17, fontWeight: 700,
     fontVariantNumeric: 'tabular-nums', color: COLORS.textBody,
-    padding: '8px 0'
   },
   // v3-184 — ONE block replacing the v3-183 pair. Outer surface matches the
   // metric tiles above so the adjuster reads as the last row of that stack;
