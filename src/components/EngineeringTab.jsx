@@ -19,7 +19,6 @@ import React from 'react';
 import { COLORS, fmt } from './ui.jsx';
 import { Section, Param, DeliveryLocationsTable, MiscCatalogTable,
          adminStyles } from './AdminShared.jsx';
-import { directFromCogs } from '../lib/calculations.js';
 import {
   canEditAdminSection, canEditInventory, hasAnyEditAccess,
 } from '../lib/permissions.js';
@@ -117,18 +116,18 @@ export default function EngineeringTab({
                anyEditRole={anyEdit}>
         <Param label="Asphalt / Shingles / Tiled — per kWp surcharge" isPeso step={500}
                value={params.roofAsphaltPerKwpCogs}
-               derived={directFromCogs(params.roofAsphaltPerKwpCogs, params)}
+               cogs
                onChange={v => updateParam('roofMaterial', 'roofAsphaltPerKwpCogs', v)}
                canEdit={canEditSection('roofMaterial')} />
         <Param label="Concrete — per kWp surcharge" isPeso step={500}
                value={params.roofConcretePerKwpCogs}
-               derived={directFromCogs(params.roofConcretePerKwpCogs, params)}
+               cogs
                onChange={v => updateParam('roofMaterial', 'roofConcretePerKwpCogs', v)}
                canEdit={canEditSection('roofMaterial')} />
       </Section>
 
       {/* ─── Misc Materials / Labor / Services catalog (v3-138) ──────── */}
-      <Section title="Miscellaneous Materials, Labor &amp; Other Services Catalog"
+      <Section title="Miscellaneous Materials, Labor, Services &amp; Other Adjustments Catalog"
                canEdit={canEditSection('miscCatalog')}
                anyEditRole={anyEdit}>
         <p style={{ fontSize: 13, color: COLORS.textMuted, margin: '0 0 10px' }}>
@@ -153,14 +152,19 @@ export default function EngineeringTab({
         {/* v3-116 — the four Cebu/Siargao scalars became the dynamic
             deliveryLocations table below the Luzon pair. Luzon main island
             stays structural (per-km excess formula, AA38). */}
-        <Param label="Luzon Over-30km — Fixed Fee" isPeso step={500}
+        <Param label="Luzon Free-Delivery Radius" suffix="km" step={5} min={1} max={500}
+               value={params.luzonFreeTravelKm}
+               onChange={v => updateParam('location', 'luzonFreeTravelKm', v)}
+               canEdit={canEditSection('location')}
+               hint="Distance from the Parañaque logistics hub within which Luzon delivery is free. Beyond it, the fixed fee below is charged once plus the per-km rate on the excess distance only. The customer sentences and the proposal's Logistics Add-On clause quote this value." />
+        <Param label="Luzon Beyond-Radius — Fixed Fee" isPeso step={500}
                value={params.luzonOver30FixedFeeCogs}
-               derived={directFromCogs(params.luzonOver30FixedFeeCogs, params)}
+               cogs
                onChange={v => updateParam('location', 'luzonOver30FixedFeeCogs', v)}
                canEdit={canEditSection('location')} />
-        <Param label="Luzon Over-30km — Per Km" isPeso step={10}
+        <Param label="Luzon Beyond-Radius — Per Km" isPeso step={10}
                value={params.luzonOver30PerKmCogs}
-               derived={directFromCogs(params.luzonOver30PerKmCogs, params)}
+               cogs
                onChange={v => updateParam('location', 'luzonOver30PerKmCogs', v)}
                canEdit={canEditSection('location')} />
         <div style={{ marginTop: 14 }}>
@@ -180,23 +184,23 @@ export default function EngineeringTab({
         <Param label="RSD Standalone Labor (per panel)" isPeso step={100}
                hint="Charged on RSD-only retrofit orders without solar"
                value={params.rsdStandaloneLaborPerPanelCogs}
-               derived={directFromCogs(params.rsdStandaloneLaborPerPanelCogs, params)}
+               cogs
                onChange={v => updateParam('standaloneCharges', 'rsdStandaloneLaborPerPanelCogs', v)}
                canEdit={canEditSection('standaloneCharges')} />
         <Param label="RSD Standalone Labor Mobilization" isPeso step={500}
                value={params.rsdStandaloneLaborMobilizationCogs}
-               derived={directFromCogs(params.rsdStandaloneLaborMobilizationCogs, params)}
+               cogs
                onChange={v => updateParam('standaloneCharges', 'rsdStandaloneLaborMobilizationCogs', v)}
                canEdit={canEditSection('standaloneCharges')} />
         <Param label="Inverter Standalone Labor (per unit)" isPeso step={500}
                hint="Charged on inverter-only retrofit orders without solar"
                value={params.inverterStandaloneLaborPerUnitCogs}
-               derived={directFromCogs(params.inverterStandaloneLaborPerUnitCogs, params)}
+               cogs
                onChange={v => updateParam('standaloneCharges', 'inverterStandaloneLaborPerUnitCogs', v)}
                canEdit={canEditSection('standaloneCharges')} />
         <Param label="Inverter Standalone Mobilization" isPeso step={500}
                value={params.inverterStandaloneMobilizationCogs}
-               derived={directFromCogs(params.inverterStandaloneMobilizationCogs, params)}
+               cogs
                onChange={v => updateParam('standaloneCharges', 'inverterStandaloneMobilizationCogs', v)}
                canEdit={canEditSection('standaloneCharges')} />
       </Section>
@@ -207,27 +211,27 @@ export default function EngineeringTab({
                anyEditRole={anyEdit}>
         <Param label="Delivery & Logistics" isPeso step={100}
                value={params.fixedOverheadDeliveryLogisticsCogs}
-               derived={directFromCogs(params.fixedOverheadDeliveryLogisticsCogs, params)}
+               cogs
                onChange={v => updateParam('fixedOverhead', 'fixedOverheadDeliveryLogisticsCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
         <Param label="Warehouse" isPeso step={100}
                value={params.fixedOverheadWarehouseCogs}
-               derived={directFromCogs(params.fixedOverheadWarehouseCogs, params)}
+               cogs
                onChange={v => updateParam('fixedOverhead', 'fixedOverheadWarehouseCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
         <Param label="Customs" isPeso step={100}
                value={params.fixedOverheadCustomsCogs}
-               derived={directFromCogs(params.fixedOverheadCustomsCogs, params)}
+               cogs
                onChange={v => updateParam('fixedOverhead', 'fixedOverheadCustomsCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
         <Param label="Safety, Supervision & Testing" isPeso step={500}
                value={params.fixedOverheadSafetySupervisionCogs}
-               derived={directFromCogs(params.fixedOverheadSafetySupervisionCogs, params)}
+               cogs
                onChange={v => updateParam('fixedOverhead', 'fixedOverheadSafetySupervisionCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
         <Param label="Testing & Commissioning" isPeso step={500}
                value={params.fixedOverheadTestingCogs}
-               derived={directFromCogs(params.fixedOverheadTestingCogs, params)}
+               cogs
                onChange={v => updateParam('fixedOverhead', 'fixedOverheadTestingCogs', v)}
                canEdit={canEditSection('fixedOverhead')} />
       </Section>
@@ -257,28 +261,26 @@ export default function EngineeringTab({
                value={params.panelAnnualDegradation}
                onChange={v => updateParam('scheduleConstants', 'panelAnnualDegradation', v)}
                canEdit={canEditSection('scheduleConstants')} />
-        <Param label="LCOE / NPV Discount Rate" isPct step={0.005}
-               value={params.lcoeNpvDiscountRate}
-               onChange={v => updateParam('scheduleConstants', 'lcoeNpvDiscountRate', v)}
-               canEdit={canEditSection('scheduleConstants')} />
-        <Param label="Maintenance Inflation Rate" isPct step={0.005}
-               value={params.maintenanceInflationRate}
-               onChange={v => updateParam('scheduleConstants', 'maintenanceInflationRate', v)}
-               canEdit={canEditSection('scheduleConstants')} />
+        {/* v3-190 — LCOE / NPV Discount Rate and Maintenance Inflation Rate
+            MOVED to the FinCo tab's Returns Assumptions ('returnsAssumptions'
+            section — FinCo Admin + Super Admin edit). They are LCOE/IRR
+            assumptions, not engineering constants. */}
         <Param label="Net Metering Credit Efficiency" isPct step={0.01}
                value={params.netMeteringEfficiency}
                onChange={v => updateParam('scheduleConstants', 'netMeteringEfficiency', v)}
                canEdit={canEditSection('scheduleConstants')} />
         <Param label="Preventive Maintenance (per panel)" isPeso step={50}
                value={params.preventiveMaintenancePerPanelCogs}
-               derived={directFromCogs(params.preventiveMaintenancePerPanelCogs, params)}
+               cogs
                onChange={v => updateParam('scheduleConstants', 'preventiveMaintenancePerPanelCogs', v)}
-               canEdit={canEditSection('scheduleConstants')} />
+               canEdit={canEditSection('scheduleConstants')}
+               hint="Priced into LCOE & IRR at the assumed gross margin set on the FinCo tab, where the imputed price is shown." />
         <Param label="Preventive Maintenance (per visit)" isPeso step={500}
                value={params.preventiveMaintenancePerVisitCogs}
-               derived={directFromCogs(params.preventiveMaintenancePerVisitCogs, params)}
+               cogs
                onChange={v => updateParam('scheduleConstants', 'preventiveMaintenancePerVisitCogs', v)}
-               canEdit={canEditSection('scheduleConstants')} />
+               canEdit={canEditSection('scheduleConstants')}
+               hint="Priced into LCOE & IRR at the assumed gross margin set on the FinCo tab, where the imputed price is shown." />
         <Param label="Min. Days to First Post-Install Payment" suffix="days" step={1}
                value={params.minDaysToFirstPostInstallPayment}
                onChange={v => updateParam('scheduleConstants', 'minDaysToFirstPostInstallPayment', v)}

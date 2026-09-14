@@ -5,12 +5,19 @@
 //   • editPassword         → 'edit'        (Super Admin — edits everything)
 //   • engineeringPassword  → 'engineering' (Engineering Team)
 //   • productPassword      → 'product'     (Product Team)
+//   • fincoPassword        → 'finco'       (FinCo Admin — v3-180)
 //   • viewPassword         → 'view'        (read-only)
 //
 // Rep-only usage — pass `repOnly` + `repPassword`:
 //   The dialog renders with rep-mode copy ("Sales Rep Access") and only
 //   accepts the rep password. On success, onAuth('rep') is called.
 //   This is what the footer 🔒 Rep mode lock opens.
+//
+// v3-203 — unified staff mode: pass `unified` + ALL passwords. One dialog for
+//   every staff tier (D1). Match order: admin tiers first (Super Admin →
+//   Engineering → Product → FinCo → Audit) so a password duplicated into the
+//   rep slot never downgrades a role; then repPassword / testingPassword →
+//   onAuth('rep'). The caller maps admin tiers to rep-mode + adminAccess.
 // =============================================================================
 
 import React, { useState } from 'react';
@@ -24,9 +31,14 @@ export default function AuthDialog({
   editPassword,
   engineeringPassword,
   productPassword,
+  fincoPassword,
   // Rep-only mode
   repOnly = false,
   repPassword,
+  // v3-203 unified staff mode — accepts every configured password; admin
+  // tiers report their level, rep/maintenance report 'rep'.
+  unified = false,
+  testingPassword,
   // v3-51: optional generic-accept mode for the Summary tab's Expand-detail
   // gate. Pass an array of acceptable passwords and a callback that's called
   // (with no arg) when ANY of them matches. Title/subtitle can be overridden
@@ -44,6 +56,10 @@ export default function AuthDialog({
   const [error, setError] = useState(null);
 
   const tryAuth = () => {
+    // v3-207 — the v3-205 empty-submit → public-view exit is REMOVED (Pat):
+    // with the "Go back to Public View" pill retained, the key switches
+    // between STAFF views only, and the pill is the sole public exit. An
+    // empty submit now just falls through to "Incorrect password".
     // v3-51: generic-accept path takes precedence when caller supplied a
     // password list. Used by the Summary Expand-detail button.
     if (Array.isArray(acceptedPasswords)) {
@@ -68,23 +84,32 @@ export default function AuthDialog({
     }
     // Admin branch — order matters: Super Admin first so a duplicated
     // password (intentional or accidental) doesn't get downgraded to a
-    // lower role.
+    // lower role. v3-203: the unified branch shares this ladder and appends
+    // rep/maintenance at the BOTTOM for the same reason.
     if (pw === editPassword) {
       onAuth('edit');
     } else if (pw === engineeringPassword) {
       onAuth('engineering');
     } else if (pw === productPassword) {
       onAuth('product');
+    } else if (pw === fincoPassword) {
+      onAuth('finco');
     } else if (pw === viewPassword) {
       onAuth('view');
+    } else if (unified && ((repPassword && pw === repPassword)
+                        || (testingPassword && pw === testingPassword))) {
+      onAuth('rep');
     } else {
       setError('Incorrect password');
       setPw('');
     }
   };
 
-  const title    = customTitle    ?? (repOnly ? 'Sales Rep Access' : 'Admin Access');
-  const subtitle = customSubtitle ?? (repOnly
+  const title    = customTitle    ?? (unified ? 'Staff Sign-in'
+                                   : repOnly  ? 'Sales Rep Access' : 'Admin Access');
+  const subtitle = customSubtitle ?? (unified
+                    ? 'Enter your Solviva access password to switch views.'
+                    : repOnly
                     ? 'Enter the rep password to unlock the full calculator view.'
                     : 'Enter password to view or edit calculator parameters.');
 

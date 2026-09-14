@@ -57,13 +57,14 @@ export default function MaintenanceGate({ onUnlock, agent, brand }) {
   const [pwError, setPwError] = useState(null);
 
   const handleSubmit = () => {
-    // Accept ANY of the 6 configured passwords. Empty env vars filter out
-    // so a missing var can't accidentally match an empty input.
+    // Accept ANY of the 7 configured passwords (v3-180 added FinCo). Empty env
+    // vars filter out so a missing var can't accidentally match an empty input.
     const accepted = [
       AUTH.testingPassword,
       AUTH.editPassword,
       AUTH.engineeringPassword,
       AUTH.productPassword,
+      AUTH.fincoPassword,
       AUTH.viewPassword,
       AUTH.repPassword,
     ].filter(Boolean);

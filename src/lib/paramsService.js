@@ -28,7 +28,11 @@ import {
   BASELINE_RATE,
   deriveThreePhaseCablingTiers,
 } from "../data/adminParams.js";
-import { deriveDirectPrices, cogsFromDirect } from "./calculations.js";
+import {
+  deriveDirectPrices,
+  cogsFromDirect,
+  normalizeComponentMargins,
+} from "./calculations.js";
 import {
   PANEL_SETTINGS,
   INVERTERS_SINGLE_PHASE,
@@ -43,10 +47,17 @@ import { getAccessToken } from "./supabaseClient.js";
 // edits reflect in quotes. When unset (local dev without the backend), we fall
 // back to the legacy Netlify Function + Netlify Blobs path so the calculator
 // still boots. Trailing slashes on the base are trimmed to avoid `//api`.
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+const API_BASE = (
+  import.meta.env.DEV
+    ? "http://localhost:3000"
+    : import.meta.env.VITE_API_BASE_URL || ""
+).replace(/\/+$/, "");
 const API_URL = API_BASE
   ? `${API_BASE}/api/parameters`
   : "/.netlify/functions/parameters";
+const AUDIT_API_URL = API_BASE
+  ? `${API_BASE}/api/parameter-audit`
+  : "/.netlify/functions/parameter-audit";
 
 // ═══ v3-83 — DERIVE ON MODULE LOAD, BEFORE ANYTHING ELSE ═════════════════════
 // `directPrice` / `panelDirectPrice` / `batteryUnitPrice` … ship as 0 in the data
@@ -110,6 +121,10 @@ export async function load() {
 // server verifies the token, looks up the caller's role in `user_roles`, and
 // enforces the section-allowlist for that role. `role` is still sent for
 // server-side logging / defensive checks, but the JWT is the source of truth.
+//
+// NOTE: upstream v3-207 passed a shared password here
+// (`save(snapshot, password, role)`); this deployment authenticates per-user
+// through Supabase instead, so the password argument is gone.
 export async function save(snapshot, role) {
   try {
     const token = await getAccessToken();
@@ -132,6 +147,30 @@ export async function save(snapshot, role) {
     applyOverrides(snapshot);
     notify();
     return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+}
+
+export async function getAuditHistory(role, limit = 100) {
+  try {
+    const token = await getAccessToken();
+    if (!token)
+      return { ok: false, error: "Not signed in — please log in again." };
+    const res = await fetch(
+      `${AUDIT_API_URL}?limit=${encodeURIComponent(limit)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "x-solviva-role": role || "",
+        },
+        cache: "no-store",
+      },
+    );
+    const body = await res.json().catch(() => []);
+    if (!res.ok)
+      return { ok: false, error: body.error || `HTTP ${res.status}` };
+    return { ok: true, events: Array.isArray(body) ? body : [] };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
@@ -291,6 +330,49 @@ export function migrateLegacyDeliveryLocations(ap) {
   delete ap.siargaoPerPanel;
 }
 
+// v3-191 — legacy-blob seed for the phase-split margin curve, the per-phase
+// panels-without-inverter margins, and the componentMargins object
+// (v3-54/75/116 migration pattern). A pre-v3-191 blob priced every quote off
+// ONE curve (its single-phase keys) with non-full-system orders at ITS OWN
+// grossMarginMax — so, to guarantee ZERO price drift across the deploy
+// boundary, every missing v3-191 key seeds from the BLOB'S values, never the
+// bundled defaults:
+//   • each missing Tp anchor ← the blob's single-phase counterpart
+//   • each missing no-inverter margin ← the blob's grossMarginMax
+//   • a missing componentMargins ← all-follow with fixed/otherwise = the
+//     blob's grossMarginMax (normalizeComponentMargins does exactly this
+//     when handed the blob's grossMarginMax — see calculations.js)
+// A blob that already carries the keys wins untouched. Runs on the OVERRIDE
+// object before Object.assign; the seeded keys persist to Blob storage on
+// the next admin Save. Exported for the smoke harness.
+export function seedPhaseAndComponentMargins(ap) {
+  if (!ap || typeof ap !== "object") return ap;
+  const TP_FROM_SP = {
+    grossMarginMinKwpTp: "grossMarginMinKwp",
+    grossMarginMidKwpTp: "grossMarginMidKwp",
+    grossMarginMaxKwpTp: "grossMarginMaxKwp",
+    grossMarginMinTp: "grossMarginMin",
+    grossMarginMidTp: "grossMarginMid",
+    grossMarginMaxTp: "grossMarginMax",
+  };
+  for (const [tpKey, spKey] of Object.entries(TP_FROM_SP)) {
+    if (!Number.isFinite(ap[tpKey]) && Number.isFinite(ap[spKey]))
+      ap[tpKey] = ap[spKey];
+  }
+  if (Number.isFinite(ap.grossMarginMax)) {
+    if (!Number.isFinite(ap.grossMarginNoInverterSp))
+      ap.grossMarginNoInverterSp = ap.grossMarginMax;
+    if (!Number.isFinite(ap.grossMarginNoInverterTp))
+      ap.grossMarginNoInverterTp = ap.grossMarginMax;
+    if (!ap.componentMargins || typeof ap.componentMargins !== "object") {
+      normalizeComponentMargins(ap); // seeds all ids from ap.grossMarginMax
+    }
+  }
+  // A blob with NO grossMarginMax at all (fresh install, empty blob) carries
+  // no margin state to preserve — the bundled defaults stand.
+  return ap;
+}
+
 // Apply server-supplied overrides by MUTATING the imported objects.
 // This is what makes calculations.js see the live values without refactor.
 function applyOverrides(overrides) {
@@ -309,6 +391,7 @@ function applyOverrides(overrides) {
   if (overrides.adminParams && typeof overrides.adminParams === "object") {
     const ap = overrides.adminParams;
     migrateLegacyDeliveryLocations(ap); // v3-116 — before the clone captures
+    seedPhaseAndComponentMargins(ap); // v3-191 — before the clone captures
     const hasLegacyKeys =
       "batteryPer5kWhPrice" in ap ||
       "batteryRackPer3Cap" in ap ||
@@ -409,8 +492,25 @@ function applyOverrides(overrides) {
     )
       ? overrides.adminParams.miscCatalog.map((m) => ({ ...m }))
       : null;
+    // v3-191 — componentMargins is a NESTED object: the same aliasing hazard
+    // as the arrays above (Object.assign copies the reference, after which
+    // ADMIN_PARAMS.componentMargins and the override point at ONE object and
+    // any in-place edit corrupts both). Deep-clone per entry.
+    const componentMarginsFromOverride =
+      overrides.adminParams.componentMargins &&
+      typeof overrides.adminParams.componentMargins === "object"
+        ? Object.fromEntries(
+            Object.entries(overrides.adminParams.componentMargins).map(
+              ([k, v]) => [k, { ...(v || {}) }],
+            ),
+          )
+        : null;
 
     Object.assign(ADMIN_PARAMS, overrides.adminParams);
+
+    if (componentMarginsFromOverride) {
+      ADMIN_PARAMS.componentMargins = componentMarginsFromOverride;
+    }
 
     if (tiersFromOverride) {
       ADMIN_PARAMS.cablingTiers = tiersFromOverride;
@@ -579,6 +679,11 @@ function applyOverrides(overrides) {
   // Runs after Object.assign, so a stored blob's COGS overrides are already in
   // place — and any STALE directPrice values a pre-v3-83 blob still carries are
   // overwritten here rather than silently winning.
+  // v3-191 — shape-harden componentMargins first (missing ids, bad modes,
+  // non-finite margins all repair from the LIVE grossMarginMax) so the quote
+  // resolver never reads a malformed entry. Boot derivation itself still
+  // prices every key at the scalar reference margin, exactly as pre-v3-191.
+  normalizeComponentMargins(ADMIN_PARAMS);
   deriveDirectPrices(
     ADMIN_PARAMS,
     PANEL_SETTINGS,

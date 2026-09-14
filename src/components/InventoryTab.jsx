@@ -24,7 +24,6 @@
 
 import React from 'react';
 import { COLORS, fmt } from './ui.jsx';
-import { directFromCogs } from '../lib/calculations.js';
 import {
   Section, Param, CablingTierTable, BatteryPackagesEditor, adminStyles,
 } from './AdminShared.jsx';
@@ -38,6 +37,11 @@ export default function InventoryTab({
   panelThree,  updatePanelThree,
   single, three, updateInverter, addInverter, removeInverter,
   accessLevel,
+  // v3-178 — cabling tier test rows (Super Admin + Engineering only; the
+  // CablingTierTable gates on its own canEdit, which for 'cabling' is exactly
+  // those two roles). State lives in AdminShell so it survives tab switches.
+  testPanelsSingle = null, setTestPanelsSingle = null,
+  testPanelsThree  = null, setTestPanelsThree  = null,
 }) {
   const anyEdit = hasAnyEditAccess(accessLevel);
   const canEditInv = canEditInventory(accessLevel);
@@ -53,14 +57,13 @@ export default function InventoryTab({
               <th style={localStyles.th}>Phase</th>
               <th style={{ ...localStyles.th, textAlign: 'right' }}>Watts/Panel</th>
               <th style={{ ...localStyles.th, textAlign: 'right' }}>COGS (pre-VAT)</th>
-              <th style={{ ...localStyles.th, textAlign: 'right', color: COLORS.textMuted }}>Direct Purchase Price</th>
               <th style={{ ...localStyles.th, textAlign: 'right' }}>Max DC/AC Ratio</th>
               <th style={{ ...localStyles.th, textAlign: 'center' }}>In Stock</th>
             </tr>
           </thead>
           <tbody>
-            <PanelSettingsRow label="Single-phase" row={panelSingle} setRow={updatePanelSingle} canEdit={canEditInv} params={params} />
-            <PanelSettingsRow label="3-phase"      row={panelThree}  setRow={updatePanelThree}  canEdit={canEditInv} params={params} />
+            <PanelSettingsRow label="Single-phase" row={panelSingle} setRow={updatePanelSingle} canEdit={canEditInv} />
+            <PanelSettingsRow label="3-phase"      row={panelThree}  setRow={updatePanelThree}  canEdit={canEditInv} />
           </tbody>
         </table>
       </Section>
@@ -71,7 +74,7 @@ export default function InventoryTab({
                anyEditRole={anyEdit}>
         <Param label="Mounting Support Floor Price" isPeso step={500}
                value={params.mountingSupportFloorCogs}
-               derived={directFromCogs(params.mountingSupportFloorCogs, params)}
+               cogs
                onChange={v => updateParam('solarPanel', 'mountingSupportFloorCogs', v)}
                canEdit={canEditSection('solarPanel')} />
         <Param label="Mounting Support % of Panels Price" isPct step={0.005}
@@ -91,7 +94,9 @@ export default function InventoryTab({
         </p>
         <CablingTierTable tiers={params.cablingTiers || []}
                           onChange={v => updateParam('cabling', 'cablingTiers', v)}
-                          canEdit={canEditSection('cabling')} />
+                          canEdit={canEditSection('cabling')}
+                          testPanelCount={testPanelsSingle}
+                          onTestPanelCount={setTestPanelsSingle} />
       </Section>
 
       {/* ─── Cabling — THREE-PHASE (NEW in v3-62) ─────────────────────── */}
@@ -106,7 +111,9 @@ export default function InventoryTab({
         </p>
         <CablingTierTable tiers={params.cablingTiersThreePhase || []}
                           onChange={v => updateParam('cabling', 'cablingTiersThreePhase', v)}
-                          canEdit={canEditSection('cabling')} />
+                          canEdit={canEditSection('cabling')}
+                          testPanelCount={testPanelsThree}
+                          onTestPanelCount={setTestPanelsThree} />
       </Section>
 
       {/* ─── Variable Charges (moved here from Engineering in v3-106) ──
@@ -119,27 +126,27 @@ export default function InventoryTab({
                anyEditRole={anyEdit}>
         <Param label="Additional DC Cable (per meter)" isPeso step={10}
                value={params.additionalDcCablePerMeterCogs}
-               derived={directFromCogs(params.additionalDcCablePerMeterCogs, params)}
+               cogs
                onChange={v => updateParam('variableCharges', 'additionalDcCablePerMeterCogs', v)}
                canEdit={canEditSection('variableCharges')} />
         <Param label="Additional AC Cable (per meter)" isPeso step={10}
                value={params.additionalAcCablePerMeterCogs}
-               derived={directFromCogs(params.additionalAcCablePerMeterCogs, params)}
+               cogs
                onChange={v => updateParam('variableCharges', 'additionalAcCablePerMeterCogs', v)}
                canEdit={canEditSection('variableCharges')} />
         <Param label="Labor & Installation (per kWp)" isPeso step={500}
                value={params.laborInstallationPerKwpCogs}
-               derived={directFromCogs(params.laborInstallationPerKwpCogs, params)}
+               cogs
                onChange={v => updateParam('variableCharges', 'laborInstallationPerKwpCogs', v)}
                canEdit={canEditSection('variableCharges')} />
         <Param label="RSD — Variable Charge (per panel)" isPeso step={100}
                value={params.rsdVariablePerPanelCogs}
-               derived={directFromCogs(params.rsdVariablePerPanelCogs, params)}
+               cogs
                onChange={v => updateParam('variableCharges', 'rsdVariablePerPanelCogs', v)}
                canEdit={canEditSection('variableCharges')} />
         <Param label="RSD — Fixed Transmitter" isPeso step={500}
                value={params.rsdFixedTransmitterCogs}
-               derived={directFromCogs(params.rsdFixedTransmitterCogs, params)}
+               cogs
                onChange={v => updateParam('variableCharges', 'rsdFixedTransmitterCogs', v)}
                canEdit={canEditSection('variableCharges')} />
         {/* v3-106 — RSD stock toggle. Unchecked ⇒ the customer/rep 2B
@@ -180,7 +187,7 @@ export default function InventoryTab({
           to retire one permanently.
         </p>
         <InverterList items={single} which="single" canEdit={canEditInv}
-                      onUpdate={updateInverter} onAdd={addInverter} onRemove={removeInverter} params={params} />
+                      onUpdate={updateInverter} onAdd={addInverter} onRemove={removeInverter} />
       </Section>
 
       {/* ─── 3-phase Inverters ───────────────────────────────────────── */}
@@ -199,7 +206,7 @@ export default function InventoryTab({
           picked on customer quotes.
         </p>
         <InverterList items={three} which="three" canEdit={canEditInv}
-                      onUpdate={updateInverter} onAdd={addInverter} onRemove={removeInverter} params={params} />
+                      onUpdate={updateInverter} onAdd={addInverter} onRemove={removeInverter} />
       </Section>
 
       {/* ─── Battery Packages (NEW in v3-54 — multi-package editor) ──── */}
@@ -222,9 +229,10 @@ export default function InventoryTab({
 }
 
 // ─── PanelSettingsRow ──────────────────────────────────────────────────────
-function PanelSettingsRow({ label, row, setRow, canEdit, params }) {
-  // v3-83 — Engineering enters COGS; the direct price is DERIVED and read-only.
-  const derived = directFromCogs(row.panelCogs, params);
+function PanelSettingsRow({ label, row, setRow, canEdit }) {
+  // v3-83 — Engineering enters COGS. v3-190 — the derived Direct Purchase
+  // display column is gone (reference DP prices removed from every admin
+  // page); quotes still price panels from COGS at the quote's own margin.
   return (
     <tr>
       <td style={localStyles.td}>{label}</td>
@@ -249,10 +257,6 @@ function PanelSettingsRow({ label, row, setRow, canEdit, params }) {
           </span>
         ) : fmt.peso(Math.round(row.panelCogs ?? 0))}
       </td>
-      {/* Derived Direct Purchase Price — never editable, never stored. */}
-      <td style={{ ...localStyles.td, ...localStyles.tdNum, color: COLORS.textMuted }}>
-        {fmt.peso(derived)}
-      </td>
       <td style={{ ...localStyles.td, ...localStyles.tdNum }}>
         {canEdit ? (
           <input type="number" style={localStyles.cellInputNum}
@@ -276,7 +280,7 @@ function PanelSettingsRow({ label, row, setRow, canEdit, params }) {
 }
 
 // ─── InverterList ─────────────────────────────────────────────────────────
-function InverterList({ items, which, canEdit, onUpdate, onAdd, onRemove, params }) {
+function InverterList({ items, which, canEdit, onUpdate, onAdd, onRemove }) {
   if (items.length === 0 && !canEdit) {
     return (
       <p style={{ fontSize: 13, color: COLORS.textMuted, fontStyle: 'italic', margin: 0 }}>
@@ -290,8 +294,7 @@ function InverterList({ items, which, canEdit, onUpdate, onAdd, onRemove, params
         <thead>
           <tr>
             <th style={{ ...localStyles.invTh, width: '20%' }}>Rated kW</th>
-            <th style={{ ...localStyles.invTh, width: '28%' }}>COGS (pre-VAT)</th>
-            <th style={{ ...localStyles.invTh, width: '28%', color: COLORS.textMuted }}>Direct Purchase Price</th>
+            <th style={{ ...localStyles.invTh, width: '56%' }}>COGS (pre-VAT)</th>
             <th style={{ ...localStyles.invTh, width: '12%', textAlign: 'center' }}>In Stock</th>
             {canEdit && <th style={{ ...localStyles.invTh, width: '12%', textAlign: 'right' }}>Actions</th>}
           </tr>
@@ -319,10 +322,6 @@ function InverterList({ items, which, canEdit, onUpdate, onAdd, onRemove, params
                       onChange={e => onUpdate(which, idx, { cogs: parseFloat(e.target.value) || 0 })} />
                   </span>
                 ) : fmt.peso(Math.round(inv.cogs ?? 0))}
-              </td>
-              {/* Derived Direct Purchase Price — read-only. */}
-              <td style={{ ...localStyles.invTd, color: COLORS.textMuted }}>
-                {fmt.peso(directFromCogs(inv.cogs, params))}
               </td>
               {/* v3-106 — per-SKU stock flag. Unchecked ⇒ excluded from the
                   recommendation engine and the Step 2C dropdown, without
