@@ -1,9 +1,9 @@
 {
   "name": "solviva-calculator",
-  "version": "3.142.0",
+  "version": "3.208.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k \"node ../InternalCalcBackEnd/dev-server.js\" \"vite\"",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.2.4",
     "vite": "^5.4.0"
   }
 }

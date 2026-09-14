@@ -167,7 +167,7 @@ export function RecommendationPill({ children, onClick, active }) {
 // increment.
 export function NumberInput({
   value, onChange, min, max, step = 1, suffix, prefix, width = 120,
-  large, amber, compact, error,
+  large, amber, compact, error, decimals,
 }) {
   const dynamic = {
     ...(large ? inputStyles.inputLarge : null),
@@ -199,7 +199,7 @@ export function NumberInput({
     value === null || value === undefined || value === ''
       ? ''
       : isPeso
-        ? formatPesoForInput(value)
+        ? formatPesoForInput(value, decimals)
         : String(value);
 
   // While focused, show the raw draft. While blurred, show the formatted value.
@@ -222,6 +222,31 @@ export function NumberInput({
     if (cleaned === '' || cleaned === '-' || cleaned === '.') return null;
     const n = Number(cleaned);
     return Number.isFinite(n) ? n : null;
+  }
+
+  // v3-156 — BUGFIX. `min` and `max` were destructured above and then never
+  // used: not forwarded to the element, not applied on parse, not clamped on
+  // blur. Every min/max in the app has been inert since v3-142 replaced the raw
+  // type="number" inputs with this component. Fifteen direct call sites were
+  // relying on it — including Step 2F's free-form unit price, where the missing
+  // clamp let a rep hand-type a NEGATIVE line and discount a quote by any
+  // amount. That is the exact control v3-144 deliberately kept in Engineering's
+  // hands via the catalog.
+  //
+  // Clamped in the parse → onChange path rather than on blur, so the PARENT
+  // never holds an out-of-range value and the pricing engine never sees one,
+  // even transiently mid-type. The draft the user is typing is left alone, so
+  // this does not fight them keystroke by keystroke; the display snaps to the
+  // clamped value on blur.
+  //
+  // null is NOT clamped to `min`. An empty field must stay empty and clearable;
+  // coercing null to the minimum would make it impossible to blank a field.
+  function clampToBounds(n) {
+    if (n === null || !Number.isFinite(n)) return n;
+    let out = n;
+    if (typeof min === 'number') out = Math.max(min, out);
+    if (typeof max === 'number') out = Math.min(max, out);
+    return out;
   }
 
   function handleFocus() {
@@ -265,11 +290,15 @@ export function NumberInput({
 
   function handleChange(text) {
     setDraft(text);                  // echo verbatim while focused
-    onChange(parseToNumber(text));   // keep parent's numeric state in sync
+    onChange(clampToBounds(parseToNumber(text)));   // v3-156 — clamped; keep parent's numeric state in sync
   }
 
   function handleBlur() {
     setFocused(false);
+    // v3-156 — normalize on the way out as well: a value seeded from state or
+    // pasted whole is clamped even if it never passed through handleChange.
+    const settled = clampToBounds(parseToNumber(draft));
+    if (draft !== '' && settled !== null && settled !== parseToNumber(draft)) onChange(settled);
     // No need to onChange() here — the parent already has the latest
     // numeric value from the most recent handleChange. Switching `focused`
     // to false flips the display to the formatted blurredDisplay.
@@ -282,6 +311,13 @@ export function NumberInput({
         ref={inputRef}
         type="text"
         inputMode="decimal"
+        // v3-156 — advertised to assistive tech. The visible input is type=text
+        // (comma formatting needs it), so these are ARIA rather than native
+        // min/max; the real enforcement is clampToBounds above.
+        role="spinbutton"
+        aria-valuemin={typeof min === 'number' ? min : undefined}
+        aria-valuemax={typeof max === 'number' ? max : undefined}
+        aria-valuenow={typeof value === 'number' ? value : undefined}
         value={display}
         onFocus={handleFocus}
         onChange={e => handleChange(e.target.value)}
@@ -306,8 +342,21 @@ export function NumberInput({
 // We don't use fmt.peso here because that prepends the ₱ symbol; the prefix
 // span already shows ₱ next to the input, so the input value itself should
 // be just the number.
-function formatPesoForInput(n) {
+// v3-185 — `decimals` added. The default path (decimals == null) is the
+// v3-142 behaviour byte for byte: whole numbers plain, fractional ones at 2dp.
+// That 2dp cap was fine while every peso field in the app was a whole-peso
+// cost, but a ₱/kWh TARIFF needs four — ₱9.8165 displayed as "9.82" is a
+// different rate, and the admin has no way to see what is actually stored.
+// Opt-in rather than widening the default, because 39 existing peso fields
+// depend on the current formatting and none of them wants trailing zeros.
+function formatPesoForInput(n, decimals) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '';
+  if (typeof decimals === 'number' && decimals > 0) {
+    return n.toLocaleString('en-US', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  }
   const isWhole = Number.isInteger(n);
   return n.toLocaleString('en-US', {
     minimumFractionDigits: isWhole ? 0 : 2,

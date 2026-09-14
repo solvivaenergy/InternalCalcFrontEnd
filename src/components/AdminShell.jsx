@@ -33,6 +33,7 @@ import {
   PANEL_SETTINGS, INVERTERS_SINGLE_PHASE, INVERTERS_THREE_PHASE,
 } from '../data/inventory.js';
 import { DEVICES } from '../data/devices.js';
+import { findCablingTierViolation } from '../lib/calculations.js';
 import { DEFAULTS, AUTH } from '../config.js';
 import { COLORS, CalloutBox } from './ui.jsx';
 import * as paramsService from '../lib/paramsService.js';
@@ -44,11 +45,21 @@ import { adminStyles, ContactGatePasswordToggle } from './AdminShared.jsx';
 import InventoryTab from './InventoryTab.jsx';
 import EngineeringTab from './EngineeringTab.jsx';
 import ProductTab from './ProductTab.jsx';
+import FinCoTab from './FinCoTab.jsx';
 
-export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled }) {
+// v3-178 — `calcPanelCount` is the Calculator's RESOLVED panel count at the
+// moment the admin section was entered (App passes model.panelCount). It seeds
+// the cabling tier-table test rows and is never written back: this component
+// has no handle on calculator state, so the test count cannot follow the admin
+// out on logout. That is a structural guarantee, not a guard.
+export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
+                                     calcPanelCount = null }) {
   const anyEdit = hasAnyEditAccess(accessLevel);
   const canEditMaintenance = canEditAdminSection(accessLevel, 'maintenance');
   const canEditInv = canEditInventory(accessLevel);
+
+  // Server auth is the Supabase session JWT (see paramsService.save), not a
+  // shared per-role password as in upstream v3-207.
 
   // ─── Unified state (persists across tab switches) ─────────────────────────
   const [params, setParams] = useState(() => JSON.parse(JSON.stringify(ADMIN_PARAMS)));
@@ -57,6 +68,16 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
   const [single,  setSingle]  = useState(() => INVERTERS_SINGLE_PHASE.map(i => ({ ...i })));
   const [three,   setThree]   = useState(() => INVERTERS_THREE_PHASE.map(i => ({ ...i })));
   const [devices, setDevices] = useState(() => DEVICES.map(d => ({ ...d })));
+  // v3-178 — test panel counts for the two cabling tier tables. Lifted here
+  // (not into CablingTierTable) so they survive Inventory -> Engineering ->
+  // Inventory the way every other admin edit does. Seeded from the Calculator
+  // per Pat; decision 4: a zero/absent count (panels out of stock) falls back
+  // to 5 rather than 1. They are DELIBERATELY excluded from `dirty` and from
+  // the save payload — this is a preview, not a parameter.
+  const seedTestCount = Math.max(1, calcPanelCount || 5);
+  const [testPanelsSingle, setTestPanelsSingle] = useState(seedTestCount);
+  const [testPanelsThree,  setTestPanelsThree]  = useState(seedTestCount);
+
   const [dirty, setDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
 
@@ -117,6 +138,18 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
   // ─── Validation ───────────────────────────────────────────────────────────
   const tiersValid = Array.isArray(params.cablingTiers) && params.cablingTiers.length > 0;
   const tiers3pValid = Array.isArray(params.cablingTiersThreePhase) && params.cablingTiersThreePhase.length > 0;
+  // v3-174 — monotonicity check (shared engine helper, never a local copy):
+  // a tier that prices a larger system cheaper cabling than a smaller one.
+  // v3-211 — DOWNGRADED FROM A SAVE BLOCK TO A RECOMMENDATION (user-directed).
+  // The ladder is guidance, not an invariant: nothing in the engine divides by
+  // it or NaNs on a dip (cablingTotalPct just interpolates whatever anchors it
+  // is given), so a non-monotone table prices fine — it is only commercially
+  // odd. Blocking Save on it meant one flagged cabling row froze EVERY other
+  // parameter on the console, including edits in unrelated sections. These two
+  // now feed `validationWarnings` (advisory banner) instead of
+  // `validationError`; the server guard was dropped in the same change.
+  const tiersMonotone = tiersValid ? findCablingTierViolation(params.cablingTiers) : null;
+  const tiers3pMonotone = tiers3pValid ? findCablingTierViolation(params.cablingTiersThreePhase) : null;
   const validityDays = params.quoteValidityDays ?? DEFAULTS.quoteValidityDays;
   const validityDaysValid = Number.isInteger(params.quoteValidityDays) && params.quoteValidityDays >= 1;
   const promosValid = (() => {
@@ -171,7 +204,10 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
       if (seen.has(lbl.toLowerCase())) return { ok: false, msg: `Duplicate misc catalog item "${lbl}".` };
       seen.add(lbl.toLowerCase());
       const v = Number(r?.cogs);
-      if (!Number.isFinite(v) || v < 0) {
+      // v3-145 — negatives are valid (reversal/credit items); the server
+      // accepts them since v3-144. This client mirror was missed in v3-144
+      // and blocked the save. Finiteness only.
+      if (!Number.isFinite(v)) {
         return { ok: false, msg: `Misc catalog item "${lbl}" has an invalid cost.` };
       }
     }
@@ -224,66 +260,152 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     return { ok: true };
   })();
 
-  // v3-142 — package-level margins (A/B/C) are primary. Keep legacy curve
-  // validation for older payloads where package-level keys are absent.
+  // v3-83 / v3-92 — the margin curve + MDR drive every price in the app; a bad
+  // value blanks the entire price list rather than degrading one number. Gross
+  // margin is now a GENLINV curve over capacity: three anchors that must be
+  // strictly increasing fractions in [0,1) and three positive strictly-
+  // increasing kWp breakpoints (mirrors the server guard). v3-190 — the
+  // reference-margin check moved OUT of this block to pmMarginValid below:
+  // grossMarginReference now lives on the FinCo tab as the assumed gross
+  // margin for preventive maintenance.
   const marginsValid = (() => {
     const MDR_CEILING = 1 - (0.12 / 1.12);   // 0.892857…
-    const {
-      grossMarginMin: q1,
-      grossMarginMid: q2,
-      grossMarginMax: q3,
-      grossMarginMinKwp: x1,
-      grossMarginMidKwp: x2,
-      grossMarginMaxKwp: x3,
-      grossMarginReference: xref,
-      merchantDiscountRate: mdr,
-    } = params;
-
-    // Shared capacity breakpoints (kWp) — always validated.
+    const { grossMarginMin: q1, grossMarginMid: q2, grossMarginMax: q3,
+            grossMarginMinKwp: x1, grossMarginMidKwp: x2, grossMarginMaxKwp: x3,
+            merchantDiscountRate: mdr } = params;
+    if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 < q2 && q2 < q3)) {
+      return { ok: false, msg: 'Gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.' };
+    }
     if (![x1, x2, x3].every(v => Number.isFinite(v) && v > 0) || !(x1 < x2 && x2 < x3)) {
       return { ok: false, msg: 'Gross-margin capacity breakpoints (kWp) must be positive and strictly increasing: MinKwp < MidKwp < MaxKwp.' };
-    }
-
-    // v3-149 — Battery rides its OWN capacity breakpoints (kWh), validated the
-    // same way as the shared kWp breakpoints above.
-    const { grossMarginBatteryMinKwh: bx1, grossMarginBatteryMidKwh: bx2, grossMarginBatteryMaxKwh: bx3 } = params;
-    if (![bx1, bx2, bx3].every(v => Number.isFinite(v) && v > 0) || !(bx1 < bx2 && bx2 < bx3)) {
-      return { ok: false, msg: 'Battery gross-margin capacity breakpoints (kWh) must be positive and strictly increasing: MinKwh < MidKwh < MaxKwh.' };
-    }
-
-    // v3-142 — per-package anchors. Each package's three anchors must be
-    // non-decreasing fractions in [0%, 100%). Equal anchors are allowed (a flat
-    // margin, e.g. battery 32/32/32) — the curve degrades to a constant. A
-    // package with all three anchors absent falls back to the legacy curve.
-    const packages = [
-      { label: 'A. Solar', keys: ['grossMarginSolarMin', 'grossMarginSolarMid', 'grossMarginSolarMax'] },
-      { label: 'B. Battery', keys: ['grossMarginBatteryMin', 'grossMarginBatteryMid', 'grossMarginBatteryMax'] },
-      { label: 'C. Misc', keys: ['grossMarginMiscMin', 'grossMarginMiscMid', 'grossMarginMiscMax'] },
-    ];
-    const anyPackageProvided = packages.some(p => p.keys.some(k => params[k] != null));
-    if (anyPackageProvided) {
-      for (const p of packages) {
-        const [pMin, pMid, pMax] = p.keys.map(k => params[k]);
-        if (![pMin, pMid, pMax].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(pMin <= pMid && pMid <= pMax)) {
-          return { ok: false, msg: `${p.label} package margins must be non-decreasing fractions in [0%, 100%): Min ≤ Med ≤ Max.` };
-        }
-      }
-    } else {
-      if (![q1, q2, q3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(q1 <= q2 && q2 <= q3)) {
-        return { ok: false, msg: 'Gross-margin anchors must be non-decreasing fractions in [0%, 100%): Min ≤ Mid ≤ Max.' };
-      }
-    }
-
-    if (!Number.isFinite(xref) || xref < 0 || xref >= 1) {
-      return { ok: false, msg: 'Reference gross margin must be a fraction in [0%, 100%).' };
     }
     if (!Number.isFinite(mdr) || mdr < 0 || mdr >= MDR_CEILING) {
       return { ok: false, msg:
         `Merchant discount rate must be below ${(MDR_CEILING * 100).toFixed(1)}% — at or above it, `
         + 'the acquirer\'s cut plus the VAT remittance exceeds the whole sale and every price would be zero.' };
     }
+    // v3-199 — the Luzon free-delivery radius (mirrors the server guard).
+    {
+      const v = params.luzonFreeTravelKm;
+      if (!Number.isFinite(v) || v <= 0 || v > 500) {
+        return { ok: false, msg: 'The Luzon free-delivery radius must be a positive number of kilometers (at most 500).' };
+      }
+    }
+    // v3-191 — the three-phase curve anchors: identical monotonicity rules,
+    // validated independently (mirrors the server guard).
+    const { grossMarginMinTp: t1, grossMarginMidTp: t2, grossMarginMaxTp: t3,
+            grossMarginMinKwpTp: y1, grossMarginMidKwpTp: y2, grossMarginMaxKwpTp: y3 } = params;
+    if (![t1, t2, t3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(t1 < t2 && t2 < t3)) {
+      return { ok: false, msg: 'Three-phase gross-margin anchors must be strictly increasing fractions in [0%, 100%): Min < Mid < Max.' };
+    }
+    if (![y1, y2, y3].every(v => Number.isFinite(v) && v > 0) || !(y1 < y2 && y2 < y3)) {
+      return { ok: false, msg: 'Three-phase gross-margin capacity breakpoints (kWp) must be positive and strictly increasing: MinKwp < MidKwp < MaxKwp.' };
+    }
+    // v3-191 — the per-phase panels-without-inverter margins.
+    for (const [k, label] of [['grossMarginNoInverterSp', 'single-phase'],
+                              ['grossMarginNoInverterTp', 'three-phase']]) {
+      const v = params[k];
+      if (!Number.isFinite(v) || v < 0 || v >= 1) {
+        return { ok: false, msg:
+          `The ${label} panels-without-inverter margin must be a fraction in [0%, 100%).` };
+      }
+    }
+    // v3-208 — the battery curve anchors. Margins may be flat (Min ≤ Med ≤
+    // Max — production main allows a constant curve); the kWh breakpoints
+    // must be positive and strictly increasing (mirrors the server guard).
+    {
+      const { grossMarginBatteryMin: b1, grossMarginBatteryMid: b2, grossMarginBatteryMax: b3,
+              grossMarginBatteryMinKwh: c1, grossMarginBatteryMidKwh: c2, grossMarginBatteryMaxKwh: c3 } = params;
+      if (![b1, b2, b3].every(v => Number.isFinite(v) && v >= 0 && v < 1) || !(b1 <= b2 && b2 <= b3)) {
+        return { ok: false, msg: 'Battery gross-margin anchors must be non-decreasing fractions in [0%, 100%): Min ≤ Med ≤ Max.' };
+      }
+      if (![c1, c2, c3].every(v => Number.isFinite(v) && v > 0) || !(c1 < c2 && c2 < c3)) {
+        return { ok: false, msg: 'Battery gross-margin capacity breakpoints (kWh) must be positive and strictly increasing: MinKwh < MidKwh < MaxKwh.' };
+      }
+    }
+    // v3-191 — the componentMargins table (B–Q; K moved to the battery
+    // curve in v3-208). Shape + range on every entry;
+    // a bad entry would price an entire component group at NaN or a >=1 margin
+    // on every quote (mirrors the server guard).
+    const cm = params.componentMargins;
+    if (!cm || typeof cm !== 'object' || Array.isArray(cm)) {
+      return { ok: false, msg: 'Component gross margins are missing or malformed.' };
+    }
+    const marginOk = (v) => Number.isFinite(v) && v >= 0 && v < 1;
+    for (const id of ['B','C','D','E','F','G','H','I','J','L','M','N','O','P','Q']) {
+      const row = cm[id];
+      if (!row || typeof row !== 'object') {
+        return { ok: false, msg: `Component ${id}: margin entry is missing.` };
+      }
+      if (!marginOk(row.otherwise)) {
+        return { ok: false, msg: `Component ${id}: the Otherwise margin must be a fraction in [0%, 100%).` };
+      }
+      if (id !== 'N') {
+        if (row.mode !== 'follow' && row.mode !== 'fixed') {
+          return { ok: false, msg: `Component ${id}: mode must be Follow or Fixed.` };
+        }
+        if (!marginOk(row.fixed)) {
+          return { ok: false, msg: `Component ${id}: the Fixed margin must be a fraction in [0%, 100%).` };
+        }
+      }
+    }
     return { ok: true };
   })();
+
+  // v3-181 — DU tariff inflation default. Third layer of the same rule the
+  // engine clamps and both steppers enforce (the standing three-places rule).
+  const duRateDefaultValid = (() => {
+    const v = params.duRateInflationDefault;
+    if (v == null) return { ok: true };
+    if (!Number.isFinite(v) || v < 0 || v > 0.10) {
+      return { ok: false, msg:
+        'Default annual DU rate increase must be between 0.00% and 10.00%.' };
+    }
+    return { ok: true };
+  })();
+
+  // v3-190 — the assumed gross margin for preventive maintenance (storage key
+  // grossMarginReference; moved to FinCo Returns Assumptions). Same [0,1)
+  // fraction rule as before, message renamed to match the new UI label. The
+  // server enforces the identical rule by key, unchanged.
+  const pmMarginValid = (() => {
+    const v = params.grossMarginReference;
+    if (!Number.isFinite(v) || v < 0 || v >= 1) {
+      return { ok: false, msg:
+        'Assumed gross margin for preventive maintenance must be a fraction in [0%, 100%).' };
+    }
+    return { ok: true };
+  })();
+
+  // v3-183 — DU inflation reference inputs. Third layer of the same shape rules
+  // the server enforces. Loose on VALUES (any published tariff point is
+  // legitimate) and strict on SHAPE, because a malformed date or a
+  // non-positive rate resolves to "no note" on the customer surface — a silent
+  // removal of guidance rather than a visible error.
+  const duRefValid = (() => {
+    const ymOk = (v) => v === '' || v == null || /^\d{4}-(0[1-9]|1[0-2])$/.test(String(v));
+    if (!ymOk(params.duInflationDate1) || !ymOk(params.duInflationDate2)) {
+      return { ok: false, msg: 'DU inflation reference dates must be a YYYY-MM month, e.g. 2016-07.' };
+    }
+    for (const k of ['duInflationRate1', 'duInflationRate2']) {
+      const v = params[k];
+      if (v == null || v === '') continue;
+      if (!Number.isFinite(v) || v <= 0 || v > 1000) {
+        return { ok: false, msg: 'DU inflation reference rates must be greater than 0 (per kWh).' };
+      }
+    }
+    const url = params.duInflationSourceUrl;
+    if (url && !/^https?:\/\//i.test(String(url))) {
+      return { ok: false, msg: 'DU inflation source URL must start with http:// or https://.' };
+    }
+    return { ok: true };
+  })();
+
+  // v3-187 — horizon default must be one of the Step 4 dropdown's options.
+  const irrYearsValid = (params.irrYearsDefault == null)
+    || [10, 15, 20, 25, 30].includes(params.irrYearsDefault)
+      ? { ok: true }
+      : { ok: false, msg: 'Default IRR & LCOE period must be 10, 15, 20, 25 or 30 years.' };
 
   const validationError =
     !tiersValid       ? 'Single-phase cabling tier table cannot be empty — add at least one row before saving.' :
@@ -296,7 +418,22 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
     !miscCatalogValid.ok ? miscCatalogValid.msg :
     !marginsValid.ok ? marginsValid.msg :
     !rateAnchorsValid.ok ? rateAnchorsValid.msg :
+    !duRateDefaultValid.ok ? duRateDefaultValid.msg :
+    !pmMarginValid.ok ? pmMarginValid.msg :
+    !duRefValid.ok ? duRefValid.msg :
+    !irrYearsValid.ok ? irrYearsValid.msg :
     null;
+
+  // ─── v3-211 · ADVISORY WARNINGS (never block Save) ────────────────────────
+  // Same text the two cabling monotonicity checks used to fail the save with,
+  // reworded as a recommendation. Collected as a LIST rather than a first-match
+  // chain like validationError: both tables can dip at once, and an admin
+  // fixing one should see the other in the same pass instead of discovering it
+  // only after the first is clean.
+  const validationWarnings = [
+    tiersMonotone && `Single-phase cabling tier at ${tiersMonotone.minPanels} panels prices a larger system cheaper than the tier before it. Recommended total for that tier: at least ${(Math.ceil(tiersMonotone.requiredTotal * 10000) / 100).toFixed(2)}% (currently ${(tiersMonotone.total * 100).toFixed(2)}%).`,
+    tiers3pMonotone && `Three-phase cabling tier at ${tiers3pMonotone.minPanels} panels prices a larger system cheaper than the tier before it. Recommended total for that tier: at least ${(Math.ceil(tiers3pMonotone.requiredTotal * 10000) / 100).toFixed(2)}% (currently ${(tiers3pMonotone.total * 100).toFixed(2)}%).`,
+  ].filter(Boolean);
 
   // ─── Save / Discard ───────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -365,7 +502,8 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
 
       {!anyEdit && (
         <CalloutBox kind="info">
-          You are in read-only mode. Sign in with an editor password to make changes.
+          You are in read-only mode. Your account has view-only access — ask an
+          administrator to change your role if you need to make changes.
         </CalloutBox>
       )}
       {anyEdit && savingDisabled && (
@@ -399,6 +537,8 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
           single={single} three={three}
           updateInverter={updateInverter} addInverter={addInverter} removeInverter={removeInverter}
           accessLevel={accessLevel}
+          testPanelsSingle={testPanelsSingle} setTestPanelsSingle={setTestPanelsSingle}
+          testPanelsThree={testPanelsThree}   setTestPanelsThree={setTestPanelsThree}
         />
       )}
       {tab === 'engineering' && (
@@ -415,12 +555,37 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled 
           accessLevel={accessLevel} validityDays={validityDays}
         />
       )}
+      {/* v3-180 — FinCo tab. Same props shape as ProductTab; the sections it
+          renders (Financing Limits + Interest Rates) moved off that tab. */}
+      {tab === 'finco' && (
+        <FinCoTab
+          params={params} updateParam={updateParam}
+          accessLevel={accessLevel}
+        />
+      )}
 
       {/* ─── Validation error ───────────────────────────────────────────── */}
       {anyEdit && validationError && (
         <div style={{ marginTop: 16 }}>
           <CalloutBox kind="error">
             <strong>Cannot save:</strong> {validationError}
+          </CalloutBox>
+        </div>
+      )}
+
+      {/* ─── v3-211 · Advisory warnings — Save stays enabled ─────────────── */}
+      {anyEdit && validationWarnings.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <CalloutBox kind="warn">
+            <strong>Recommendation{validationWarnings.length > 1 ? 's' : ''}:</strong>{' '}
+            {validationWarnings.length === 1 ? validationWarnings[0] : (
+              <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+                {validationWarnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
+            <div style={{ marginTop: 6, fontStyle: 'italic' }}>
+              You can still save — this does not block your changes.
+            </div>
           </CalloutBox>
         </div>
       )}
