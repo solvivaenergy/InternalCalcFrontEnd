@@ -44,7 +44,6 @@ import EnergyVisuals from './EnergyVisuals.jsx';
 import Step3PaymentTerms from './Step3PaymentTerms.jsx';
 import Step4Returns from './Step4Returns.jsx';
 import Step3Payoff from './Step3Payoff.jsx';
-import RotatingTagline from './RotatingTagline.jsx';
 
 export default function Calculator({
   state, updateState, model,
@@ -55,7 +54,10 @@ export default function Calculator({
 }) {
   return (
     <div>
-      <RotatingTagline />
+      {/* v3-196 — the rotating tagline headline that sat here is REMOVED
+          (user-directed). The component still lives in RotatingTagline.jsx
+          because MobileFlow's WelcomeScreen imports TAGLINES from it for its
+          own hero headline; only the desktop Calculator render is gone. */}
       <Step1Consumption
         state={state} updateState={updateState} model={model}
         onReset={resetStep1}
