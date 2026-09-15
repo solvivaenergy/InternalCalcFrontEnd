@@ -2141,37 +2141,44 @@ function drawPaymentOptionsPage(mgr) {
   });
   mgr.y = mgr.doc.lastAutoTable.finalY + 5;
 
-  drawTableTitleBar(mgr, "Selected Rent-to-Own Plan");
-  autoTable(mgr.doc, {
-    startY: mgr.y,
-    head: [["Tenor", "Down payment", "DST", "Total", "Monthly charge"]],
-    body: [
-      [
-        `${state.tenor || 60} months`,
-        peso(terms.dpTotalCharge || 0),
-        peso(terms.dst || 0),
-        peso(terms.summaryTotalDue ?? terms.totalAmountDue ?? 0),
-        peso(terms.customerMonthlyPmt || 0),
+  // The "Selected" recap only describes a Rent-to-Own plan, so it is drawn
+  // ONLY when the customer actually picked one. On a Direct Purchase (tenor 0)
+  // it used to fall back to `state.tenor || 60`, printing a phantom "60 months"
+  // row whose Total/Monthly charge were the Direct Purchase figures — the two
+  // tables above already state the real terms, so the recap is simply omitted.
+  if (!terms.isDirectPurchase && (state.tenor || 0) > 0) {
+    drawTableTitleBar(mgr, "Selected Rent-to-Own Plan");
+    autoTable(mgr.doc, {
+      startY: mgr.y,
+      head: [["Tenor", "Down payment", "DST", "Total", "Monthly charge"]],
+      body: [
+        [
+          `${state.tenor} months`,
+          peso(terms.dpTotalCharge || 0),
+          peso(terms.dst || 0),
+          peso(terms.summaryTotalDue ?? terms.totalAmountDue ?? 0),
+          peso(terms.customerMonthlyPmt || 0),
+        ],
       ],
-    ],
-    margin: { left: MARGIN, right: MARGIN },
-    tableWidth: CONTENT_W,
-    styles: {
-      font: "helvetica",
-      fontSize: 8.5,
-      cellPadding: 1.2,
-      lineColor: [220, 220, 220],
-      lineWidth: 0.15,
-    },
-    headStyles: lightHead,
-    columnStyles: {
-      1: { halign: "right" },
-      2: { halign: "right" },
-      3: { halign: "right" },
-      4: { halign: "right" },
-    },
-  });
-  mgr.y = mgr.doc.lastAutoTable.finalY + 3;
+      margin: { left: MARGIN, right: MARGIN },
+      tableWidth: CONTENT_W,
+      styles: {
+        font: "helvetica",
+        fontSize: 8.5,
+        cellPadding: 1.2,
+        lineColor: [220, 220, 220],
+        lineWidth: 0.15,
+      },
+      headStyles: lightHead,
+      columnStyles: {
+        1: { halign: "right" },
+        2: { halign: "right" },
+        3: { halign: "right" },
+        4: { halign: "right" },
+      },
+    });
+    mgr.y = mgr.doc.lastAutoTable.finalY + 3;
+  }
 
   mgr.doc.setFont("helvetica", "italic");
   mgr.doc.setFontSize(7.5);
