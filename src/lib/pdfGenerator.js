@@ -228,6 +228,10 @@ function makePageManager(doc, ctx) {
     y: MARGIN,
     pageNumber: 1,
     footerStamps: [],
+    // Opts of the page currently being drawn. pageBreakIfNeeded reuses them so
+    // an overflow page keeps its parent page's chrome (header drawer + footer
+    // style) instead of silently falling back to the defaults.
+    pageOpts: {},
   };
   drawPageBackground(mgr);
   drawFooter(mgr);
@@ -238,12 +242,41 @@ function newPage(mgr, opts = {}) {
   mgr.doc.addPage();
   mgr.pageNumber++;
   mgr.y = MARGIN;
+  mgr.pageOpts = opts;
   drawPageBackground(mgr);
   drawFooter(mgr, opts);
+  // NB: opts.header is deliberately NOT invoked here. Every page's own draw
+  // function stamps its header as its first act, so calling it here too would
+  // double-stamp the text. It exists only for pageBreakIfNeeded below.
 }
 
 function pageBreakIfNeeded(mgr, reservedHeight) {
-  if (mgr.y + reservedHeight > PAGE_H - 22) newPage(mgr);
+  if (mgr.y + reservedHeight > PAGE_H - 22) {
+    // Captured BEFORE newPage: the footer drawers set their own font/size too,
+    // so sampling after the page exists would restore the footer's state, not
+    // the caller's.
+    const prevFont = mgr.doc.getFont();
+    const prevSize = mgr.doc.getFontSize();
+    const prevColor = mgr.doc.getTextColor();
+    newPage(mgr, mgr.pageOpts);
+    // Story 004 AC3 — "both dates appear on every page header". An overflow
+    // page has no draw function of its own to stamp one, so without this it
+    // carried no logo, no reference and no dates at all. Also carries the
+    // parent page's footer style through via mgr.pageOpts, so an overflow off
+    // the schedule keeps drawScheduleFooterFigma instead of the default.
+    const drawHeader = mgr.pageOpts && mgr.pageOpts.header;
+    if (typeof drawHeader === "function") drawHeader(mgr);
+    // Restore the caller's graphics state. A page break is incidental to the
+    // caller, and several callers MEASURE text (setFont + setFontSize +
+    // splitTextToSize), then call this, then draw. Both the footer and header
+    // drawers set their own font/size/colour, so without this the caller's next
+    // doc.text renders in the wrong font at the wrong size — the schedule's
+    // early-payoff note measured at 7pt but drew at 7.68pt and overflowed its
+    // own box.
+    mgr.doc.setFont(prevFont.fontName, prevFont.fontStyle);
+    mgr.doc.setFontSize(prevSize);
+    mgr.doc.setTextColor(prevColor);
+  }
 }
 
 /**
@@ -326,11 +359,16 @@ function drawTopHeaderFigma(mgr) {
     mgr.doc.setTextColor(...C.brandGreen);
     mgr.doc.text("SOLVIVA", MARGIN, topY + 7.5);
   }
+  // Three right-aligned meta lines per the Figma frame (story 004 AC1-AC3).
+  // The third line is free vertically: at the 4.2mm pitch its ink bottom lands
+  // at ~26.8mm against the tightest page title's ink top at ~28.4mm
+  // (drawVisualizingPage), and the block is right-aligned at x=195 while every
+  // page title ends well left of x=110 — so no collision is possible.
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(6.8);
   mgr.doc.setTextColor(...C.textMuted);
   mgr.doc.text(
-    `Reference ID ${mgr.ctx.quoteRef}`,
+    `Reference No.: ${mgr.ctx.quoteRef}`,
     PAGE_W - MARGIN,
     topY + 4.8,
     {
@@ -338,9 +376,15 @@ function drawTopHeaderFigma(mgr) {
     },
   );
   mgr.doc.text(
-    `Quotation valid until ${fmtDate(mgr.ctx.validUntil)}`,
+    `Date Issued: ${fmtDate(mgr.ctx.generatedDate)}`,
     PAGE_W - MARGIN,
     topY + 9,
+    { align: "right" },
+  );
+  mgr.doc.text(
+    `Valid Until: ${fmtDate(mgr.ctx.validUntil)}`,
+    PAGE_W - MARGIN,
+    topY + 13.2,
     { align: "right" },
   );
   mgr.y = topY + 14;
@@ -552,8 +596,18 @@ function drawCoverPage1(mgr) {
   } else {
     T("SOLVIVA", 88, 100, 90, { c: DGREEN, style: "bold" });
   }
-  T(`Reference ID ${ctx.quoteRef}`, 2389, 107, 32, { c: GRAY, align: "right" });
-  T(`Quotation valid until ${fmtDate(validUntil)}`, 2389, 164, 32, {
+  // Same three meta lines as drawTopHeaderFigma, in Figma-px coordinates.
+  // 107 → 164 → 221 keeps the design's 57px pitch; the hero banner starts at
+  // y=329px (27.9mm), so the third line clears it comfortably.
+  T(`Reference No.: ${ctx.quoteRef}`, 2389, 107, 32, {
+    c: GRAY,
+    align: "right",
+  });
+  T(`Date Issued: ${fmtDate(ctx.generatedDate)}`, 2389, 164, 32, {
+    c: GRAY,
+    align: "right",
+  });
+  T(`Valid Until: ${fmtDate(validUntil)}`, 2389, 221, 32, {
     c: GRAY,
     align: "right",
   });
@@ -1660,6 +1714,42 @@ function drawSavingsDisclaimerBox(mgr) {
   );
   mgr.y = boxY + boxH;
 }
+// ─── System-package table geometry (Figma "System package in detail") ───────
+// NOTE: PKG_HEAD_FILL, PKG_SUB_COLOR and the 68/32 split are transcribed from a
+// screenshot of the Figma frame, not read from Figma itself. Confirm them
+// against the design file before release; they are isolated here so that is a
+// one-place swap.
+const PKG_HEAD_FILL = [232, 237, 232];
+const PKG_SUB_COLOR = [93, 112, 133];
+const PKG_PLACEHOLDER_COLOR = [168, 180, 194];
+const PKG_LINE_COLOR = [210, 210, 210];
+
+// Type scale for the itemised table, measured against the embedded Inter
+// metrics rather than estimated. A worst-case quote (3 inverters, expansion
+// cabling, declined RSD, 3 real 2F rows, financed so the DST row shows) builds
+// 34 body rows at 142.6mm, finalY 179.6mm, on ONE page — which leaves room for
+// both the prose block and the amber compliance box, ending at ~253mm of 297.
+// Sub-lines must stay at 7pt: at 8pt the widest emitted sub-line wraps.
+const PKG_SUB_FONT = 7;
+const PKG_SUB_PAD = 0.7;
+const PKG_TITLE_FONT = 8;
+const PKG_TITLE_PAD = 1.6;
+// 4mm, not 5: the widest real sub-line (expansion-mode cabling with a 5-digit
+// kWp figure) measures 112.5mm at 7pt, and a 4mm indent leaves 114.4mm usable.
+// At 5mm the headroom is only 0.9mm. `overflow: "linebreak"` means an
+// over-long line wraps to a second row rather than overflowing, and the page
+// has ~21mm of slack, so a wrap is survivable — this just makes it unlikely.
+const PKG_SUB_INDENT = 4;
+const PKG_RULE = 0.15;
+const PKG_COL_AMOUNT = CONTENT_W * 0.32;
+const PKG_COL_LABEL = CONTENT_W - PKG_COL_AMOUNT;
+
+// Mirrors MISC_MAX_ROWS in src/components/Step2Packages.jsx (not exported from
+// there). The frame draws twelve Misc slots; real 2F lines consume them and
+// blanks fill the rest. The Math.max below means a restored session carrying
+// more than twelve rows still prints every priced line rather than dropping one.
+const MISC_WRITE_IN_ROWS = 12;
+
 function drawPackageDetailPage(mgr) {
   const { model, state } = mgr.ctx;
   const items = model.pkg?.items || [];
@@ -1667,7 +1757,12 @@ function drawPackageDetailPage(mgr) {
 
   // Calculate system sizes dynamically for the rolled-up package names
   const recPanelCount = model.recommended?.recommendedPanelCount ?? 0;
-  const panelCount = state.panelCount ?? recPanelCount;
+  // Prefer the RESOLVED count off the model. App.jsx forces panelCount to 0
+  // when panels are out of stock (the v3-106 "availability never blocks the
+  // flow" contract), and re-deriving `state.panelCount ?? recPanelCount` here
+  // would ignore that — every solar price and systemKwp would be 0 while this
+  // page still believed it had an array and printed the static sub-lines.
+  const panelCount = model.panelCount ?? state.panelCount ?? recPanelCount;
   const panelWatts = model.recommended?.panelWatts ?? 630;
   const systemKwp = model.systemKwp ?? (panelCount * panelWatts) / 1000;
   const batteryKwh = model.batteryKwh ?? 0;
@@ -1680,26 +1775,44 @@ function drawPackageDetailPage(mgr) {
   mgr.doc.text("System package in detail", MARGIN, mgr.y + 4);
   mgr.y += 8;
 
-  // 1. Group items dynamically based on their descriptions
-  let solarTot = 0;
-  let batteryTot = 0;
-  const miscItems = [];
+  // ── Grouping ──────────────────────────────────────────────────────────────
+  // The engine stamps i.category ('solar' | 'battery' | 'misc') on every line
+  // item (calculations.js:1962-1965) and those three ids ARE the frame's three
+  // groups. This replaces the old description-substring classifier, which
+  // misrouted money: d.includes("rsd") swallowed the rsdLabor line and nothing
+  // re-printed it, so the Amount column did not foot to its own Total.
+  //
+  // `roof` is re-homed into Solar here rather than in the engine. The frame puts
+  // Roof Type inside the Solar group, but editing LINE_ITEM_CATEGORY would also
+  // move it on the Summary tab, and that map has no test gate.
+  const groupOf = (i) => (i.key === "roof" ? "solar" : i.category || "misc");
+  const byKey = (k) => items.find((i) => i && i.key === k);
+  const printable = (i) =>
+    !!(i && i.description && i.description !== "None" && i.directPrice !== 0);
 
-  // RSD is handled from the raw item list so it can still be shown (with its
-  // notional amount, excluded from the total) when the client declines it (#18).
-  const rsdRaw = items.find((i) => i && i.key === "rsd");
+  // Group amounts are summed over the UNFILTERED list so the column foots:
+  //   sum(solar) + sum(battery) + sum(misc) === terms.totalDirect, and
+  //   totalDirect + discountAmount === terms.netDirectPrice === the Total row.
+  // Lines with no sub-line of their own in the frame (rsdLabor, invMob) still
+  // land inside their group's amount. That is correct: the frame itemises what
+  // is INCLUDED, not a per-item price breakdown (story 026 #3).
+  const sumGroup = (id) =>
+    items.reduce(
+      (s, i) => (i && groupOf(i) === id ? s + (i.directPrice || 0) : s),
+      0,
+    );
+  const solarTot = sumGroup("solar");
+  const batteryTot = sumGroup("battery");
+  const miscTot = sumGroup("misc");
+
+  // ── RSD (backlog #4 & #18) ────────────────────────────────────────────────
+  // RSD is a solar-array safety device, so on a battery-only order it is
+  // irrelevant and the whole line (plus its compliance copy) is suppressed.
+  const rsdRaw = byKey("rsd");
   const rsdDeclined = !!(
     rsdRaw &&
     (rsdRaw.declined || (rsdRaw.directPrice || 0) === 0)
   );
-  const rsdAmount = rsdRaw
-    ? rsdDeclined
-      ? rsdRaw.notionalPrice || 0
-      : rsdRaw.directPrice || 0
-    : 0;
-  // RSD is a solar-array safety device. On a battery-only / no-solar order it
-  // is irrelevant, so suppress the declined "not availed" line and its
-  // compliance copy unless the order has solar panels or an RSD is availed.
   const rsdAvailed = !!(
     rsdRaw &&
     !rsdDeclined &&
@@ -1707,173 +1820,328 @@ function drawPackageDetailPage(mgr) {
   );
   const rsdRelevant = panelCount > 0 || rsdAvailed;
 
-  items
-    .filter(
-      (i) =>
-        i && i.description && i.description !== "None" && i.directPrice !== 0,
-    )
-    .forEach((i) => {
-      const d = i.description.toLowerCase();
-
-      if (d.includes("rapid shutdown") || d.includes("rsd")) {
-        // handled separately via rsdRaw
-      } else if (
-        d.includes("battery") ||
-        d.includes("ats") ||
-        d.includes("transfer switch") ||
-        d.includes("critical load")
-      ) {
-        batteryTot += i.directPrice;
-      } else if (
-        // Only target items specifically from Section 2F & Logistics
-        d.includes("location") ||
-        d.includes("delivery") ||
-        d.includes("canopy") ||
-        d.includes("service entry") ||
-        d.includes("trenching") ||
-        d.includes("cfei") ||
-        d.includes("interruption") ||
-        d.includes("sign and seal") ||
-        // Fallback catch just in case your data model passes the section ID
-        i.section === "2F" ||
-        i.section === "2f"
-      ) {
-        miscItems.push(i);
-      } else {
-        // Everything else defaults to the Solar Package!
-        // This now correctly includes Roof Preparation (Asphalt/Shingles/Tiled),
-        // AC/DC Excess cables, Panels, Inverters, and standard Mounts/Breakers.
-        solarTot += i.directPrice;
-      }
-    });
-
-  const body = [];
-
-  // 2. Build Rolled-up Rows
-  if (solarTot > 0) {
-    const kwpStr = Number(systemKwp).toFixed(1).replace(/\.0$/, "");
-    body.push([`${kwpStr} kWp Solar Package`, peso(solarTot)]);
+  // ── Group 1 · Solar sub-lines, in the frame's order ───────────────────────
+  const solarSubs = [];
+  const addSub = (item) => {
+    if (printable(item)) solarSubs.push({ text: item.description });
+  };
+  addSub(byKey("panels"));
+  addSub(byKey("mounting"));
+  addSub(byKey("cabling"));
+  addSub(byKey("labor"));
+  // 0-3 inverter rows, not exactly one.
+  ["inverter0", "inverter1", "inverter2"].forEach((k) => addSub(byKey(k)));
+  if (panelCount > 0) {
+    // Static inclusion lines. The breaker's "30AT to 125AT" range is NOT
+    // derivable — the catalog ships nine discrete single-rating SKUs and there
+    // is no ampacity/sizing logic anywhere in src/ — so per product decision it
+    // stays generic boilerplate carrying no amount. "AC/DC Excess" is likewise a
+    // category label covering dcExtra + acExtra, whose money is already inside
+    // the Solar group amount.
+    solarSubs.push({ text: "1 Unit/s AC Breaker, 30AT to 125AT, 2-pole" });
+    solarSubs.push({ text: "AC/DC Excess" });
   }
-  // #18: show the RSD line with its amount, marked not availed, and keep
-  // it out of the total (terms.netDirectPrice already excludes it). The
-  // "not availed*" note sits beside the amount, not on the item label.
-  // RSD sits directly beneath the Solar Package (it is a solar-array device).
+  // Story 026 #1 — the SELECTED roof material must appear. The roof item is
+  // always pushed by the engine but is P0 for the 'metal' default, so the
+  // printable() filter would drop it on the majority of quotes. Take it off the
+  // unfiltered list and render it label-only; its cost already reaches the total
+  // via netDirectPrice (story 026 #5).
+  // Gated on panelCount: the engine pushes the roof item unconditionally, so a
+  // battery-only order would otherwise advertise roof preparation it has no
+  // panels to mount.
+  const roofItem = byKey("roof");
+  if (panelCount > 0 && roofItem && roofItem.description) {
+    solarSubs.push({ text: roofItem.description });
+  }
   if (rsdRaw && rsdRelevant) {
-    if (rsdDeclined) {
-      // Updated per client instruction: append text to description and leave amount blank
-      body.push([
-        {
-          content: `${rsdRaw.description}* (excluded per client instruction)`,
-          styles: { textColor: [136, 106, 42], fontStyle: "italic" },
-        },
-        {
-          content: "", // Leaves the amount column blank
-          styles: { textColor: [136, 106, 42], fontStyle: "italic" },
-        },
-      ]);
-    } else {
-      body.push([`${rsdRaw.description}*`, peso(rsdAmount)]);
-    }
+    solarSubs.push(
+      rsdDeclined
+        ? {
+            text: `${rsdRaw.description}* (excluded per client instruction)`,
+            color: [136, 106, 42],
+            italic: true,
+          }
+        : { text: `${rsdRaw.description}*` },
+    );
   }
-  if (batteryKwh > 0 || batteryTot > 0) {
-    body.push([
-      `${Math.round(batteryKwh)} kWh Battery Package`,
-      peso(batteryTot),
-    ]);
-  }
+  // Standalone-RSD labor is priced separately and had no sub-line on any path,
+  // so on a battery-only order with RSD availed its money sat inside the Solar
+  // group amount with nothing on the page to point at.
+  addSub(byKey("rsdLabor"));
 
-  // 3. Add "Other costs:**" label IMMEDIATELY below RSD
-  body.push([
-    { content: "Other costs:**", styles: { fontStyle: "normal" } },
-    "",
-  ]);
-
-  // 4. Put the 2F/Misc items underneath "Other costs:**"
-  miscItems.forEach((i) => {
-    body.push([i.description, peso(i.directPrice)]);
+  // ── Group 2 · Battery sub-lines, in the frame's order ─────────────────────
+  // All five already exist verbatim on the item list. Each zeroes out when the
+  // rep unchecks it in Step 2A, at which point printable() drops it.
+  const batterySubs = [];
+  ["battery", "rack", "ats", "critLoads", "batteryLabor"].forEach((k) => {
+    const it = byKey(k);
+    if (printable(it)) batterySubs.push({ text: it.description });
   });
 
-  // 5. Add dynamic blank underline rows for manual write-ins
-  // If they have 2 misc items, it adds 3 blanks. If they have 5, it ensures at least 2 blanks.
-  const blankRowCount = Math.max(2, 5 - miscItems.length);
-  for (let j = 0; j < blankRowCount; j++) {
-    body.push(["", ""]);
+  // A 2F catalog row carries its OWN category (Engineering sets it per item in
+  // the admin editor, and calculations.js documents 'battery' as the intended
+  // setting for a reversal row). sumGroup() therefore moves such a row's money
+  // into Solar or Battery, but the fixed key lists above cannot name it — so
+  // without this the group amount would shift with the row printed on no line
+  // at all, and the footing check could not catch it because the column still
+  // adds up. These rows must NOT also consume a Misc write-in slot.
+  const categorized2F = (id) =>
+    items
+      .filter(
+        (i) =>
+          groupOf(i) === id && /^misc\d+$/.test(i.key || "") && printable(i),
+      )
+      .map((i) => ({ text: i.description }));
+  solarSubs.push(...categorized2F("solar"));
+  batterySubs.push(...categorized2F("battery"));
+
+  // ── Group 3 · Misc sub-lines + write-in slots ────────────────────────────
+  const miscSubs = items
+    .filter((i) => groupOf(i) === "misc" && printable(i))
+    .map((i) => ({ text: i.description }));
+  // The frame shows the unused slots labelled "Line 1".."Line 12", in a lighter
+  // tint so they read as write-in space rather than quoted items. They only
+  // appear once the group has something in it: on a quote with no 2F lines at
+  // all, twelve placeholders over a ₱0 amount read as an unfinished document,
+  // so the group is left to fall away entirely (pushGroup drops a group with no
+  // rows and no amount).
+  const miscHasContent = miscSubs.length > 0;
+  if (miscHasContent) {
+    const writeIns = Math.max(0, MISC_WRITE_IN_ROWS - miscSubs.length);
+    for (let n = 0; n < writeIns; n++) {
+      miscSubs.push({
+        text: `Line ${miscSubs.length + 1}`,
+        color: PKG_PLACEHOLDER_COLOR,
+      });
+    }
   }
 
-  // 6. Append Discounts and Final Total
-  const discountVal = Math.abs(
-    terms.promoDiscountAmount || terms.discountAmount || 0,
+  // ── Table body ────────────────────────────────────────────────────────────
+  const body = [];
+  const pushGroup = (title, subs, amount) => {
+    // Group presence is derived from the row predicate, not `amount > 0`. The
+    // engine supports negative credit/reversal lines, so a group whose net is
+    // zero or negative must still render rather than vanish while its money
+    // stays inside the Total.
+    if (!subs.length && !amount) return;
+    // The title row carries BOTH cells; the amount cell spans the title plus
+    // every sub-line. Covered rows supply only ONE cell — autotable reserves the
+    // spanned column itself.
+    body.push([
+      {
+        content: title,
+        styles: {
+          fontStyle: "bold",
+          fontSize: PKG_TITLE_FONT,
+          textColor: C.textBody,
+          cellPadding: {
+            top: PKG_TITLE_PAD,
+            bottom: PKG_SUB_PAD,
+            left: 2,
+            right: 2,
+          },
+          lineWidth: { top: PKG_RULE, right: PKG_RULE },
+        },
+      },
+      {
+        // peso() puts the minus INSIDE the glyph ("₱-427,741"); the discount
+        // row deliberately writes it before ("−₱17,170") to match the UI. A
+        // reversal row can push a group negative, so format both the same way.
+        content:
+          amount < 0 ? `−${peso(Math.abs(amount))}` : peso(amount),
+        rowSpan: subs.length + 1,
+        styles: {
+          halign: "right",
+          valign: "middle",
+          fontStyle: "bold",
+          fontSize: PKG_TITLE_FONT,
+          textColor: C.textBody,
+          lineWidth: { top: PKG_RULE },
+        },
+      },
+    ]);
+    subs.forEach((s) => {
+      body.push([
+        {
+          content: s.text,
+          styles: {
+            fontSize: PKG_SUB_FONT,
+            textColor: s.color || PKG_SUB_COLOR,
+            fontStyle: s.italic ? "italic" : "normal",
+            cellPadding: {
+              top: 0.35,
+              bottom: 0.35,
+              left: 2 + PKG_SUB_INDENT,
+              right: 2,
+            },
+            // Right rule only: the vertical divider runs continuously through
+            // the group rows and stops before the summary rows below.
+            lineWidth: { right: PKG_RULE },
+          },
+        },
+      ]);
+    });
+  };
+
+  const summaryRow = (label, amount, opts = {}) => {
+    const base = {
+      fontSize: opts.font || PKG_TITLE_FONT,
+      fontStyle: opts.bold ? "bold" : "normal",
+      textColor: opts.textColor || C.textBody,
+      cellPadding: {
+        top: PKG_TITLE_PAD,
+        bottom: PKG_TITLE_PAD,
+        left: 2,
+        right: 2,
+      },
+      lineWidth: { top: PKG_RULE },
+    };
+    if (opts.fill) base.fillColor = opts.fill;
+    body.push([
+      { content: label, styles: { ...base } },
+      { content: amount, styles: { ...base, halign: "right" } },
+    ]);
+  };
+
+  // ── Make the PRINTED column foot, not just the real arithmetic ────────────
+  // The partition is exact to ~1e-10, but peso() rounds every cell
+  // independently and several inputs are genuinely fractional — cabling's own
+  // comment at calculations.js:1536 already flags a ₱1 disagreement, and each
+  // shipped promo is a percentage code. So the five printed cells could sum to
+  // ±₱1 away from the printed Total on roughly a fifth of discounted quotes.
+  //
+  // Round every cell FIRST with peso()'s own rule (half away from zero — note
+  // Math.round disagrees on negatives, which matters now that a reversal row
+  // can push a group negative), then absorb the residual into the largest
+  // group, where a ₱1 adjustment is proportionally least visible. The Total
+  // stays terms.netDirectPrice: it is the number the schedule, page 4 and the
+  // lead payload all quote, so it must not be derived from the rounded parts.
+  const pesoRound = (v) => (v < 0 ? -Math.round(Math.abs(v)) : Math.round(v));
+  const rTotal = pesoRound(terms.netDirectPrice || 0);
+  const rDiscount = pesoRound(Math.abs(terms.discountAmount || 0));
+  const groupAmounts = {
+    solar: pesoRound(solarTot),
+    battery: pesoRound(batteryTot),
+    misc: pesoRound(miscTot),
+  };
+  const residual =
+    rTotal -
+    (groupAmounts.solar + groupAmounts.battery + groupAmounts.misc - rDiscount);
+  if (residual !== 0) {
+    const biggest = ["solar", "battery", "misc"].reduce((a, b) =>
+      Math.abs(groupAmounts[b]) > Math.abs(groupAmounts[a]) ? b : a,
+    );
+    groupAmounts[biggest] += residual;
+  }
+
+  const kwpStr = Number(systemKwp).toFixed(1).replace(/\.0$/, "");
+  pushGroup(
+    // A zero-panel order can still carry Solar money (standalone RSD), and
+    // "0 kWp Solar Package" reads as a bug. The Battery branch below already
+    // guarded this case.
+    systemKwp > 0 ? `${kwpStr} kWp Solar Package` : "Solar Package",
+    solarSubs,
+    groupAmounts.solar,
   );
-  if (discountVal > 0) {
-    body.push(["Less: Discounts", peso(-discountVal)]);
+  pushGroup(
+    batteryKwh > 0
+      ? `${Math.round(batteryKwh)} kWh Battery Package`
+      : "Battery Package",
+    batterySubs,
+    groupAmounts.battery,
+  );
+  // The engine's label has no Oxford comma; the frame does. Overridden here
+  // rather than in adminParams because PACKAGE_CATEGORIES also feeds the
+  // Summary tab and the admin editor.
+  pushGroup(
+    "Misc. Materials, Labor, Services, & Other Adjustments**",
+    miscSubs,
+    groupAmounts.misc,
+  );
+  // Mirrors pushGroup's own drop condition, so the ** legend in the amber box
+  // below is only printed when there is a ** on the page for it to explain.
+  const miscGroupShown = miscSubs.length > 0 || groupAmounts.misc !== 0;
+
+  // Always shown, per the frame. discountAmount is <= 0 (calculations.js:2084);
+  // the UI writes the minus sign BEFORE the peso glyph, so match it here.
+  summaryRow(
+    "Less: Discounts",
+    rDiscount === 0 ? "—" : `−${peso(rDiscount)}`,
+  );
+  summaryRow("Total (VAT Inclusive)", peso(rTotal), {
+    bold: true,
+    font: 9,
+    fill: [236, 243, 236],
+    textColor: [31, 82, 43],
+  });
+  // DST sits BELOW the Total, not above it: it is a tax on the LOAN, is not
+  // inside netDirectPrice (calculations.js:2085), and is already billed once as
+  // its own schedule milestone (schedule.js:592-598). Putting it between the
+  // groups and the Total would make the column stop footing. It is P0 for a
+  // direct purchase (tenor < 1), so the row only appears on a financed quote.
+  if ((terms.dst || 0) > 0) {
+    summaryRow("Documentary Stamp Tax (financing)", peso(terms.dst), {
+      font: PKG_SUB_FONT,
+      textColor: C.textMuted,
+    });
   }
 
-  // (Removed DST to match the base price logic)
-
-  body.push([
-    {
-      content: "Total Package Price (VAT Inclusive)",
-      styles: {
-        fontStyle: "bold",
-        fillColor: [236, 243, 236],
-        textColor: [31, 82, 43],
-        fontSize: 9,
-      },
-    },
-    {
-      content: peso(terms.netDirectPrice || 0),
-      styles: {
-        fontStyle: "bold",
-        fillColor: [236, 243, 236],
-        textColor: [31, 82, 43],
-        fontSize: 9,
-        halign: "right",
-      },
-    },
-  ]);
-
+  // Autotable continuation pages otherwise get no background, no header and no
+  // footer. The table is within roughly one row of breaking at this scale, so
+  // this is defensive rather than routine.
+  const pkgPagesDrawn = new Set();
   autoTable(mgr.doc, {
     startY: mgr.y,
     head: [["Equipment, Materials, and Labor", "Amount"]],
     body,
-    margin: { left: MARGIN, right: MARGIN },
+    // 'plain' keeps body cells transparent so the page watermark shows through.
+    // The default 'striped' theme sets table.fillColor 255 — opaque — on EVERY
+    // body cell via the style merge, not just alternating ones.
+    theme: "plain",
+    margin: { left: MARGIN, right: MARGIN, top: MARGIN + 14, bottom: 18 },
     tableWidth: CONTENT_W,
     styles: {
-      font: "helvetica",
-      fontSize: 8,
-      cellPadding: 2,
-      lineColor: [210, 210, 210],
-      lineWidth: 0.15,
+      // Must be "Inter", not "helvetica": autotable validates styles.fontStyle
+      // against getFontList()[styles.font] and silently substitutes
+      // availableFontStyles[0] when it misses. registerPdfFonts patches
+      // doc.setFont only — never jsPDF's fontmap — so getFontList().helvetica
+      // still lacks semibold/medium and every bold-ish cell would draw Regular.
+      font: "Inter",
+      fontSize: PKG_SUB_FONT,
+      cellPadding: PKG_SUB_PAD,
+      lineWidth: 0,
+      lineColor: PKG_LINE_COLOR,
       textColor: C.textBody,
+      overflow: "linebreak",
     },
     headStyles: {
-      fillColor: [31, 82, 43], // Your Brand Dark Green!
-      textColor: [255, 255, 255], // White text
+      fillColor: PKG_HEAD_FILL,
+      textColor: C.textBody,
       fontStyle: "bold",
-      fontSize: 8.5,
+      fontSize: PKG_TITLE_FONT,
+      lineWidth: { top: PKG_RULE, bottom: PKG_RULE },
     },
     didParseCell: (data) => {
-      // Right-align the Amount header
       if (data.section === "head" && data.column.index === 1) {
-        data.cell.styles.halign = "right";
+        data.cell.styles.halign = "center";
       }
     },
     columnStyles: {
-      0: { cellWidth: CONTENT_W - 45 },
-      1: { cellWidth: 45, halign: "right" },
+      0: { cellWidth: PKG_COL_LABEL },
+      1: { cellWidth: PKG_COL_AMOUNT, halign: "right" },
+    },
+    willDrawPage: (data) => {
+      if (data.pageNumber > 1 && !pkgPagesDrawn.has(data.pageNumber)) {
+        pkgPagesDrawn.add(data.pageNumber);
+        drawPageBackground(mgr);
+        drawTopHeaderFigma(mgr);
+      }
     },
   });
+  reconcilePageNumber(mgr);
   mgr.y = mgr.doc.lastAutoTable.finalY + 6;
 
-  // Render Inclusions and Warranty (Unchanged)
-  const leftX = MARGIN;
-  const rightX = MARGIN + CONTENT_W * 0.52;
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(11);
-  mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text("Inclusions", leftX, mgr.y + 4);
-  mgr.doc.text("Warranty coverage", rightX, mgr.y + 4);
-
+  // ── Inclusions / Warranty, as two prose paragraphs per the frame ──────────
   const inclusions = [
     "Free site assessment",
     "Complete installation by certified team",
@@ -1883,45 +2151,54 @@ function drawPackageDetailPage(mgr) {
     "Monitoring app access",
     "Dedicated 24/7 technical support team",
   ];
-
   const warranties = [
-    { label: "Solar Panels Performance", duration: "30 years" },
-    { label: "Solar Panels Product Warranty", duration: "12 years" },
-    { label: "Inverter", duration: "5 years" },
-    { label: "Battery", duration: "5 years" },
-    { label: "Workmanship", duration: "1 year" },
+    { label: "Solar Panels Performance", duration: "30 Years" },
+    { label: "Solar Panels Product Warranty", duration: "12 Years" },
+    { label: "Inverter", duration: "5 Years" },
+    { label: "Battery", duration: "5 Years" },
+    { label: "Workmanship", duration: "1 Year" },
   ];
 
-  let currentY = mgr.y + 14;
-  let warrantyY = mgr.y + 14;
-  const checkX = MARGIN;
+  const colGap = 8;
+  const colW = (CONTENT_W - colGap) / 2;
+  const leftX = MARGIN;
+  const rightX = MARGIN + colW + colGap;
 
-  inclusions.forEach((item) => {
-    mgr.doc.setDrawColor(...C.brandGreen);
-    mgr.doc.setLineWidth(0.8);
-    mgr.doc.line(checkX, currentY - 1, checkX + 1.5, currentY + 0.5);
-    mgr.doc.line(checkX + 1.5, currentY + 0.5, checkX + 4.5, currentY - 3);
+  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFontSize(7);
+  const inclLines = mgr.doc.splitTextToSize(inclusions.join(", "), colW);
+  const warrLines = mgr.doc.splitTextToSize(
+    warranties.map((w) => `${w.label} (${w.duration})`).join(", "),
+    colW,
+  );
+  const proseLineH = 3.2;
+  // Measured at this split and 7pt: Inclusions wraps to 4 lines and Warranty to
+  // 2, so Inclusions drives the height — but take the max so the block stays
+  // correct if either copy changes.
+  const proseH = 5 + Math.max(inclLines.length, warrLines.length) * proseLineH;
 
-    mgr.doc.setFont("helvetica", "normal");
-    mgr.doc.setFontSize(7.5);
-    mgr.doc.setTextColor(...C.textBody);
-    mgr.doc.text(item, checkX + 8, currentY);
+  // This block previously had no page-break guard at all — the only one in the
+  // function was for the amber box below. Once the table itemises, mgr.y lands
+  // near the footer baseline and the block drew straight off the page edge and
+  // vanished instead of reflowing.
+  pageBreakIfNeeded(mgr, proseH + 4);
+  const proseY = mgr.y + 4;
 
-    currentY += 7.5;
-  });
+  mgr.doc.setFont("helvetica", "bold");
+  mgr.doc.setFontSize(9);
+  mgr.doc.setTextColor(...C.textBody);
+  mgr.doc.text("Inclusions", leftX, proseY);
+  mgr.doc.setTextColor(...C.brandGreen);
+  mgr.doc.text("Warranty", rightX, proseY);
 
-  warranties.forEach((w) => {
-    mgr.doc.setFont("helvetica", "normal");
-    mgr.doc.setFontSize(7.5);
-    mgr.doc.setTextColor(...C.textBody);
+  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFontSize(7);
+  mgr.doc.setTextColor(...C.textBody);
+  mgr.doc.text(inclLines, leftX, proseY + 5);
+  mgr.doc.setTextColor(...C.brandGreen);
+  mgr.doc.text(warrLines, rightX, proseY + 5);
 
-    mgr.doc.text(w.label, rightX, warrantyY);
-    mgr.doc.text(w.duration, PAGE_W - MARGIN, warrantyY, { align: "right" });
-
-    warrantyY += 7.5;
-  });
-
-  mgr.y = Math.max(currentY, warrantyY) + 4;
+  mgr.y = proseY + proseH + 3;
 
   // ── Compliance / RSD disclaimer (approved Legal copy, backlog #4 & #18) ──
   // The RSD compliance paragraph (and the declined "did not choose" copy) is
@@ -1950,10 +2227,22 @@ function drawPackageDetailPage(mgr) {
     },
   ]);
 
+  // The site-assessment disclaimer applies to EVERY quote, so it always
+  // renders. Only its heading changes: it names the ** row when that row is on
+  // the page, and stands on its own when the Misc group fell away — otherwise
+  // the page would carry a ** legend with no ** to explain.
   compParas.push([
-    { t: "**Other Costs", b: true },
     {
-      t: ". Final system layout and price subject to site assessment. Roof orientation, shading, structural load, and available area may affect panel placement, output, and price.",
+      // The period belongs to the bold heading: wrapCompPara appends a space to
+      // every word, so leading it on the next span renders "Adjustments ." with
+      // a gap before the stop.
+      t: miscGroupShown
+        ? "**Misc. Materials, Labor, Services, & Other Adjustments."
+        : "Site assessment.",
+      b: true,
+    },
+    {
+      t: "Final system layout and price subject to site assessment. Roof orientation, shading, structural load, and available area may affect panel placement, output, and price.",
       b: false,
     },
   ]);
@@ -2687,13 +2976,23 @@ function drawScheduleHeaderFigma(mgr) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(fxpt(32));
   doc.setTextColor(73, 73, 73);
-  doc.text(`Reference ID ${ctx.quoteRef}`, fxmm(2389), fxmm(107), {
+  // Same three meta lines as drawTopHeaderFigma; the schedule title sits at
+  // y=321px (27.2mm), clear of the third line at y=221px (18.7mm).
+  doc.text(`Reference No.: ${ctx.quoteRef}`, fxmm(2389), fxmm(107), {
     align: "right",
   });
   doc.text(
-    `Quotation valid until ${fmtDate(ctx.validUntil)}`,
+    `Date Issued: ${fmtDate(ctx.generatedDate)}`,
     fxmm(2389),
     fxmm(164),
+    {
+      align: "right",
+    },
+  );
+  doc.text(
+    `Valid Until: ${fmtDate(ctx.validUntil)}`,
+    fxmm(2389),
+    fxmm(221),
     {
       align: "right",
     },
@@ -2702,6 +3001,12 @@ function drawScheduleHeaderFigma(mgr) {
   doc.setFontSize(fxpt(48));
   doc.setTextColor(0, 106, 198);
   doc.text("Schedule of payments", fxmm(85), fxmm(321), { baseline: "top" });
+  // Leave the cursor below the header, the way drawTopHeaderFigma does. Without
+  // this, mgr.y stayed at MARGIN, so when pageBreakIfNeeded drew this header on
+  // an overflow page the caller's next block (the opaque early-payoff note box)
+  // painted straight over it. fxmm(404) is the schedule's own scheduleTop —
+  // MARGIN + 14 would land inside the "Schedule of payments" title.
+  mgr.y = fxmm(404);
 }
 
 function drawScheduleFooterFigma(mgr) {
@@ -3252,31 +3557,37 @@ export async function generateProposalPdf({
   drawCoverPage1(mgr);
 
   // Page 2: Step 1
-  newPage(mgr);
+  // Story 004 AC3 — pass the page's header drawer so an overflow page created
+  // by pageBreakIfNeeded carries the logo, reference and both dates too.
+  newPage(mgr, { header: drawTopHeaderFigma });
   drawStep1Page(mgr);
 
   // Page 3: System package in detail
-  newPage(mgr);
+  newPage(mgr, { header: drawTopHeaderFigma });
   drawPackageDetailPage(mgr);
 
   // Page 4: Savings & payment options
-  newPage(mgr);
+  newPage(mgr, { header: drawTopHeaderFigma });
   drawPaymentOptionsPage(mgr);
 
   // Page 5: Understanding your system's potential (vector, matches Figma 1:1496)
-  newPage(mgr);
+  newPage(mgr, { header: drawTopHeaderFigma });
   drawVisualizingPage(mgr);
 
   // Pages 6-7: Schedule of Payments (RTO terms)
   // We only draw the schedule table if they are financing (tenor > 0)
   if (state.tenor > 0) {
-    newPage(mgr, { scheduleExact: true });
+    newPage(mgr, { scheduleExact: true, header: drawScheduleHeaderFigma });
     drawSchedulePage(mgr);
   }
 
   // Page 8: Terms & conditions (own acceptance block carries the signature —
   // suppress the per-page footer signature line here to match the Figma design)
-  newPage(mgr, { figmaExact: true, noSignatureLine: true });
+  newPage(mgr, {
+    figmaExact: true,
+    noSignatureLine: true,
+    header: drawTopHeaderFigma,
+  });
   drawTermsAndConditions(mgr);
 
   // Re-stamp totals

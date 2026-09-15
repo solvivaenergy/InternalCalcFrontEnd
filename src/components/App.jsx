@@ -25,6 +25,7 @@ import {
 import * as paramsService from '../lib/paramsService.js';
 import { isValidPhPhone, formatPhPhone } from '../lib/validation.js';
 import { buildLeadPayload, submitLead, makeLeadRef, LEAD_CONSENT_TEXT } from '../lib/lead.js';
+import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE } from '../lib/crmContact.js';
 
 import MaintenanceGate, { readGatePass } from './MaintenanceGate.jsx';
 import Calculator from './Calculator.jsx';
@@ -67,6 +68,27 @@ const BUNDLED_DEFAULT_DP   = ADMIN_PARAMS.defaultDownPaymentPct;  // v3-159
 // below once the fetch resolves. These two constants complete that pattern.
 const BUNDLED_DEFAULT_IRR_YEARS = ADMIN_PARAMS.irrYearsDefault;        // v3-188
 const BUNDLED_DEFAULT_DU_INFL   = ADMIN_PARAMS.duRateInflationDefault; // v3-188
+
+// Back-derive the installation date from an issue date: seed at +14 days, then
+// walk forward until the first post-install due date clears the minimum-days
+// floor. Bounded as a guard against a non-numeric param.
+//
+// Shared by the model memo and handleGeneratePdf. The memo is keyed on
+// generatedDate, so a PDF stamped with a FRESH issue date must re-derive this
+// against that date — otherwise it prints a new "Date Issued" beside a payment
+// schedule still anchored to the tab-session date.
+function deriveInstallDate(anchorDate) {
+  const minDays = ADMIN_PARAMS.minDaysToFirstPostInstallPayment ?? 44;
+  const targetFirstPaymentMs = anchorDate.getTime() + minDays * 86400000;
+  const installDate = new Date(anchorDate);
+  installDate.setDate(installDate.getDate() + 14);  // seed: prior hardcoded value
+  for (let guard = 0; guard < 200; guard++) {
+    const candidateFirst = firstPostInstallDueDate(installDate);
+    if (candidateFirst.getTime() >= targetFirstPaymentMs) break;
+    installDate.setDate(installDate.getDate() + 1);
+  }
+  return installDate;
+}
 
 export function makeInitialState(kind = 'all') {
   const step1 = {
@@ -663,7 +685,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // anchored to the original quote-creation moment across reloads. Without
   // this, every reload would reset the validity window — which is wrong if
   // the customer is just refreshing their browser.
-  const [generatedDate] = useState(() => {
+  const [generatedDate, setGeneratedDate] = useState(() => {
     try {
       const raw = sessionStorage.getItem(GENERATED_DATE_KEY);
       if (raw) {
@@ -812,6 +834,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     setState(makeInitialState('all'));   // wipe Steps 1-4 to defaults
     updateMode('customer');               // flip mode (clears solviva_mode in storage)
     setAdminAccess('none');               // v3-203 — locking drops admin access too
+    // Story 004 AC4 — the issue date is per-QUOTE, so it must not survive the
+    // reset. Without this the next customer served in the same tab inherited
+    // the previous quote's issue date AND its validity window.
+    const fresh = new Date();
+    try { sessionStorage.setItem(GENERATED_DATE_KEY, fresh.toISOString()); } catch (_) { /* ignore */ }
+    setGeneratedDate(fresh);
     setLockConfirmOpen(false);
   };
 
@@ -927,9 +955,34 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       setActiveTab(originalTab);
 
       // Step 8: Build PDF
+      // Story 004 AC1/AC4 — the issue date must come from the GENERATION event,
+      // not from whenever the tab was opened. Stamp it here, persist it so the
+      // validity window still survives a reload, and pass the freshly computed
+      // pair through directly: setGeneratedDate is async, so the useMemo'd
+      // validUntil would still hold the previous value on this tick.
+      const issuedAt = new Date();
+      try { sessionStorage.setItem(GENERATED_DATE_KEY, issuedAt.toISOString()); } catch (_) { /* ignore */ }
+      setGeneratedDate(issuedAt);
+      const validityDays = ADMIN_PARAMS.quoteValidityDays ?? DEFAULTS.quoteValidityDays;
+      const issuedValidUntil = new Date(issuedAt);
+      issuedValidUntil.setDate(issuedValidUntil.getDate() + validityDays);
+
+      // `model` is a useMemo keyed on generatedDate, so the value in scope here
+      // was built from the PREVIOUS anchor — setGeneratedDate above cannot
+      // rebind it on this tick. Re-derive the date-dependent parts against
+      // issuedAt, or the PDF prints a fresh "Date Issued" next to a payment
+      // schedule whose first due date is measured from the old one.
+      const issuedInstallDate = deriveInstallDate(issuedAt);
+      const issuedModel = {
+        ...model,
+        installDate: issuedInstallDate,
+        annex: buildAnnex(model.fullState, ADMIN_PARAMS, model.terms, issuedInstallDate),
+      };
+
       const { generateProposalPdf } = await import('../lib/pdfGenerator.js');
       await generateProposalPdf({
-        state, model, contact, agent, generatedDate, validUntil,
+        state, model: issuedModel, contact, agent,
+        generatedDate: issuedAt, validUntil: issuedValidUntil,
         brand: BRAND, adminParams: ADMIN_PARAMS, disclaimers: DISCLAIMERS,
         proposalContent: PROPOSAL_CONTENT,
         snapshots: { visualizing: visualizingPng, summary: summaryPng },
@@ -1206,15 +1259,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // forward one day at a time until the rounded first-payment date clears
     // the threshold. Bounded by max+1 days as a safety guard against infinite
     // loops if the param somehow lands at a non-numeric value.
-    const minDays = ADMIN_PARAMS.minDaysToFirstPostInstallPayment ?? 44;
-    const targetFirstPaymentMs = generatedDate.getTime() + minDays * 86400000;
-    const installDate = new Date(generatedDate);
-    installDate.setDate(installDate.getDate() + 14);  // seed: prior hardcoded value
-    for (let guard = 0; guard < 200; guard++) {
-      const candidateFirst = firstPostInstallDueDate(installDate);
-      if (candidateFirst.getTime() >= targetFirstPaymentMs) break;
-      installDate.setDate(installDate.getDate() + 1);
-    }
+    const installDate = deriveInstallDate(generatedDate);
     const annex = buildAnnex(fullState, ADMIN_PARAMS, terms, installDate);
     return {
       recommended, recPanelCount, panelCount, systemKwp,
@@ -1236,6 +1281,9 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       // v3-106 — stock flags for the Step 2 UI (out-of-stock notices).
       panelsAvailable, anyBatteryInStock, rsdInStock,
       pkg, terms, popularTenors, directPurchase, schedule, cashFlows, annex, installDate,
+      // Exposed so handleGeneratePdf can rebuild the date-dependent annex
+      // against a freshly stamped issue date (see deriveInstallDate).
+      fullState,
     };
   }, [state, generatedDate, paramsRev]);
 
@@ -1652,6 +1700,48 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   const [consentGiven, setConsentGiven] = useState(false);
   const [submitStatus, setSubmitStatus] = useState('idle'); // idle | sending | sent | error
 
+  // 043D — Odoo lead lookup. Same idle/loading/done/error shape as
+  // submitStatus above, so this form keeps one async idiom.
+  const [projectNo, setProjectNo] = useState('');
+  const [lookup, setLookup] = useState('idle');   // idle | loading | done | error
+  const [lookupMsg, setLookupMsg] = useState('');
+
+  const runLookup = async () => {
+    if (!PROJECT_NUMBER_RE.test(projectNo)) return;
+    setLookup('loading');
+    setLookupMsg('');
+    const res = await fetchCrmContact(projectNo);
+    if (!res.ok) {
+      setLookup('error');
+      setLookupMsg(res.error);
+      return;
+    }
+    const { name, email, mobile, alternateName, warnings } = res.contact;
+    // Write into the DRAFT, never via setContact. draftCustomer is seeded once
+    // at mount (there is no prop-sync effect and the component has no key), so
+    // committing to the parent here would leave the visible inputs stale and
+    // the subsequent Save would overwrite the fetched values with them.
+    // The rep still commits with "Save changes"; Cancel still discards.
+    setDraftCustomer(d => ({
+      ...d,
+      ...(name ? { name } : {}),
+      ...(email ? { email } : {}),
+      // Odoo stores "+63 917 841 5976", which this form's own validator
+      // rejects; the backend returns the canonical 11-digit form and
+      // formatPhPhone renders it the way the field expects.
+      ...(mobile ? { mobile: formatPhPhone(mobile) } : {}),
+      // installAddress deliberately untouched — out of AC2 scope, and a CRM
+      // contact address is not necessarily the installation site.
+    }));
+    setLookup('done');
+    const notes = describeWarnings(warnings);
+    if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+    setLookupMsg(
+      `${name ? `✓ ${name}` : '✓ Lead'} — loaded from lead ${projectNo}` +
+      (notes.length ? ` · ${notes.join('; ')}` : ''),
+    );
+  };
+
   const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || '').trim());
 
   // Per-field validity (used for inline error styling).
@@ -1795,6 +1885,46 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       <div>
         <div style={groupTitle}>Customer details</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* 043D — look a lead up in Odoo instead of retyping it. Rep-only:
+              the customer-facing form has no Project Number to enter. This is
+              a layout gate, not a security one — `mode` is flipped by a
+              client-side password, so the backend verifies the JWT itself. */}
+          {!isCustomer && (
+            <div>
+              <span style={labelStyle}>Project number (Odoo)</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input style={{ ...inputStyle, flex: 1 }} value={projectNo}
+                       inputMode="numeric"
+                       onChange={e => { setProjectNo(e.target.value.replace(/\D+/g, '')); setLookup('idle'); }}
+                       onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); runLookup(); } }}
+                       placeholder="52210" />
+                <button type="button" onClick={runLookup}
+                        disabled={lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)}
+                        style={{
+                          fontSize: 12.5, fontWeight: 600, padding: '7px 14px',
+                          borderRadius: 6, border: '1px solid #25543A',
+                          background: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? '#9CA3AF' : '#25543A',
+                          color: '#fff', cursor: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? 'default' : 'pointer',
+                          fontFamily: 'inherit', whiteSpace: 'nowrap',
+                        }}>
+                  {lookup === 'loading' ? 'Searching…' : 'Search'}
+                </button>
+              </div>
+              {/* Mirrors errMsg's styling but is NOT gated on showErrors — the
+                  lookup result must always be visible. Deliberately never calls
+                  setShowErrors: that has no path back to false, so a failed
+                  lookup would permanently redden Name and Email. */}
+              {lookupMsg && (
+                <span role="status" aria-live="polite"
+                      style={{
+                        fontSize: 10.5, marginTop: 3, display: 'block',
+                        color: lookup === 'error' ? '#DC2626' : '#15803D',
+                      }}>
+                  {lookupMsg}
+                </span>
+              )}
+            </div>
+          )}
           <div>
             <span style={labelStyle}>Name</span>
             <input style={inp(err.custName)} value={draftCustomer.name}
