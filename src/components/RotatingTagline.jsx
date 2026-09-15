@@ -18,7 +18,13 @@
 // (HEADLINE_IDX_KEY) so first-render index varies across visits — preserves
 // the "different every visit" feel layered on top of in-page cycling.
 //
-// Rendered at the top of the Calculator tab (above Step 1) by Calculator.jsx.
+// v3-196 — NO LONGER RENDERED ON DESKTOP. Calculator.jsx used to mount
+// <RotatingTagline /> above Step 1; that was removed (user-directed), so the
+// default-export component below currently has no caller.
+//
+// The file stays because the TAGLINES array is STILL LIVE: MobileFlow.jsx's
+// WelcomeScreen imports it and rotates the same 15 lines as its hero <h1>.
+// Do not delete TAGLINES without giving that screen a headline first.
 // No props; component is self-contained.
 // =============================================================================
 
