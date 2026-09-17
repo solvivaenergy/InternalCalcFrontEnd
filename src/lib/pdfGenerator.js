@@ -691,6 +691,8 @@ function drawCoverPage1(mgr) {
       pitch = 110,
       colW = 986,
       wrapValues = false,
+      // y the column's content must not cross. Only the last row uses it.
+      bottomPx = null,
     } = opt || {};
     if (title) T(title, colXpx, topPx, 46, { style: "semibold" });
     const contentTop = title ? topPx + 100 : topPx;
@@ -712,10 +714,37 @@ function drawCoverPage1(mgr) {
     // content. A single-line row is byte-identical to the old layout
     // (contentH 38 → rowHeight 110 → the original pitch), so the Figma grid is
     // unchanged for every quote that did not previously overflow.
+    // Line budget for the LAST row, computed rather than hardcoded.
+    //
+    // The last row (the installation site) may wrap freely at full size — it
+    // is the one row with nothing below it inside the column, so it only eats
+    // the gap before whatever the caller draws next. `bottomPx` is that limit.
+    // How many lines fit depends on where the row actually starts, which in
+    // turn depends on whether the EMAIL above it wrapped: starting at 1279 it
+    // takes 4 lines, at 1325 only 3. A fixed cap is wrong in one of those two
+    // cases, so it is derived from the running y instead.
+    //
+    // SAFETY covers the gap between the y passed to T() and where ink really
+    // lands: T() uses baseline "top", and jsPDF puts the glyph box ~8px above
+    // the given coordinate, so the nominal 1502 behaves as ~1494.
+    //
+    // Earlier rows stay capped at 2 because their growth pushes every row
+    // below them down and consumes the same budget. Shrinking survives only as
+    // the beyond-budget fallback — at that point the alternative is an
+    // overlap, which is worse than a smaller font.
     const maxLines = 2;
+    const SAFETY = 24;
     const lead = 8; // gap between wrapped lines
     let y = contentTop;
     rows.forEach((r, i) => {
+      let rowMaxLines = maxLines;
+      if (i === rows.length - 1 && bottomPx) {
+        const avail = bottomPx - SAFETY - y;
+        rowMaxLines = Math.max(
+          1,
+          Math.floor((avail - textSize) / (textSize + lead)) + 1,
+        );
+      }
       // Figma: labels are Inter Medium, black; values Inter Regular, black.
       T(r[0], colXpx, y, textSize, { style: "medium", c: BLACK });
 
@@ -726,7 +755,7 @@ function drawCoverPage1(mgr) {
         // Step the value down until it fits, rather than dropping content.
         // The floor keeps it legible; at 26px a 46mm column holds ~2x the text
         // of one line at 38px, which covers the longest address seen.
-        while (lines.length > maxLines && size > 26) {
+        while (lines.length > rowMaxLines && size > 26) {
           size -= 2;
           d.setFontSize(fxpt(size));
           lines = d.splitTextToSize(String(r[1] ?? "-"), fxmm(valueW));
@@ -759,7 +788,10 @@ function drawCoverPage1(mgr) {
     ],
     88,
     845,
-    { wrapValues: true },
+    // bottomPx is the "System package" tiles title below (drawTilesRow at
+    // y=1502), so the installation site can wrap to as many full-size lines as
+    // the gap allows without ever running into it.
+    { wrapValues: true, bottomPx: 1502 },
   );
   drawInfoColumn(
     "Presented by:",
