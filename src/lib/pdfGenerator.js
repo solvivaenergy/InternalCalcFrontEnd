@@ -696,28 +696,55 @@ function drawCoverPage1(mgr) {
     const contentTop = title ? topPx + 100 : topPx;
     const valueXpx = colXpx + labelW + 56;
     const valueW = colW - labelW - 56;
-    rows.forEach((r, i) => {
-      const y = contentTop + i * pitch;
 
+    // Rows used to sit at a FIXED i * pitch with values hard-capped at
+    // .slice(0, 2) lines, which produced two separate defects:
+    //   • a two-line value overlapped the row separator. T() draws with
+    //     baseline "top", so the second line spans y+46 .. y+84 while the
+    //     separator is at y + textSize + (pitch - textSize)/2 = y+74. Every
+    //     wrapped value crossed it — visible on any long email address.
+    //   • anything past two lines was silently DISCARDED. A long free-typed
+    //     installation address therefore swallowed the city / province /
+    //     region appended after it: the text was built correctly and then
+    //     thrown away by the cap.
+    // Now: the value is shrunk until it fits maxLines, never truncated, and
+    // rows advance by their MEASURED height so the separator always clears the
+    // content. A single-line row is byte-identical to the old layout
+    // (contentH 38 → rowHeight 110 → the original pitch), so the Figma grid is
+    // unchanged for every quote that did not previously overflow.
+    const maxLines = 2;
+    const lead = 8; // gap between wrapped lines
+    let y = contentTop;
+    rows.forEach((r, i) => {
       // Figma: labels are Inter Medium, black; values Inter Regular, black.
       T(r[0], colXpx, y, textSize, { style: "medium", c: BLACK });
 
+      let lines = [String(r[1] ?? "-")];
+      let size = textSize;
       if (wrapValues) {
-        const valLines = d.splitTextToSize(String(r[1] ?? "-"), fxmm(valueW));
-        valLines
-          .slice(0, 2)
-          .forEach((ln, li) =>
-            T(ln, valueXpx, y + li * (textSize + 8), textSize),
-          );
-      } else {
-        T(String(r[1] ?? "-"), valueXpx, y, textSize);
+        lines = d.splitTextToSize(lines[0], fxmm(valueW));
+        // Step the value down until it fits, rather than dropping content.
+        // The floor keeps it legible; at 26px a 46mm column holds ~2x the text
+        // of one line at 38px, which covers the longest address seen.
+        while (lines.length > maxLines && size > 26) {
+          size -= 2;
+          d.setFontSize(fxpt(size));
+          lines = d.splitTextToSize(String(r[1] ?? "-"), fxmm(valueW));
+        }
       }
+      lines.forEach((ln, li) =>
+        T(ln, valueXpx, y + li * (size + lead), size),
+      );
+
+      const contentH = lines.length * (size + lead) - lead;
+      const rowH = contentH + (pitch - textSize);
       if (i < rows.length - 1) {
-        const lineY = y + textSize + (pitch - textSize) / 2;
+        const lineY = y + contentH + (pitch - textSize) / 2;
         d.setDrawColor(210, 210, 210);
         d.setLineWidth(0.3);
         d.line(fxmm(colXpx), fxmm(lineY), fxmm(colXpx + colW), fxmm(lineY));
       }
+      y += rowH;
     });
   };
 
@@ -1979,10 +2006,22 @@ function drawPackageDetailPage(mgr) {
         rowSpan: subs.length + 1,
         styles: {
           halign: "right",
-          valign: "middle",
+          // Top, not middle: centring it over a 10-row span floated the amount
+          // away from the group title it belongs to, so the eye had to travel
+          // to pair them. Aligned to the title row instead.
+          valign: "top",
           fontStyle: "bold",
           fontSize: PKG_TITLE_FONT,
           textColor: C.textBody,
+          // Match the group title's top padding, or the amount sits ~1mm above
+          // it: the title row sets PKG_TITLE_PAD while this cell would
+          // otherwise inherit the table's PKG_SUB_PAD.
+          cellPadding: {
+            top: PKG_TITLE_PAD,
+            bottom: PKG_SUB_PAD,
+            left: 2,
+            right: 2,
+          },
           lineWidth: { top: PKG_RULE },
         },
       },
