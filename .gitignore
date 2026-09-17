@@ -4,3 +4,22 @@ dist/
 .env.local
 *.log
 .netlify/
+
+# Office lock/temp files — created whenever a spreadsheet in the repo is opened
+# (e.g. "~$Serviceable Location List.xlsx"). Never wanted in a commit.
+~$*
+
+# Superseded location-distance working files. The committed source of truth is
+# LUZON_REGIONS in src/config.js, with the per-row provenance in
+# locations-final.csv. These two were intermediate measurement passes on bases
+# that were later abandoned — hand estimates, then FASTEST-route distances
+# before the toll-free basis was settled — so a future reader finding them
+# would get numbers that disagree with what ships.
+/missing-locations-km.csv
+/locations-routed-km.csv
+
+# The Serviceable Location List is tracked as the .xlsx original. Its CSV export
+# is deliberately NOT: two names are truncated at the "ñ" ("Los Ba" for Los
+# Baños, and Dasmariñas lost its tilde), so committing both invites a reader to
+# trust the damaged copy. Re-export from the xlsx if a CSV is ever needed.
+/Serviceable Location List.csv
