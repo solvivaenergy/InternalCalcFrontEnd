@@ -41,7 +41,7 @@ import { DEVICES } from '../data/devices.js';
 import { useMemo } from 'react';
 import { availableDeliveryLocations, availableBatteryPackages, optimizeBatteryPackage,
          DISCLAIMERS } from '../data/adminParams.js';
-import { LUZON_REGIONS, LUZON_FREE_TRAVEL_KM, resolveLocation } from '../config.js';
+import { LUZON_REGIONS, LUZON_FREE_TRAVEL_KM, resolveLocation, fmtKwp } from '../config.js';
 import { formatHour12, optimizeSystem } from '../lib/schedule.js';
 import {
   allowedDpOptions, resolveMinDpPct, DP_EPS,
@@ -1049,7 +1049,7 @@ function RecommendationScreen({ state, model, adminParams, go }) {
         <div className="mfl-heronum">{model.panelCount} <small>solar panel{model.panelCount === 1 ? '' : 's'}</small></div>
         <div className="mfl-specs">
           <div className="mfl-spec">
-            <div className="v">{model.systemKwp.toFixed(2)} kWp</div>
+            <div className="v">{fmtKwp(model.systemKwp)} kWp</div>
             <div className="l">System size{' '}
               <Info title="System size (kWp)">
                 <p><b>Kilowatt-peak</b> is the system&rsquo;s maximum output under full

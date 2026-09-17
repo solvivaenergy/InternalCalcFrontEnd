@@ -28,7 +28,7 @@ import { availableInverters, directFromCogs, signedDirectFromCogs, buildMarginRe
 import { availableDeliveryLocations, availableMiscCatalog,
          findMiscCatalogItem, MISC_CATALOG_OTHER, racksNeeded } from '../data/adminParams.js';
 import { INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_FREE_TRAVEL_KM, LUZON_REGIONS, resolveLocation } from '../config.js';
+         LUZON_FREE_TRAVEL_KM, LUZON_REGIONS, resolveLocation, fmtKwp } from '../config.js';
 import {
   SectionCard, Subsection, Field, NumberInput, Select, Checkbox, TextInput,
   CalloutBox, RecommendationPill, StatTile, COLORS, fmt, RSD_INFO,
@@ -538,7 +538,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                       amber={systemSizeOverridden}
                     >
                       <div style={selectedTileStyles.value(systemSizeOverridden)}>
-                        {fmt.num(model.systemKwp, 2)}
+                        {fmtKwp(model.systemKwp)}
                       </div>
                       <div style={selectedTileStyles.sub}>kWp</div>
                     </SelectedTile>
@@ -1074,7 +1074,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                 <div style={{ marginTop: 12 }}>
                   <CalloutBox kind="warn">
                     <strong>DC/AC ratio exceeds maximum.</strong> Your system has
-                    {' '}{fmt.num(model.systemKwp, 2)} kWp of panels but only
+                    {' '}{fmtKwp(model.systemKwp)} kWp of panels but only
                     {' '}{fmt.num(sizing.totalInverterKw, 2)} kW of inverter capacity.
                     Add a larger inverter or a second/third inverter to bring the
                     ratio within {fmt.num(sizing.maxRatio, 1)}.

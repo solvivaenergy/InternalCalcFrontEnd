@@ -27,7 +27,7 @@
 
 import jspdfModule from "jspdf";
 import autoTableModule from "jspdf-autotable";
-import { LUZON_REGIONS } from "../config.js";
+import { LUZON_REGIONS, fmtKwp } from "../config.js";
 
 const jsPDF = jspdfModule.jsPDF || jspdfModule.default || jspdfModule;
 const autoTable =
@@ -806,7 +806,7 @@ function drawCoverPage1(mgr) {
     [
       [
         {
-          txt: hasSolar ? `${Math.round(systemKwp)}kWp` : "N/A",
+          txt: hasSolar ? `${fmtKwp(systemKwp)}kWp` : "N/A",
           size: 100,
           c: DGREEN,
         },
@@ -965,7 +965,7 @@ function drawSystemRow(mgr, showHeading = true) {
   const tileH = 28;
   const tiles = [
     {
-      bigNum: hasSolar ? `${Math.round(systemKwp)}kWp` : "N/A",
+      bigNum: hasSolar ? `${fmtKwp(systemKwp)}kWp` : "N/A",
       line1: "Peak system",
       line2: hasSolar ? "capacity" : "Not included",
     },
@@ -1763,7 +1763,6 @@ function drawSavingsDisclaimerBox(mgr) {
 // one-place swap.
 const PKG_HEAD_FILL = [232, 237, 232];
 const PKG_SUB_COLOR = [93, 112, 133];
-const PKG_PLACEHOLDER_COLOR = [168, 180, 194];
 const PKG_LINE_COLOR = [210, 210, 210];
 
 // Type scale for the itemised table, measured against the embedded Inter
@@ -1785,12 +1784,6 @@ const PKG_SUB_INDENT = 4;
 const PKG_RULE = 0.15;
 const PKG_COL_AMOUNT = CONTENT_W * 0.32;
 const PKG_COL_LABEL = CONTENT_W - PKG_COL_AMOUNT;
-
-// Mirrors MISC_MAX_ROWS in src/components/Step2Packages.jsx (not exported from
-// there). The frame draws twelve Misc slots; real 2F lines consume them and
-// blanks fill the rest. The Math.max below means a restored session carrying
-// more than twelve rows still prints every priced line rather than dropping one.
-const MISC_WRITE_IN_ROWS = 12;
 
 function drawPackageDetailPage(mgr) {
   const { model, state } = mgr.ctx;
@@ -1937,26 +1930,18 @@ function drawPackageDetailPage(mgr) {
   solarSubs.push(...categorized2F("solar"));
   batterySubs.push(...categorized2F("battery"));
 
-  // ── Group 3 · Misc sub-lines + write-in slots ────────────────────────────
+  // ── Group 3 · Misc ────────────────────────────────────────────────────────
+  // Real 2F lines only. The Figma frame drew twelve "Line 1".."Line 12"
+  // write-in slots, but padding to twelve was dropped in both directions:
+  //   • no 2F lines at all → the whole group falls away (pushGroup drops a
+  //     group with no rows and no amount), rather than printing twelve
+  //     placeholders over a ₱0 total and reading as an unfinished document;
+  //   • one or more 2F lines → just those lines, since eleven greyed-out
+  //     placeholders trailing a single real item looked like a rendering fault.
+  // So nothing is ever padded, and the group is exactly as long as its content.
   const miscSubs = items
     .filter((i) => groupOf(i) === "misc" && printable(i))
     .map((i) => ({ text: i.description }));
-  // The frame shows the unused slots labelled "Line 1".."Line 12", in a lighter
-  // tint so they read as write-in space rather than quoted items. They only
-  // appear once the group has something in it: on a quote with no 2F lines at
-  // all, twelve placeholders over a ₱0 amount read as an unfinished document,
-  // so the group is left to fall away entirely (pushGroup drops a group with no
-  // rows and no amount).
-  const miscHasContent = miscSubs.length > 0;
-  if (miscHasContent) {
-    const writeIns = Math.max(0, MISC_WRITE_IN_ROWS - miscSubs.length);
-    for (let n = 0; n < writeIns; n++) {
-      miscSubs.push({
-        text: `Line ${miscSubs.length + 1}`,
-        color: PKG_PLACEHOLDER_COLOR,
-      });
-    }
-  }
 
   // ── Table body ────────────────────────────────────────────────────────────
   const body = [];
@@ -2076,12 +2061,11 @@ function drawPackageDetailPage(mgr) {
     groupAmounts[biggest] += residual;
   }
 
-  const kwpStr = Number(systemKwp).toFixed(1).replace(/\.0$/, "");
   pushGroup(
     // A zero-panel order can still carry Solar money (standalone RSD), and
     // "0 kWp Solar Package" reads as a bug. The Battery branch below already
     // guarded this case.
-    systemKwp > 0 ? `${kwpStr} kWp Solar Package` : "Solar Package",
+    systemKwp > 0 ? `${fmtKwp(systemKwp)} kWp Solar Package` : "Solar Package",
     solarSubs,
     groupAmounts.solar,
   );

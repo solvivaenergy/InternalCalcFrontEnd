@@ -15,6 +15,7 @@
 import React from 'react';
 import { Checkbox, CalloutBox, InfoTooltip, COLORS, fmt } from './ui.jsx';
 import { ADMIN_PARAMS } from '../data/adminParams.js';
+import { fmtKwp } from '../config.js';
 import RadianceCurve from './charts/RadianceCurve.jsx';
 import CoverageBars from './charts/CoverageBars.jsx';
 
@@ -66,7 +67,7 @@ export default function EnergyVisuals({ state, updateState, model, disclaimers, 
     : schedule.monthlyPesoSavingsBatt;
 
   let coveragePct;
-  let configLabel = `${fmt.num(systemKwp, 1)}-kWp Solar`;
+  let configLabel = `${fmtKwp(systemKwp)}-kWp Solar`;
   if (hasBattery && hasNm) {
     coveragePct = schedule.coverageBars[3].solar
                 + schedule.coverageBars[3].battery

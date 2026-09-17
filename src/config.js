@@ -145,6 +145,31 @@ export const INCLUDED_AC_CABLE_METERS = 10;
 // the radius triggers the per-km charge on the excess.
 export const LUZON_FREE_TRAVEL_KM = 30;
 
+// ─── System-size display format (story 076) ─────────────────────────────────
+// THE single formatter for the array size in kWp. Every surface — Calculator,
+// mobile flow, energy-visuals caption and all three PDF pages — must call this
+// and nothing else.
+//
+// It exists because they each used to format independently, and so disagreed
+// with each other on the same quote. A 13 × 630W array is 8.19 kWp, and it
+// printed as THREE different numbers in one proposal: "8.19" in Step 2A,
+// "8" on the PDF cover and page-5 tiles (Math.round), and "8.2" on the page-3
+// package title (toFixed(1) with the trailing zero stripped). Sales, the
+// client and the installation team were reading different sizes off the same
+// document.
+//
+// Fixed 2 dp, no trailing-zero stripping: a 5 kWp system reads "5.00", not "5".
+// That is deliberate — stripping is what made the old page-3 title show "5" for
+// one system and "8.2" for another. Lives in config.js because it is the one
+// plain module both the React tree and pdfGenerator already import.
+//
+// Scope is the ARRAY only (kWp). Battery kWh and inverter kW are left as they
+// are per product decision — battery capacity is always a whole multiple of the
+// 5 kWh unit, so "10.00 kWh" would be noise.
+export function fmtKwp(v) {
+  return Number(v || 0).toFixed(2);
+}
+
 // ---------------------------------------------------------------------------
 // Luzon main-island Region → City → road-km table (v3-109 cascade; distances
 // REBASED v3-114).
