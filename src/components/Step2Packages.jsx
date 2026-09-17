@@ -28,7 +28,7 @@ import { availableInverters, directFromCogs, signedDirectFromCogs, buildMarginRe
 import { availableDeliveryLocations, availableMiscCatalog,
          findMiscCatalogItem, MISC_CATALOG_OTHER, racksNeeded } from '../data/adminParams.js';
 import { INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_FREE_TRAVEL_KM, LUZON_REGIONS } from '../config.js';
+         LUZON_FREE_TRAVEL_KM, LUZON_REGIONS, resolveLocation } from '../config.js';
 import {
   SectionCard, Subsection, Field, NumberInput, Select, Checkbox, TextInput,
   CalloutBox, RecommendationPill, StatTile, COLORS, fmt, RSD_INFO,
@@ -1164,12 +1164,14 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           />
         </Field>
 
-        {/* Region → City cascade — only for Luzon main island. */}
+        {/* Region → Province → City cascade — only for Luzon main island.
+            resolveLocation owns the stale-value fallback, and the province is
+            load-bearing: city names are bare, so "Rosario" is ambiguous
+            without it (Cavite 28km vs Batangas 84km). */}
         {state.location === 'luzon' && (() => {
-          const region = LUZON_REGIONS.find(r => r.code === state.locationRegion) || LUZON_REGIONS[0];
-          const cities = region.cities;
-          const city   = cities.find(c => c.name === state.locationCity) || cities[0];
-          const km     = city ? city.km : 0;
+          const { region, province, provinces, cities, city } =
+            resolveLocation(state.locationRegion, state.locationProvince, state.locationCity);
+          const km = city ? city.km : 0;
           // v3-199 — the free radius is the luzonFreeTravelKm param; the
           // config constant is only the fallback for a params object that
           // predates the key.
@@ -1185,16 +1187,43 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                 <Select
                   value={region.code}
                   onChange={code => {
-                    const r = LUZON_REGIONS.find(x => x.code === code) || LUZON_REGIONS[0];
-                    const first = r.cities[0];
-                    updateState({ locationRegion: r.code, locationCity: first.name, locationKm: first.km });
+                    // Re-resolve from the new region so province and city land
+                    // on a valid pair together — setting the region alone would
+                    // leave a province that does not exist in it.
+                    const next = resolveLocation(code, null, null);
+                    updateState({
+                      locationRegion: next.region.code,
+                      locationProvince: next.province,
+                      locationCity: next.city.name,
+                      locationKm: next.city.km,
+                    });
                   }}
                   width={300}
                   options={LUZON_REGIONS.map(r => ({ value: r.code, label: r.label }))}
                 />
               </Field>
+              {/* Hidden for NCR, which has no provinces. */}
+              {provinces.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <Field label="Province" inline>
+                    <Select
+                      value={province || ''}
+                      onChange={p => {
+                        const next = resolveLocation(region.code, p, null);
+                        updateState({
+                          locationProvince: next.province,
+                          locationCity: next.city.name,
+                          locationKm: next.city.km,
+                        });
+                      }}
+                      width={300}
+                      options={provinces.map(p => ({ value: p, label: p }))}
+                    />
+                  </Field>
+                </div>
+              )}
               <div style={{ marginTop: 10 }}>
-                <Field label="City" inline>
+                <Field label="City / municipality" inline>
                   <Select
                     value={city ? city.name : ''}
                     onChange={name => {

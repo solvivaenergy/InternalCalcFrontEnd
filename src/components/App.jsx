@@ -7,7 +7,8 @@ import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
          availableBatteryPackages, availableDeliveryLocations } from '../data/adminParams.js';
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
-         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS } from '../config.js';
+         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
+         LUZON_REGIONS, resolveLocation } from '../config.js';
 import {
   computeRecommendedPanels, recommendInverters, buildPackageLineItems,
   computePaymentTerms, popularTenorsTable, systemSizing,
@@ -176,6 +177,10 @@ export function makeInitialState(kind = 'all') {
     // (18 km — inside the 30 km free zone), so the default quote total is
     // unchanged (a ₱0 location line, exactly as before).
     locationRegion: 'NCR',
+    // v3-210 — third level of the location cascade. null for NCR, which has no
+    // provinces; required elsewhere because city names are bare and "Rosario"
+    // exists in both Cavite and Batangas.
+    locationProvince: null,
     locationCity: 'Manila',
     // Distance from the Parañaque hub (Luzon only). Derived from the selected
     // city above; held in state so calculations.js and workbook AA38 parity
@@ -351,7 +356,15 @@ const CONTACT_RECORD_VERSION = 2;   // v3-61: added installAddress
 // restored WITHOUT the wipe would show returns computed at one rate beside a
 // note describing another. Bumping now costs one reset; not bumping costs a
 // silent contradiction on a customer's screen later.
-const STATE_RECORD_VERSION   = 10;  // v3-204: existingPanelCount → existingKwp rename
+const STATE_RECORD_VERSION   = 12;  // v3-210: locationProvince added to the cascade
+// v3-209 — the bump is REQUIRED, not cosmetic. 29 locations (Regions I/II/CAR/V
+// and the non-Bulacan/Pampanga part of III) were removed from LUZON_REGIONS, and
+// many retained cities got new km. A restored session holding e.g.
+// locationRegion 'V' / locationCity 'Legazpi' would fall back to NCR in the
+// picker (Step2Packages.jsx:1169 and MobileFlow.jsx:1114 both guard with
+// `|| LUZON_REGIONS[0]`) but KEEP its stale locationKm of 460 until the rep
+// happened to touch the control — quoting a delivery charge for a destination
+// the calculator no longer offers. Wiping those sessions is the fix.
 
 // ─── PDF proposal requirements (v3-61) ───────────────────────────────────────
 // The PDF proposal is rep-mode-only and prints both parties' details plus an
@@ -1432,7 +1445,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               mode={mode} onLockMode={() => setLockConfirmOpen(true)}
               adminAccess={adminAccess}
               onSignOut={onSignOut}
-              leadState={state} leadModel={model} />
+              leadState={state} leadModel={model} updateState={updateState} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             adminAccess={adminAccess}
@@ -1554,7 +1567,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
 function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
                   generatedDate, validUntil, quoteExpired,
                   editing, setEditing, requireForPdf,
-                  mode, onLockMode, onSignOut, leadState, leadModel }) {
+                  mode, onLockMode, onSignOut, leadState, leadModel, updateState }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
@@ -1570,6 +1583,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
               agent={agent} updateAgent={updateAgent}
               mode={mode} requireAll={requireForPdf}
               leadState={leadState} leadModel={leadModel}
+              updateState={updateState}
               onDone={() => setEditing(false)}
             />
           </div>
@@ -1684,7 +1698,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
 // the customer-facing render already handles agent.name === '' by
 // falling back to "Solviva Customer Support" automatically.
 function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requireAll = false,
-                           leadState, leadModel, onDone }) {
+                           leadState, leadModel, updateState, onDone }) {
   const [draftCustomer, setDraftCustomer] = useState(contact);
   const [draftAgent, setDraftAgent] = useState(agent);
   // When the form is opened by the PDF gate (requireAll), surface validation
@@ -1699,6 +1713,33 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   const isLeadFlow = isCustomer && !requireAll;
   const [consentGiven, setConsentGiven] = useState(false);
   const [submitStatus, setSubmitStatus] = useState('idle'); // idle | sending | sent | error
+
+  // v3-211 — the 2E location cascade, mirrored here so "where is this job" sits
+  // with the installation address instead of being two screens apart.
+  //
+  // WRITTEN THROUGH, deliberately NOT drafted (v3-212, user decision): these
+  // controls read from and write to calculator state directly, so this copy and
+  // the Step 2E copy are the same fields and cannot show different values.
+  // Consequence to be aware of: unlike Name/Email/Mobile, a location change is
+  // live the moment it is made, so Cancel does NOT revert it. That is the price
+  // of one visible source of truth, and it matches how 2E already behaves.
+  const locState = {
+    location: leadState?.location ?? 'luzon',
+    locationRegion: leadState?.locationRegion ?? 'NCR',
+    locationProvince: leadState?.locationProvince ?? null,
+    locationCity: leadState?.locationCity ?? '',
+  };
+  const loc = resolveLocation(
+    locState.locationRegion, locState.locationProvince, locState.locationCity,
+  );
+  // Only the Luzon cascade is a km lookup; the dynamic off-island rows and
+  // "Other" price by their own rules (2F for Other), so the three selects are
+  // meaningless unless Luzon is picked.
+  const showCascade = locState.location === 'luzon';
+  // Guarded: ContactEditForm is only mounted by Header, which always supplies
+  // updateState — the check keeps the controls inert rather than throwing if
+  // that ever stops being true.
+  const applyLoc = (patch) => { if (updateState) updateState(patch); };
 
   // 043D — Odoo lead lookup. Same idle/loading/done/error shape as
   // submitStatus above, so this form keeps one async idiom.
@@ -1771,6 +1812,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     // the agent block, so draftAgent === agent (initial value) and this
     // is a no-op, but the explicit guard makes intent clear.
     if (!isCustomer) updateAgent(draftAgent);
+    // No location commit here: the cascade writes straight to calculator state
+    // as it is changed (v3-212), so it is already saved by the time Save is
+    // pressed. See the locState comment above.
 
     // v3-97 — the lead flow submits to Solviva rather than just closing.
     if (isLeadFlow) {
@@ -1951,9 +1995,66 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
             <textarea style={{ ...inp(err.custAddress), minHeight: 54, resize: 'vertical' }}
                    value={draftCustomer.installAddress || ''}
                    onChange={e => setDraftCustomer({ ...draftCustomer, installAddress: e.target.value })}
-                   placeholder="Unit/house no., street, barangay, city, province, ZIP" />
+                   placeholder="Unit/house no., street, barangay" />
             {errMsg(err.custAddress, 'Installation address is required for the proposal.')}
           </div>
+          {/* v3-211 — the same cascade as Step 2E, bound to the same state.
+              Sits with the installation address because it answers the same
+              question, and it is what sets the delivery charge. */}
+          <div>
+            <span style={labelStyle}>Installation location</span>
+            <select style={inputStyle} value={locState.location}
+                    onChange={e => applyLoc({ location: e.target.value })}>
+              <option value="luzon">Luzon main island</option>
+              {availableDeliveryLocations(ADMIN_PARAMS).map(l => (
+                <option key={l.id} value={l.id}>{l.label}</option>
+              ))}
+              <option value="other">{isCustomer ? 'Other' : 'Other (Specify in 2F)'}</option>
+            </select>
+          </div>
+          {showCascade && (
+            <>
+              <div>
+                <span style={labelStyle}>Region</span>
+                <select style={inputStyle} value={loc.region.code}
+                        onChange={e => {
+                          // Re-resolve so region, province and city land on a
+                          // valid triple together.
+                          const n = resolveLocation(e.target.value, null, null);
+                          applyLoc({ locationRegion: n.region.code, locationProvince: n.province,
+                                     locationCity: n.city.name, locationKm: n.city.km });
+                        }}>
+                  {LUZON_REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+                </select>
+              </div>
+              {/* NCR has no provinces — hidden rather than a one-item control. */}
+              {loc.provinces.length > 0 && (
+                <div>
+                  <span style={labelStyle}>Province</span>
+                  <select style={inputStyle} value={loc.province || ''}
+                          onChange={e => {
+                            const n = resolveLocation(loc.region.code, e.target.value, null);
+                            applyLoc({ locationProvince: n.province,
+                                       locationCity: n.city.name, locationKm: n.city.km });
+                          }}>
+                    {loc.provinces.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+              )}
+              <div>
+                <span style={labelStyle}>City / municipality</span>
+                <select style={inputStyle} value={loc.city ? loc.city.name : ''}
+                        onChange={e => {
+                          const c = loc.cities.find(x => x.name === e.target.value) || loc.cities[0];
+                          applyLoc({ locationCity: c.name, locationKm: c.km });
+                        }}>
+                  {loc.cities.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                </select>
+                {/* No km / delivery-charge caption here on purpose — that
+                    belongs to Step 2E, which owns the pricing explanation. */}
+              </div>
+            </>
+          )}
         </div>
       </div>
 

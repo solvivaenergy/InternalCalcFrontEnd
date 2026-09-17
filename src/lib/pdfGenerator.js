@@ -27,6 +27,7 @@
 
 import jspdfModule from "jspdf";
 import autoTableModule from "jspdf-autotable";
+import { LUZON_REGIONS } from "../config.js";
 
 const jsPDF = jspdfModule.jsPDF || jspdfModule.default || jspdfModule;
 const autoTable =
@@ -93,6 +94,47 @@ function fmtDate(d) {
     month: "long",
     day: "numeric",
   });
+}
+
+// Builds the proposal's one-line installation site: the street address the rep
+// typed, then city / province / region from the 2E location cascade, so the PDF
+// carries a complete address instead of just "12 Sample St".
+//
+// The region is printed ONLY for NCR, and the two rules are the same rule: a
+// Philippine address ends at the province, and NCR has no province (its entries
+// carry province: null, because Metro Manila is not one), so the region name
+// fills that slot instead. Everywhere else the province is already there, and
+// appending "Region IV-A" after it just adds noise.
+//   NCR      → "12 Sample St, Brgy. 5, Manila, NCR"
+//   Rizal    → "12 Sample St, Brgy. 5, Taytay, Rizal"
+//   Pampanga → "12 Sample St, Brgy. 5, Guagua, Pampanga"
+//
+// Checked against the region CODE rather than "does this entry lack a
+// province", so that adding another province-less region later is an explicit
+// decision by whoever adds it rather than a silent behaviour change here.
+//
+// A non-Luzon order (Cebu / Siargao / Other) has no cascade at all, so it keeps
+// just the typed address — appending a region there would be fiction.
+//
+// No de-duplication is attempted on purpose. A rep who still types "Taytay,
+// Rizal" into the street field will see it twice, which is untidy but harmless;
+// suppressing a segment because the street appears to contain it would drop a
+// real province from addresses like "12 Rizal Avenue" and make them WRONG.
+// The address placeholder now asks only for unit/street/barangay to steer this.
+function formatInstallSite(contact, state) {
+  const parts = [];
+  const street = (contact?.installAddress || "").trim();
+  if (street) parts.push(street);
+  if (state?.location === "luzon") {
+    if (state.locationCity) parts.push(state.locationCity);
+    if (state.locationProvince) parts.push(state.locationProvince); // absent for NCR
+    if (state.locationRegion === "NCR") {
+      const region = LUZON_REGIONS.find((r) => r.code === "NCR");
+      // "NCR — Metro Manila" → "NCR".
+      if (region) parts.push(region.label.split("—")[0].trim());
+    }
+  }
+  return parts.length ? parts.join(", ") : "-";
 }
 
 function makeQuoteRef(generatedDate, contact) {
@@ -686,7 +728,7 @@ function drawCoverPage1(mgr) {
       ["Client/Company:", contact?.name || "-"],
       ["Contact number:", contact?.mobile || "-"],
       ["Email address:", contact?.email || "-"],
-      ["Installation site:", contact?.installAddress || "-"],
+      ["Installation site:", formatInstallSite(contact, state)],
     ],
     88,
     845,

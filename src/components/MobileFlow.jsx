@@ -41,7 +41,7 @@ import { DEVICES } from '../data/devices.js';
 import { useMemo } from 'react';
 import { availableDeliveryLocations, availableBatteryPackages, optimizeBatteryPackage,
          DISCLAIMERS } from '../data/adminParams.js';
-import { LUZON_REGIONS, LUZON_FREE_TRAVEL_KM } from '../config.js';
+import { LUZON_REGIONS, LUZON_FREE_TRAVEL_KM, resolveLocation } from '../config.js';
 import { formatHour12, optimizeSystem } from '../lib/schedule.js';
 import {
   allowedDpOptions, resolveMinDpPct, DP_EPS,
@@ -1111,9 +1111,11 @@ function YourHomeScreen({ state, updateState, model, adminParams, go }) {
   ];
   const dynamicLocs = availableDeliveryLocations(adminParams);
   const isLuzon = state.location === 'luzon';
-  const region = LUZON_REGIONS.find(r => r.code === state.locationRegion) || LUZON_REGIONS[0];
-  const cities = region.cities;
-  const city = cities.find(c => c.name === state.locationCity) || cities[0];
+  // Region -> Province -> City. The province is load-bearing, not cosmetic:
+  // city names are bare, so "Rosario" is ambiguous without it (Cavite 28km vs
+  // Batangas 84km). resolveLocation owns the stale-value fallback.
+  const { region, province, provinces, cities, city } =
+    resolveLocation(state.locationRegion, state.locationProvince, state.locationCity);
   const km = city ? city.km : 0;
   // v3-199 — the free radius is the luzonFreeTravelKm param (config constant
   // is the fallback only).
@@ -1154,12 +1156,30 @@ function YourHomeScreen({ state, updateState, model, adminParams, go }) {
             <label className="mfl-field" style={{ marginTop: 14 }}>Region</label>
             <select className="mfl-select" value={region.code}
                     onChange={e => {
-                      const r = LUZON_REGIONS.find(x => x.code === e.target.value) || LUZON_REGIONS[0];
-                      const first = r.cities[0];
-                      updateState({ locationRegion: r.code, locationCity: first.name, locationKm: first.km });
+                      // Re-resolve so region, province and city land on a valid
+                      // triple together.
+                      const next = resolveLocation(e.target.value, null, null);
+                      updateState({ locationRegion: next.region.code,
+                                    locationProvince: next.province,
+                                    locationCity: next.city.name,
+                                    locationKm: next.city.km });
                     }}>
               {LUZON_REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
             </select>
+            {provinces.length > 0 && (
+              <>
+                <label className="mfl-field" style={{ marginTop: 14 }}>Province</label>
+                <select className="mfl-select" value={province || ''}
+                        onChange={e => {
+                          const next = resolveLocation(region.code, e.target.value, null);
+                          updateState({ locationProvince: next.province,
+                                        locationCity: next.city.name,
+                                        locationKm: next.city.km });
+                        }}>
+                  {provinces.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </>
+            )}
             <label className="mfl-field" style={{ marginTop: 14 }}>City / municipality</label>
             <select className="mfl-select" value={city ? city.name : ''}
                     onChange={e => {

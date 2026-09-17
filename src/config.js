@@ -175,100 +175,297 @@ export const LUZON_FREE_TRAVEL_KM = 30;
 // "Other" location (rep enters sea/air freight as a 2F line; customer sees the
 // "contact your representative" note).
 //
-// ⚠️ ALL km VALUES ARE DRAFT — Google-Maps-informed estimates, re-based
-// v3-114, for ANJON to verify against Google Maps routes from the Parañaque
-// hub before treating as final. Only cities beyond 30 km are billable, so
-// precision matters only for those; ≤30 km resolves to a ₱0 location line
-// regardless of the exact figure.
+// SOURCE OF THE LIST (v3-209). The 196 entries are exactly the "Serviceable
+// Location List" supplied by Sales — NCR + Bulacan/Pampanga + CALABARZON —
+// minus two groups that cannot carry a road km:
+//   • the 8 island municipalities (Tingloy; and Alabat, Burdeos, Jomalig,
+//     Panukulan, Patnanungan, Perez, Polillo in Quezon), confirmed NOT
+//     serviceable; and
+//   • General Nakar, which Google returns NO ROUTE for on every phrasing
+//     while its neighbour Infanta resolves fine — left out rather than given
+//     a fabricated figure.
+// Both groups fall to the "Other" location. Regions I, II, CAR and V, plus
+// Nueva Ecija/Tarlac/Bataan/Zambales, were REMOVED: they are outside the
+// serviceable footprint, and offering them let a rep quote a job ops cannot
+// deliver.
+//
+// HOW THE km WERE MEASURED (all three legs pinned — do not mix bases):
+//   origin      = the hub coordinate below (14.4717, 121.0450)
+//   destination = each town's CITY or MUNICIPAL HALL, not the bare place name.
+//                 A bare name resolves to Google's own locality centroid, which
+//                 sat up to 9 km off the hall (Cabanatuan) and shifted Tayabas
+//                 by 11 km by changing which highway was chosen.
+//   routing     = Google Routes API computeRouteMatrix, DRIVE,
+//                 TRAFFIC_UNAWARE, avoidTolls: true.
+//
+// avoidTolls matters: WITH tolls the API returns the distance of the FASTEST
+// route, which sends trucks out via NLEX/SCTEX and inflated Cabanatuan to
+// 176 km. Toll-free reproduced the previous hand-estimated table almost
+// exactly (Cabanatuan 125 vs 125, Olongapo 139 vs 140, Malolos 57 vs 58),
+// which is how we know that table was itself built toll-free. Keep this basis
+// when adding entries, or the list silently ends up on two different bases.
+//
+// Only cities beyond the free radius are billable, so precision matters most
+// between ~26 and ~34 km; ≤30 km resolves to a ₱0 location line regardless.
+// Two figures still want a human check: Quezon (Quezon) at 207 km — an
+// ambiguous name, three phrasings agreed on 207 but one returned 924 km
+// (Mindanao) — and the hub coordinate itself, which sits 1 km from West
+// Service Road but ~6 km from where "DB Schenker" geocodes.
 export const LUZON_REGIONS = [
   { code: 'NCR', label: 'NCR — Metro Manila', cities: [
-    { name: 'Parañaque',     km: 3 },
-    { name: 'Las Piñas',     km: 7 },
-    { name: 'Muntinlupa',    km: 8 },
-    { name: 'Pasay',         km: 12 },
-    { name: 'Taguig',        km: 12 },
-    { name: 'Makati',        km: 14 },
-    { name: 'Manila',        km: 18 },
-    { name: 'Mandaluyong',   km: 18 },
-    { name: 'Pasig',         km: 19 },
-    { name: 'San Juan',      km: 20 },
-    { name: 'Quezon City',   km: 24 },
-    { name: 'Marikina',      km: 25 },
-    { name: 'Caloocan',      km: 28 },
-    { name: 'Malabon',       km: 31 },
-    { name: 'Navotas',       km: 32 },
-    { name: 'Valenzuela',    km: 33 },
-  ]},
+    // Metro Manila (no province)
+    { name: 'Parañaque',   province: null, km: 6 },
+    { name: 'Muntinlupa',  province: null, km: 9 },
+    { name: 'Taguig',      province: null, km: 9 },
+    { name: 'Las Piñas',   province: null, km: 12 },
+    { name: 'Pasay City',  province: null, km: 12 },
+    { name: 'Pateros',     province: null, km: 12 },
+    { name: 'Makati',      province: null, km: 14 },
+    { name: 'Mandaluyong', province: null, km: 15 },
+    { name: 'Manila',      province: null, km: 16 },
+    { name: 'Pasig',       province: null, km: 16 },
+    { name: 'San Juan',    province: null, km: 20 },
+    { name: 'Quezon City', province: null, km: 23 },
+    { name: 'Caloocan',    province: null, km: 24 },
+    { name: 'Marikina',    province: null, km: 24 },
+    { name: 'Malabon',     province: null, km: 26 },
+    { name: 'Navotas',     province: null, km: 26 },
+    { name: 'Valenzuela',  province: null, km: 28 },
+  ] },
   { code: 'III', label: 'Region III — Central Luzon', cities: [
-    { name: 'Meycauayan',            km: 38 },
-    { name: 'San Jose del Monte',    km: 45 },
-    { name: 'Malolos',               km: 58 },
-    { name: 'San Fernando (Pampanga)', km: 82 },
-    { name: 'San Miguel (Bulacan)',  km: 85 },  // v3-200 — Cagayan Valley Rd past Baliuag; BILLABLE — Anjon to verify route km
-    { name: 'Angeles City',          km: 95 },
-    { name: 'Gapan',                 km: 100 },
-    { name: 'Mabalacat',             km: 100 },
-    { name: 'Cabanatuan',            km: 125 },
-    { name: 'Tarlac City',           km: 135 },
-    { name: 'Balanga',               km: 140 },
-    { name: 'Olongapo',              km: 140 },
-    { name: 'Palayan',               km: 145 },
-    { name: 'Science City of Muñoz', km: 165 },
-    { name: 'San Jose City',         km: 175 },
-  ]},
+    // Bulacan
+    { name: 'Meycauayan',             province: 'Bulacan',  km: 34 },
+    { name: 'Obando',                 province: 'Bulacan',  km: 34 },
+    { name: 'Marilao',                province: 'Bulacan',  km: 39 },
+    { name: 'Bocaue',                 province: 'Bulacan',  km: 42 },
+    { name: 'Balagtas',               province: 'Bulacan',  km: 46 },
+    { name: 'Bulacan',                province: 'Bulacan',  km: 46 },
+    { name: 'Santa Maria',            province: 'Bulacan',  km: 46 },
+    { name: 'Guiguinto',              province: 'Bulacan',  km: 48 },
+    { name: 'San Jose Del Monte',     province: 'Bulacan',  km: 50 },
+    { name: 'Pandi',                  province: 'Bulacan',  km: 51 },
+    { name: 'Plaridel',               province: 'Bulacan',  km: 56 },
+    { name: 'Malolos',                province: 'Bulacan',  km: 57 },
+    { name: 'Pulilan',                province: 'Bulacan',  km: 59 },
+    { name: 'Paombong',               province: 'Bulacan',  km: 60 },
+    { name: 'Norzagaray',             province: 'Bulacan',  km: 62 },
+    { name: 'Bustos',                 province: 'Bulacan',  km: 63 },
+    { name: 'Baliwag',                province: 'Bulacan',  km: 65 },
+    { name: 'Calumpit',               province: 'Bulacan',  km: 65 },
+    { name: 'Angat',                  province: 'Bulacan',  km: 66 },
+    { name: 'Hagonoy',                province: 'Bulacan',  km: 67 },
+    { name: 'San Rafael',             province: 'Bulacan',  km: 70 },
+    { name: 'Doña Remedios Trinidad', province: 'Bulacan',  km: 75 },
+    { name: 'San Ildefonso',          province: 'Bulacan',  km: 77 },
+    { name: 'San Miguel',             province: 'Bulacan',  km: 86 },
+    // Pampanga
+    { name: 'Apalit',                 province: 'Pampanga', km: 71 },
+    { name: 'San Simon',              province: 'Pampanga', km: 73 },
+    { name: 'Macabebe',               province: 'Pampanga', km: 77 },
+    { name: 'Masantol',               province: 'Pampanga', km: 77 },
+    { name: 'Sto. Tomas',             province: 'Pampanga', km: 80 },
+    { name: 'San Fernando',           province: 'Pampanga', km: 81 },
+    { name: 'Minalin',                province: 'Pampanga', km: 85 },
+    { name: 'Santa Ana',              province: 'Pampanga', km: 85 },
+    { name: 'San Luis',               province: 'Pampanga', km: 86 },
+    { name: 'Bacolor',                province: 'Pampanga', km: 88 },
+    { name: 'Mexico',                 province: 'Pampanga', km: 88 },
+    { name: 'Santa Rita',             province: 'Pampanga', km: 92 },
+    { name: 'Arayat',                 province: 'Pampanga', km: 94 },
+    { name: 'Guagua',                 province: 'Pampanga', km: 94 },
+    { name: 'Candaba',                province: 'Pampanga', km: 95 },
+    { name: 'Lubao',                  province: 'Pampanga', km: 98 },
+    { name: 'Sasmuan',                province: 'Pampanga', km: 100 },
+    { name: 'Angeles City',           province: 'Pampanga', km: 103 },
+    { name: 'Floridablanca',          province: 'Pampanga', km: 103 },
+    { name: 'Porac',                  province: 'Pampanga', km: 104 },
+    { name: 'Magalang',               province: 'Pampanga', km: 105 },
+    { name: 'Mabalacat City',         province: 'Pampanga', km: 113 },
+  ] },
   { code: 'IV-A', label: 'Region IV-A — CALABARZON', cities: [
-    { name: 'San Pedro',       km: 12 },
-    { name: 'Bacoor',          km: 13 },
-    { name: 'Imus',            km: 16 },
-    { name: 'Biñan',           km: 20 },
-    { name: 'Carmona',         km: 22 },
-    { name: 'Dasmariñas',      km: 24 },
-    { name: 'Cainta',          km: 24 },  // v3-200 (Rizal) — Ortigas Ave Ext corridor; inside the free zone
-    { name: 'Santa Rosa',      km: 26 },
-    { name: 'General Trias',   km: 27 },
-    { name: 'Cavite City',     km: 30 },
-    { name: 'Cabuyao',         km: 31 },
-    { name: 'Antipolo',        km: 35 },
-    { name: 'Calamba',         km: 37 },
-    { name: 'Tagaytay',        km: 45 },
-    { name: 'Santo Tomas',     km: 48 },
-    { name: 'Tanauan',         km: 53 },
-    { name: 'Lipa',            km: 68 },
-    { name: 'San Pablo',       km: 73 },
-    { name: 'Batangas City',   km: 98 },
-    { name: 'Lucena',          km: 125 },
-    { name: 'Tayabas',         km: 130 },
-  ]},
-  { code: 'I', label: 'Region I — Ilocos', cities: [
-    { name: 'Urdaneta',                km: 200 },
-    { name: 'San Carlos (Pangasinan)', km: 210 },
-    { name: 'Dagupan',                 km: 220 },
-    { name: 'Alaminos',                km: 250 },
-    { name: 'San Fernando (La Union)', km: 280 },
-    { name: 'Candon',                  km: 350 },
-    { name: 'Vigan',                   km: 410 },
-    { name: 'Batac',                   km: 470 },
-    { name: 'Laoag',                   km: 490 },
-  ]},
-  { code: 'II', label: 'Region II — Cagayan Valley', cities: [
-    { name: 'Santiago',    km: 340 },
-    { name: 'Cauayan',     km: 360 },
-    { name: 'Ilagan',      km: 390 },
-    { name: 'Tuguegarao',  km: 490 },
-  ]},
-  { code: 'CAR', label: 'CAR — Cordillera', cities: [
-    { name: 'Baguio', km: 260 },
-    { name: 'Tabuk',  km: 350 },
-  ]},
-  { code: 'V', label: 'Region V — Bicol', cities: [
-    { name: 'Naga',           km: 390 },
-    { name: 'Iriga',          km: 410 },
-    { name: 'Ligao',          km: 440 },
-    { name: 'Legazpi',        km: 460 },
-    { name: 'Tabaco',         km: 480 },
-    { name: 'Sorsogon City',  km: 540 },
-  ]},
+    // Laguna
+    { name: 'San Pedro',                province: 'Laguna',   km: 13 },
+    { name: 'Biñan',                    province: 'Laguna',   km: 21 },
+    { name: 'Santa Rosa',               province: 'Laguna',   km: 21 },
+    { name: 'Cabuyao',                  province: 'Laguna',   km: 26 },
+    { name: 'Calamba',                  province: 'Laguna',   km: 37 },
+    { name: 'Los Baños',                province: 'Laguna',   km: 44 },
+    { name: 'Bay',                      province: 'Laguna',   km: 51 },
+    { name: 'Calauan',                  province: 'Laguna',   km: 56 },
+    { name: 'Alaminos',                 province: 'Laguna',   km: 59 },
+    { name: 'Pila',                     province: 'Laguna',   km: 64 },
+    { name: 'Victoria',                 province: 'Laguna',   km: 64 },
+    { name: 'Mabitac',                  province: 'Laguna',   km: 68 },
+    { name: 'San Pablo',                province: 'Laguna',   km: 68 },
+    { name: 'Santa Maria',              province: 'Laguna',   km: 71 },
+    { name: 'Famy',                     province: 'Laguna',   km: 72 },
+    { name: 'Nagcarlan',                province: 'Laguna',   km: 73 },
+    { name: 'Santa Cruz',               province: 'Laguna',   km: 73 },
+    { name: 'Siniloan',                 province: 'Laguna',   km: 73 },
+    { name: 'Pagsanjan',                province: 'Laguna',   km: 75 },
+    { name: 'Liliw',                    province: 'Laguna',   km: 77 },
+    { name: 'Pangil',                   province: 'Laguna',   km: 77 },
+    { name: 'Pakil',                    province: 'Laguna',   km: 79 },
+    { name: 'Magdalena',                province: 'Laguna',   km: 80 },
+    { name: 'Rizal',                    province: 'Laguna',   km: 81 },
+    { name: 'Paete',                    province: 'Laguna',   km: 82 },
+    { name: 'Majayjay',                 province: 'Laguna',   km: 83 },
+    { name: 'Cavinti',                  province: 'Laguna',   km: 84 },
+    { name: 'Kalayaan',                 province: 'Laguna',   km: 86 },
+    { name: 'Lumban',                   province: 'Laguna',   km: 90 },
+    { name: 'Luisiana',                 province: 'Laguna',   km: 93 },
+    // Rizal
+    { name: 'Taytay',                   province: 'Rizal',    km: 16 },
+    { name: 'Cainta',                   province: 'Rizal',    km: 19 },
+    { name: 'Angono',                   province: 'Rizal',    km: 20 },
+    { name: 'Antipolo',                 province: 'Rizal',    km: 23 },
+    { name: 'Binangonan',               province: 'Rizal',    km: 27 },
+    { name: 'Teresa',                   province: 'Rizal',    km: 30 },
+    { name: 'San Mateo',                province: 'Rizal',    km: 31 },
+    { name: 'Cardona',                  province: 'Rizal',    km: 32 },
+    { name: 'Morong',                   province: 'Rizal',    km: 36 },
+    { name: 'Rodriguez',                province: 'Rizal',    km: 37 },
+    { name: 'Baras',                    province: 'Rizal',    km: 42 },
+    { name: 'Tanay',                    province: 'Rizal',    km: 44 },
+    { name: 'Pililla',                  province: 'Rizal',    km: 48 },
+    { name: 'Jala-Jala',                province: 'Rizal',    km: 62 },
+    // Cavite
+    { name: 'Bacoor',                   province: 'Cavite',   km: 18 },
+    { name: 'Imus',                     province: 'Cavite',   km: 19 },
+    { name: 'Carmona',                  province: 'Cavite',   km: 21 },
+    { name: 'Kawit',                    province: 'Cavite',   km: 23 },
+    { name: 'Gen. Mariano Alvarez',     province: 'Cavite',   km: 24 },
+    { name: 'Dasmariñas',               province: 'Cavite',   km: 26 },
+    { name: 'Noveleta',                 province: 'Cavite',   km: 26 },
+    { name: 'Rosario',                  province: 'Cavite',   km: 28 },
+    { name: 'Tanza',                    province: 'Cavite',   km: 29 },
+    { name: 'Cavite',                   province: 'Cavite',   km: 33 },
+    { name: 'General Trias',            province: 'Cavite',   km: 33 },
+    { name: 'Silang',                   province: 'Cavite',   km: 38 },
+    { name: 'Naic',                     province: 'Cavite',   km: 42 },
+    { name: 'Trece Martires',           province: 'Cavite',   km: 42 },
+    { name: 'Ternate',                  province: 'Cavite',   km: 50 },
+    { name: 'Amadeo',                   province: 'Cavite',   km: 51 },
+    { name: 'Maragondon',               province: 'Cavite',   km: 53 },
+    { name: 'Indang',                   province: 'Cavite',   km: 56 },
+    { name: 'Tagaytay',                 province: 'Cavite',   km: 57 },
+    { name: 'Mendez',                   province: 'Cavite',   km: 58 },
+    { name: 'Alfonso',                  province: 'Cavite',   km: 66 },
+    { name: 'Magallanes',               province: 'Cavite',   km: 70 },
+    { name: 'General Emilio Aguinaldo', province: 'Cavite',   km: 73 },
+    // Batangas
+    { name: 'Sto. Tomas',               province: 'Batangas', km: 46 },
+    { name: 'Tanauan',                  province: 'Batangas', km: 50 },
+    { name: 'Malvar',                   province: 'Batangas', km: 53 },
+    { name: 'Talisay',                  province: 'Batangas', km: 56 },
+    { name: 'Balete',                   province: 'Batangas', km: 63 },
+    { name: 'Lipa',                     province: 'Batangas', km: 64 },
+    { name: 'Laurel',                   province: 'Batangas', km: 67 },
+    { name: 'Mataasnakahoy',            province: 'Batangas', km: 72 },
+    { name: 'Padre Garcia',             province: 'Batangas', km: 80 },
+    { name: 'Cuenca',                   province: 'Batangas', km: 81 },
+    { name: 'Ibaan',                    province: 'Batangas', km: 81 },
+    { name: 'San Jose',                 province: 'Batangas', km: 81 },
+    { name: 'Rosario',                  province: 'Batangas', km: 84 },
+    { name: 'Calaca',                   province: 'Batangas', km: 86 },
+    { name: 'Batangas City',            province: 'Batangas', km: 93 },
+    { name: 'Lemery',                   province: 'Batangas', km: 94 },
+    { name: 'San Pascual',              province: 'Batangas', km: 94 },
+    { name: 'Taal',                     province: 'Batangas', km: 95 },
+    { name: 'Tuy',                      province: 'Batangas', km: 95 },
+    { name: 'Taysan',                   province: 'Batangas', km: 96 },
+    { name: 'Agoncillo',                province: 'Batangas', km: 97 },
+    { name: 'Lian',                     province: 'Batangas', km: 97 },
+    { name: 'San Luis',                 province: 'Batangas', km: 97 },
+    { name: 'Nasugbu',                  province: 'Batangas', km: 99 },
+    { name: 'San Juan',                 province: 'Batangas', km: 100 },
+    { name: 'San Nicolas',              province: 'Batangas', km: 100 },
+    { name: 'Santa Teresita',           province: 'Batangas', km: 101 },
+    { name: 'Balayan',                  province: 'Batangas', km: 103 },
+    { name: 'Alitagtag',                province: 'Batangas', km: 104 },
+    { name: 'Bauan',                    province: 'Batangas', km: 111 },
+    { name: 'Mabini',                   province: 'Batangas', km: 119 },
+    { name: 'Calatagan',                province: 'Batangas', km: 122 },
+    { name: 'Lobo',                     province: 'Batangas', km: 124 },
+    // Quezon
+    { name: 'Dolores',                  province: 'Quezon',   km: 77 },
+    { name: 'Tiaong',                   province: 'Quezon',   km: 81 },
+    { name: 'San Antonio',              province: 'Quezon',   km: 83 },
+    { name: 'Candelaria',               province: 'Quezon',   km: 92 },
+    { name: 'Lucban',                   province: 'Quezon',   km: 94 },
+    { name: 'Sariaya',                  province: 'Quezon',   km: 106 },
+    { name: 'Tayabas',                  province: 'Quezon',   km: 109 },
+    { name: 'Sampaloc',                 province: 'Quezon',   km: 111 },
+    { name: 'Lucena',                   province: 'Quezon',   km: 119 },
+    { name: 'Mauban',                   province: 'Quezon',   km: 124 },
+    { name: 'Pagbilao',                 province: 'Quezon',   km: 125 },
+    { name: 'Infanta',                  province: 'Quezon',   km: 126 },
+    { name: 'Real',                     province: 'Quezon',   km: 127 },
+    { name: 'Padre Burgos',             province: 'Quezon',   km: 152 },
+    { name: 'Atimonan',                 province: 'Quezon',   km: 158 },
+    { name: 'Agdangan',                 province: 'Quezon',   km: 167 },
+    { name: 'Plaridel',                 province: 'Quezon',   km: 170 },
+    { name: 'Unisan',                   province: 'Quezon',   km: 176 },
+    { name: 'Gumaca',                   province: 'Quezon',   km: 181 },
+    { name: 'Pitogo',                   province: 'Quezon',   km: 197 },
+    { name: 'Lopez',                    province: 'Quezon',   km: 201 },
+    { name: 'Macalelon',                province: 'Quezon',   km: 205 },
+    { name: 'Quezon',                   province: 'Quezon',   km: 207 },
+    { name: 'General Luna',             province: 'Quezon',   km: 214 },
+    { name: 'Buenavista',               province: 'Quezon',   km: 234 },
+    { name: 'Guinayangan',              province: 'Quezon',   km: 236 },
+    { name: 'Catanauan',                province: 'Quezon',   km: 239 },
+    { name: 'Calauag',                  province: 'Quezon',   km: 246 },
+    { name: 'Mulanay',                  province: 'Quezon',   km: 253 },
+    { name: 'San Narciso',              province: 'Quezon',   km: 262 },
+    { name: 'Tagkawayan',               province: 'Quezon',   km: 263 },
+    { name: 'San Francisco',            province: 'Quezon',   km: 287 },
+    { name: 'San Andres',               province: 'Quezon',   km: 293 },
+  ] },
 ];
+
+// ─── Three-level location cascade: region → province → city (v3-210) ────────
+// `cities` stays a FLAT array so nothing that already reads region.cities
+// breaks; the province is a field on each entry and the province list is
+// derived. NCR entries carry province: null (the serviceable list marks it
+// N/A), so provincesOf('NCR') is empty and the UI hides the control instead of
+// rendering a pointless one-item dropdown.
+
+export function provincesOf(regionCode) {
+  const r = LUZON_REGIONS.find((x) => x.code === regionCode);
+  if (!r) return [];
+  return [...new Set(r.cities.map((c) => c.province).filter(Boolean))];
+}
+
+// City names are deliberately BARE: "Rosario" exists in both Cavite and
+// Batangas, and the province selection is what separates them. Every lookup
+// must therefore key on the (province, name) PAIR — a name-only find would
+// silently return the wrong town and price the wrong distance.
+export function citiesOf(regionCode, province) {
+  const r = LUZON_REGIONS.find((x) => x.code === regionCode);
+  if (!r) return [];
+  return province
+    ? r.cities.filter((c) => c.province === province)
+    : r.cities.filter((c) => !c.province);
+}
+
+// Resolves a possibly-stale (region, province, city) triple to real entries,
+// falling back one level at a time. Restored sessions and the removal of a
+// location both flow through here, so no caller can land on undefined.
+export function resolveLocation(regionCode, province, cityName) {
+  const region =
+    LUZON_REGIONS.find((r) => r.code === regionCode) || LUZON_REGIONS[0];
+  const provinces = provincesOf(region.code);
+  const prov = provinces.length
+    ? provinces.includes(province)
+      ? province
+      : provinces[0]
+    : null;
+  const cities = citiesOf(region.code, prov);
+  const city = cities.find((c) => c.name === cityName) || cities[0];
+  return { region, province: prov, provinces, cities, city };
+}
+
 
 export const AGENT = {
   // Default contact info shown in the header and on the contact gate.
