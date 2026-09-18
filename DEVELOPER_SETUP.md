@@ -200,9 +200,13 @@ identity to the existing `auth.users` row, so roles carry over.
    - Under *OAuth consent screen*, choose user type **Internal**. This makes
      Google itself refuse any account outside the Solviva Workspace — the
      strongest of the three domain controls, and it costs nothing.
-   - Authorized redirect URI (exactly one, Supabase's callback):
-     `https://<project-ref>.supabase.co/auth/v1/callback`
-     (staging project ref: `gbwfhacvklwieqnydqzb`).
+   - Authorized redirect URIs: Supabase's callback for each project this
+     client serves. One Google client can carry both:
+     `https://xifuuxtsdyajcbyksjxx.supabase.co/auth/v1/callback` (staging)
+     `https://gbwfhacvklwieqnydqzb.supabase.co/auth/v1/callback` (production)
+     Google reports `redirect_uri_mismatch` when the project the app is
+     built against is missing here; the ref in the error dialog is the one
+     to add. Changes can take a few minutes to propagate on Google's side.
    - Copy the Client ID and Client secret.
 2. **Supabase dashboard** → Authentication → Providers → **Google** → enable,
    paste Client ID + secret, save.
