@@ -492,7 +492,7 @@ export const ADMIN_PARAMS = {
       perPanelCogs: 3740, // D56/D57
       fixedFee: 0,
       perPanel: 0,
-      available: true,
+      available: false, // v3-213 — off-Luzon, not serviceable
     }, // fixedFee/perPanel DERIVED
     {
       id: "siargao",
@@ -501,7 +501,7 @@ export const ADMIN_PARAMS = {
       perPanelCogs: 5748, // D58/D59
       fixedFee: 0,
       perPanel: 0,
-      available: true,
+      available: false, // v3-213 — off-Luzon, not serviceable
     },
   ],
   // ─── Misc materials / labor / services catalog (v3-138) ────────────────────
@@ -1082,7 +1082,24 @@ export function resolveBatteryPackage(adminParams, batteryPackageId) {
 // the RTO winner.
 // v3-116 — in-stock delivery locations (absent flag = available, v3-106
 // semantics). Feeds the Step 2E dropdown and App.jsx's stale-pick fallback.
+// v3-213 — the serviceable area is Luzon only (product decision). Every entry
+// in deliveryLocations is BY CONSTRUCTION an off-Luzon island destination
+// (Cebu, Siargao — the v3-116 dynamic list exists for exactly those), so
+// "exclude all islands outside Luzon" means this list is offered to nobody.
+//
+// Gated HERE rather than by editing the DEFAULTS below, because the saved
+// parameter snapshot's deliveryLocations array always wins over defaults
+// (paramsService applyOverrides, v3-116) — a defaults-only change would have
+// left Cebu and Siargao live on every environment with a saved blob. This one
+// function feeds all three "Installation location" pickers AND the model's
+// effectiveLocation fallback (App.jsx), so with it returning [] a restored
+// session holding location: 'cebu' is forced back to 'luzon' and never prices
+// with Cebu fees. The admin table keeps the rows (data, not offer) so flipping
+// this back is a one-line change.
+export const OFF_LUZON_DELIVERY_ENABLED = false;
+
 export function availableDeliveryLocations(adminParams) {
+  if (!OFF_LUZON_DELIVERY_ENABLED) return [];
   return (adminParams?.deliveryLocations || []).filter(
     (l) => l && l.available !== false,
   );

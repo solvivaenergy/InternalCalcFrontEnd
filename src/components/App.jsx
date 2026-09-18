@@ -356,7 +356,7 @@ const CONTACT_RECORD_VERSION = 2;   // v3-61: added installAddress
 // restored WITHOUT the wipe would show returns computed at one rate beside a
 // note describing another. Bumping now costs one reset; not bumping costs a
 // silent contradiction on a customer's screen later.
-const STATE_RECORD_VERSION   = 12;  // v3-210: locationProvince added to the cascade
+const STATE_RECORD_VERSION   = 13;  // v3-213: off-Luzon delivery locations retired; km rebased to fastest route
 // v3-209 — the bump is REQUIRED, not cosmetic. 29 locations (Regions I/II/CAR/V
 // and the non-Bulacan/Pampanga part of III) were removed from LUZON_REGIONS, and
 // many retained cities got new km. A restored session holding e.g.
