@@ -246,6 +246,32 @@ const authApi = {
       };
     }
   },
+  // v3-214 — OAuth redirect (Google SSO). This facade only exposes what is
+  // listed here, so the method has to be forwarded explicitly; without this
+  // entry every environment, staging included, looked like no-auth mode.
+  signInWithOAuth: async (params) => {
+    if (!realSupabase) {
+      return {
+        data: { provider: params?.provider ?? null, url: null },
+        error: {
+          message: "Google sign-in is unavailable in local no-auth mode.",
+        },
+      };
+    }
+    try {
+      // On success the SDK navigates away; the promise resolves with the
+      // authorize URL and no error. The session arrives on return through
+      // detectSessionInUrl + the onAuthStateChange bridge above.
+      return await realSupabase.auth.signInWithOAuth(params);
+    } catch (error) {
+      return {
+        data: { provider: params?.provider ?? null, url: null },
+        error: {
+          message: error?.message || "Google sign-in failed. Please try again.",
+        },
+      };
+    }
+  },
 };
 
 export const supabase = {
@@ -379,13 +405,44 @@ export function isSsoAllowedEmail(email) {
 // Kicks off the Google redirect. Resolves to { error } the way the other auth
 // calls do; the page navigates away on success, and detectSessionInUrl +
 // onAuthStateChange pick the session up on return, so nothing else is needed.
+// Asks GoTrue's public settings endpoint whether a provider is switched on.
+// Returns true/false, or null when the answer is unknown (offline, no config,
+// slow) — callers treat null as "go ahead and let the redirect decide".
+async function isProviderEnabled(provider) {
+  if (!HAS_SUPABASE_CONFIG || typeof fetch !== "function") return null;
+  const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 3000) : null;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
+      headers: { apikey: SUPABASE_ANON_KEY },
+      signal: ctrl?.signal,
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const flag = json?.external?.[provider];
+    return typeof flag === "boolean" ? flag : null;
+  } catch (_) {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function signInWithGoogle() {
-  // The no-config local fallback has no OAuth — say so instead of throwing.
-  if (typeof supabase.auth.signInWithOAuth !== "function") {
+  // Pre-flight. A provider that is not yet enabled makes /auth/v1/authorize
+  // answer with a raw JSON 400 — the browser would land on that page rather
+  // than come back here with a message. Only a definite "false" short-circuits.
+  if ((await isProviderEnabled("google")) === false) {
     return {
-      error: { message: "Google sign-in is unavailable in local no-auth mode." },
+      data: { provider: "google", url: null },
+      error: {
+        message:
+          "Google sign-in is not enabled for this environment yet. " +
+          "Use your email and password, or ask an admin to enable the Google provider in Supabase.",
+      },
     };
   }
+  // The facade's signInWithOAuth answers for the no-config fallback itself.
   return supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
