@@ -41,7 +41,7 @@ import MobileFlow from './MobileFlow.jsx';
 import Login from './Login.jsx';
 import ChangePasswordDialog from './ChangePasswordDialog.jsx';
 import ResetPassword from './ResetPassword.jsx';
-import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS } from '../lib/supabaseClient.js';
+import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS, isSsoAllowedEmail, SSO_REJECT_KEY } from '../lib/supabaseClient.js';
 import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
 
 // v3-70: Step 1 defaults are now Product-settable (ADMIN_PARAMS
@@ -407,6 +407,25 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
       if (!mounted) return;
       if (event === 'PASSWORD_RECOVERY') setRecovery(true);
+      // v3-214 — UX layer of the Google domain rule. A brand-new Google
+      // sign-up outside the allow-list is REJECTED by the Postgres trigger
+      // before it ever reaches here; this catches the residual cases (guard
+      // not yet applied on an environment, or an allow-list edited in one
+      // place but not the other) and turns them into a readable message
+      // instead of a customer-role session for a stranger. Scoped to
+      // provider === 'google' so the seven @aboitizpower.com password accounts
+      // — and any existing user who merely LINKS Google — are untouched:
+      // app_metadata.provider is the account's FIRST provider, which for
+      // every existing user is 'email'.
+      if (event === 'SIGNED_IN' && next?.user?.app_metadata?.provider === 'google'
+          && !isSsoAllowedEmail(next.user.email)) {
+        try {
+          sessionStorage.setItem(SSO_REJECT_KEY,
+            'Sign in with Google is limited to Solviva Energy accounts (@solvivaenergy.com).');
+        } catch (_) { /* ignore */ }
+        supabase.auth.signOut();
+        return;
+      }
       setSession(next ?? null);
     });
     return () => { mounted = false; sub?.subscription?.unsubscribe(); };

@@ -184,6 +184,51 @@ Before starting new work each day: `git checkout main && git pull` so you're in 
 
 ---
 
+## 7. Google SSO ("Sign in with Google")
+
+The login screen offers **Sign in with Google** for `@solvivaenergy.com`
+Workspace accounts, alongside email/password. Nothing about it lives in env
+vars — the provider is configured in the Supabase dashboard, and the domain
+rule lives in a Postgres trigger. Existing password accounts need no
+migration: Google returns a verified email, and Supabase links the Google
+identity to the existing `auth.users` row, so roles carry over.
+
+**One-time setup, per Supabase project (staging, then production):**
+
+1. **Google Cloud console** → APIs & Services → Credentials → *Create OAuth
+   client ID* → type **Web application**.
+   - Under *OAuth consent screen*, choose user type **Internal**. This makes
+     Google itself refuse any account outside the Solviva Workspace — the
+     strongest of the three domain controls, and it costs nothing.
+   - Authorized redirect URI (exactly one, Supabase's callback):
+     `https://<project-ref>.supabase.co/auth/v1/callback`
+     (staging project ref: `gbwfhacvklwieqnydqzb`).
+   - Copy the Client ID and Client secret.
+2. **Supabase dashboard** → Authentication → Providers → **Google** → enable,
+   paste Client ID + secret, save.
+3. **Supabase dashboard** → Authentication → URL Configuration:
+   - *Site URL*: the app's own origin for that environment.
+   - *Redirect URLs*: add every origin the app is served from:
+     `http://localhost:5173`, `https://staging-internalcalc.solvivaenergy.com`
+     and `https://internalcalc.solvivaenergy.com`. The frontend passes
+     `redirectTo: window.location.origin`; an origin missing here makes
+     Google sign-in bounce to the Site URL instead.
+4. **Apply the domain guard** — run
+   `InternalCalcBackEnd/supabase/migrations/20260918_sso_google_domain_guard.sql`
+   in the SQL editor. It rejects a *new* Google sign-up whose domain is not
+   allow-listed, before the user row exists. Idempotent. Without it, any
+   Google account could sign in and land in the customer view.
+
+**Roles.** A first-time Google user who passes the guard has no
+`app_metadata.role`, so they are `customer` until a seed script assigns a
+role — the same onboarding as today. The migration file contains an
+*optional, commented-out* trigger that would instead start every
+`@solvivaenergy.com` Google sign-in as `rep`; enable it only as a deliberate
+policy decision.
+
+**Local dev** without `VITE_SUPABASE_*` set runs the no-auth fallback, where
+the Google button reports that SSO is unavailable rather than redirecting.
+
 ## Quick reference
 
 | Task                        | Command (in the repo folder)                             |

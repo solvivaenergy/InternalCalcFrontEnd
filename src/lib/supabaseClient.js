@@ -17,6 +17,27 @@
 
 import { createClient } from "@supabase/supabase-js";
 
+// v3-214 — capture an OAuth error bounce BEFORE the client is created. When a
+// Google sign-up is refused (e.g. by the Postgres domain guard), Supabase sends
+// the browser back to redirectTo with #error=...&error_description=... in the
+// hash. createClient({ detectSessionInUrl: true }) reads and CLEARS that hash
+// during its own initialisation, which happens before React mounts and long
+// before <Login /> could look at it — so the message has to be lifted off the
+// URL here, at import time, and parked in sessionStorage for Login to show.
+export const SSO_URL_ERROR_KEY = "solviva_sso_url_error";
+try {
+  const h = typeof window !== "undefined" ? window.location.hash || "" : "";
+  if (h.includes("error_description=")) {
+    const desc = new URLSearchParams(h.replace(/^#/, "")).get("error_description") || "";
+    if (desc) sessionStorage.setItem(SSO_URL_ERROR_KEY, desc);
+    // Clean the URL ourselves rather than relying on the SDK to: the error
+    // has been parked, and a lingering #error=... would re-show on refresh.
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+} catch (_) {
+  /* sessionStorage unavailable — the SDK will still clear the hash; no message */
+}
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const HAS_SUPABASE_CONFIG = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -325,3 +346,60 @@ export async function sendPasswordReset(email, redirectTo) {
     redirectTo ? { redirectTo } : undefined,
   );
 }
+
+// ─── Google Workspace SSO (v3-214) ──────────────────────────────────────────
+// solvivaenergy.com is hosted on Google Workspace (its MX records point at
+// aspmx.l.google.com), so "SSO" here is Sign in with Google restricted to that
+// domain. Google always returns a VERIFIED email, and Supabase links a new
+// OAuth identity to an existing auth.users row when the verified email
+// matches — so the 40 existing @solvivaenergy.com password accounts keep their
+// user_id, their app_metadata.role and their user_roles row. No data migration
+// is needed for existing reps; they simply gain a second way in.
+//
+// Domain restriction happens in THREE layers, because only one of them is
+// actually enforceable from here:
+//   1. Google Cloud: the OAuth app should be created as user type "Internal",
+//      which makes Google itself refuse any account outside the Workspace.
+//      Strongest control; configured in the Google Cloud console, not in code.
+//   2. Postgres: a BEFORE INSERT trigger on auth.users rejects a Google
+//      sign-up whose email domain is not allow-listed (backend repo,
+//      supabase/migrations/20260918_sso_google_domain_guard.sql). This is the
+//      layer this codebase can guarantee.
+//   3. This client: `hd` below is only a HINT to Google's account chooser and
+//      isSsoAllowedEmail() is a UX check in App.jsx — neither is a security
+//      boundary, and both exist so a wrong account gets a clear message rather
+//      than an opaque database error.
+export const SSO_ALLOWED_DOMAINS = Object.freeze(["solvivaenergy.com"]);
+
+export function isSsoAllowedEmail(email) {
+  const domain = String(email || "").trim().toLowerCase().split("@")[1] || "";
+  return SSO_ALLOWED_DOMAINS.includes(domain);
+}
+
+// Kicks off the Google redirect. Resolves to { error } the way the other auth
+// calls do; the page navigates away on success, and detectSessionInUrl +
+// onAuthStateChange pick the session up on return, so nothing else is needed.
+export async function signInWithGoogle() {
+  // The no-config local fallback has no OAuth — say so instead of throwing.
+  if (typeof supabase.auth.signInWithOAuth !== "function") {
+    return {
+      error: { message: "Google sign-in is unavailable in local no-auth mode." },
+    };
+  }
+  return supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      // Back to the app root; must be on Supabase's redirect allow-list.
+      redirectTo: window.location.origin,
+      queryParams: {
+        hd: SSO_ALLOWED_DOMAINS[0],
+        prompt: "select_account",
+      },
+    },
+  });
+}
+
+// One-shot message channel from App.jsx's post-sign-in domain check to the
+// Login screen. sessionStorage rather than state because the rejection signs
+// the user out, which unmounts everything and remounts <Login /> fresh.
+export const SSO_REJECT_KEY = "solviva_sso_rejected";
