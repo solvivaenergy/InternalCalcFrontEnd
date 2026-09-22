@@ -81,9 +81,12 @@ flowchart LR
   | `POST /api/quote` | Build a priced quote from input | none |
   | `GET /api/parameters` | Return saved parameter overrides | none (read) |
   | `PUT /api/parameters` | Save parameter overrides | Bearer token + `x-solviva-role` header; server re-checks role |
+  | `GET /api/users` | List accounts with their resolved role (Users tab) | Bearer token; `user_roles.role = 'admin'` only |
+  | `POST /api/users` | Create an account: role, optional name/mobile, password or Google-only | Bearer token; `user_roles.role = 'admin'` only |
 - **Modules**:
   - `src/quoteService.js` — `buildQuote()` pricing engine.
   - `src/parametersService.js` — `getParameters()` / `putParameters()`; enforces which role may write which parameter sections (server-side security boundary).
+  - `src/usersService.js` — `listUsers()` / `createUser()` behind the Super Admin check. Creating writes `app_metadata.role`, `user_metadata` and `public.user_roles` exactly as `scripts/set-user-role.mjs` does (`rep` is stored as `view` in the table), so the Users tab and the seed scripts produce identical accounts.
 - **DB access**: uses the **service-role key** (bypasses RLS). This key must **never** be exposed to the browser or committed.
 - **CORS**: `CORS_ORIGINS` env var (comma-separated or `*`).
 

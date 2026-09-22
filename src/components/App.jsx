@@ -34,6 +34,7 @@ import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
 import AuditHistory from './AuditHistory.jsx';
+import UserManagement from './UserManagement.jsx';   // v3-215
 import MobileFlow from './MobileFlow.jsx';
 import ParamsSourceBanner from './ParamsSourceBanner.jsx';
 // ── Supabase user management (this deployment's replacement for upstream
@@ -267,11 +268,15 @@ function isChunkLoadError(err) {
   const msg = String(err?.message || err || '');
   return /dynamically imported module|module script failed/i.test(msg);
 }
-// v3-203 — the four admin tab ids, valid as activeTab values only while
+// v3-203 — the admin tab ids, valid as activeTab values only while
 // adminAccess !== 'none'. Shared by App (content mount, bounce effect,
 // LiveTotalBar suppression) and Tabs (strip composition). Order here IS the
 // strip order after the divider.
-const ADMIN_TAB_IDS = ['inventory', 'engineering', 'product', 'finco', 'audit-history'];
+const ADMIN_TAB_IDS = ['inventory', 'engineering', 'product', 'finco', 'audit-history', 'users'];
+// The subset that is Super Admin ('edit') only — every other admin tier is
+// bounced off these to the Calculator. Audit History since v3-203; Users
+// (account creation, v3-215) joins it on the same gate.
+const SUPER_ADMIN_TAB_IDS = ['audit-history', 'users'];
 // Labels for the admin half of the v3-203 tab strip. Order here IS the strip
 // order. EVERY admin tier sees all four (v3-203 D2) — the read/write split is
 // per-section inside each tab, not per-tab.
@@ -282,6 +287,7 @@ const ADMIN_TAB_META = [
   { id: 'finco',       label: 'FinCo',       admin: true },
 ];
 const ADMIN_AUDIT_TAB = { id: 'audit-history', label: 'Audit History', admin: true };
+const ADMIN_USERS_TAB = { id: 'users', label: 'Users', admin: true };   // v3-215
 
 // v3-203 — Staff Sign-in key glyph (approved option E): the Solviva radiant
 // sun simplified to eight rays as the key head (the logo's twelve V-chevrons
@@ -1369,7 +1375,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // editable or read-only.
     if (
       (adminAccess === 'none' || adminAccess !== 'edit') &&
-      activeTab === 'audit-history'
+      SUPER_ADMIN_TAB_IDS.includes(activeTab)
     ) {
       setActiveTab('calculator');
     } else if (adminAccess === 'none' && ADMIN_TAB_IDS.includes(activeTab)) {
@@ -1547,6 +1553,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           <>
             {activeTab === 'audit-history' ? (
               <AuditHistory accessLevel={adminAccess} />
+            ) : activeTab === 'users' ? (
+              <UserManagement accessLevel={adminAccess} />
             ) : (
               <>
                 <MaintenanceModeBlock
@@ -2334,7 +2342,8 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
     // re-enforces the same allowlist on PUT /api/parameters, so read-only here
     // is a UI affordance over a real server-side boundary, not the boundary.
     ...(adminAccess !== 'none'
-      ? [...ADMIN_TAB_META, ...(adminAccess === 'edit' ? [ADMIN_AUDIT_TAB] : [])]
+      ? [...ADMIN_TAB_META,
+         ...(adminAccess === 'edit' ? [ADMIN_AUDIT_TAB, ADMIN_USERS_TAB] : [])]
       : []),
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
