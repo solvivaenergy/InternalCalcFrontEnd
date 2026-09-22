@@ -841,7 +841,13 @@ function drawCoverPage1(mgr) {
 
   // ── System package tiles (1:225) ──
   const recPanelCount = model.recommended?.recommendedPanelCount ?? 0;
-  const panelCount = state.panelCount ?? recPanelCount;
+  // Prefer the RESOLVED count off the model (same rule as the package-detail
+  // page). `recommended.recommendedPanelCount` is the Excel-mirror W7 figure,
+  // but since v3-130 the array the quote is sized and priced on is the
+  // optimizeSystem sweep (model.panelCount / model.systemKwp). Falling back
+  // to W7 here printed "18 panels" beside a 10 kWp tile that was really 16
+  // panels — the two tiles were reading different recommendations.
+  const panelCount = model.panelCount ?? state.panelCount ?? recPanelCount;
   const panelWatts = model.recommended?.panelWatts ?? 630;
   const systemKwp = model.systemKwp ?? (panelCount * panelWatts) / 1000;
   const batteryKwh = model.batteryKwh ?? 0;
@@ -990,7 +996,9 @@ function drawSystemRow(mgr, showHeading = true) {
   const { state, model } = ctx;
 
   const recPanelCount = model.recommended?.recommendedPanelCount ?? 0;
-  const panelCount = state.panelCount ?? recPanelCount;
+  // Resolved count first — see the cover-tile comment above; W7 is only the
+  // last-resort fallback.
+  const panelCount = model.panelCount ?? state.panelCount ?? recPanelCount;
   const panelWatts = model.recommended?.panelWatts ?? 630;
   const systemKwp = model.systemKwp ?? (panelCount * panelWatts) / 1000;
   const batteryKwh = model.batteryKwh ?? 0;
