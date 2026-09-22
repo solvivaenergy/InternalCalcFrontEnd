@@ -35,6 +35,7 @@ import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
 import AuditHistory from './AuditHistory.jsx';
 import MobileFlow from './MobileFlow.jsx';
+import ParamsSourceBanner from './ParamsSourceBanner.jsx';
 // ── Supabase user management (this deployment's replacement for upstream
 // v3-207's shared-password AuthDialog sign-in). Identity and role come from
 // Supabase Auth + public.user_roles; the staff-key password dialog is gone.
@@ -619,13 +620,22 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // without explicit prop threading.
   const [paramsLoading, setParamsLoading] = useState(true);
   const [paramsLoadedFromServer, setParamsLoadedFromServer] = useState(false);
+  // Which step of paramsService's load chain supplied the values (backend /
+  // supabase / cache / defaults) plus the errors of the steps that failed.
+  // Drives <ParamsSourceBanner /> and its Retry button.
+  const [paramsStatus, setParamsStatus] = useState(null);
+  const [paramsRetrying, setParamsRetrying] = useState(false);
   const [paramsRev, setParamsRev] = useState(0);   // bumps on each save to force re-render
   useEffect(() => {
     let mounted = true;
     paramsService.load().then(() => {
       if (!mounted) return;
-      setParamsLoading(false);
+      // Loaded-from-server and status BEFORE the loading flag flips, so the
+      // first post-spinner render already sees them (the maintenance gate
+      // below reads paramsLoadedFromServer).
       setParamsLoadedFromServer(paramsService.isLoadedFromServer());
+      setParamsStatus(paramsService.getLoadStatus());
+      setParamsLoading(false);
       // v3-70: boot-race snap for the Product-settable Step 1 defaults.
       // First render ran before this fetch resolved, so a brand-new session
       // booted on the BUNDLED defaults. If a field still equals the bundled
@@ -671,6 +681,20 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     });
     return () => { mounted = false; unsub(); };
   }, []);
+
+  // Banner Retry — re-runs the whole load chain. Subscribers bump paramsRev
+  // through notify(), so the calculator re-renders with whatever it finds.
+  const retryParams = async () => {
+    if (paramsRetrying) return;
+    setParamsRetrying(true);
+    try {
+      await paramsService.load();
+      setParamsLoadedFromServer(paramsService.isLoadedFromServer());
+      setParamsStatus(paramsService.getLoadStatus());
+    } finally {
+      setParamsRetrying(false);
+    }
+  };
 
   // Calculator state (Steps 1-4) — also persisted to sessionStorage so a
   // page reload restores the customer's inputs along with their contact info.
@@ -1404,7 +1428,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // Maintenance-mode gate (v3-51). Three-signal activation, same as v3-50
   // ContactGate's passwordRequired derivation:
   //   1. AUTH.testingPassword set (VITE_MAINTENANCE_PASSWORD present)
-  //   2. ADMIN_PARAMS.gateAuthEnabled === true (admin toggle on)
+  //   2. ADMIN_PARAMS.gateAuthEnabled === true (admin toggle on) AND that
+  //      value came from LIVE data (paramsLoadedFromServer). Fail OPEN on a
+  //      failed load (2026-09-22): the BUNDLED default is `true`, so a device
+  //      on cached/bundled values used to hit a maintenance screen nobody had
+  //      switched on. Prod never behaved that way (no maintenance password in
+  //      its bundle); this makes staging match. The banner covers the failure.
   //   3. sessionStorage GATE_PASS_KEY === '1' is NOT set (no in-session auth)
   // The customer-data-collection form that used to gate access in v3-50 is
   // GONE — customers land directly on the calculator when maintenance mode
@@ -1418,7 +1447,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // accept set. Plain rep mode does NOT bypass (unchanged — reps unlock the
   // gate itself, which takes the same passwords).
   const passwordRequired = !!AUTH.testingPassword
-                        && (ADMIN_PARAMS.gateAuthEnabled ?? true)
+                        && paramsLoadedFromServer
+                        && ADMIN_PARAMS.gateAuthEnabled === true
                         && !readGatePass()
                         && !gateUnlocked
                         && adminAccess === 'none';
@@ -1442,14 +1472,18 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // the flow's "Sales rep? Sign in" link opens the same AuthDialog.
   if (mode === 'customer' && phoneViewport) {
     return (
-      <MobileFlow
-        state={state}
-        updateState={updateState}
-        model={model}
-        adminParams={ADMIN_PARAMS}
-        contact={contact}
-        setContact={setContact}
-      />
+      <>
+        <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
+                            retrying={paramsRetrying} compact />
+        <MobileFlow
+          state={state}
+          updateState={updateState}
+          model={model}
+          adminParams={ADMIN_PARAMS}
+          contact={contact}
+          setContact={setContact}
+        />
+      </>
     );
   }
 
@@ -1465,6 +1499,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               adminAccess={adminAccess}
               onSignOut={onSignOut}
               leadState={state} leadModel={model} updateState={updateState} />
+      <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
+                          retrying={paramsRetrying} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             adminAccess={adminAccess}

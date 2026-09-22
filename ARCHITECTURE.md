@@ -63,7 +63,7 @@ flowchart LR
 - **Key areas**:
   - `src/components/` — UI: `Login.jsx`, `Calculator.jsx`, the `Step1–4` wizard, `Summary.jsx`, admin tabs (`EngineeringTab`, `ProductTab`, `InventoryTab`, `AdminShell`).
   - `src/lib/calculations.js` — client-side pricing/derivation logic.
-  - `src/lib/paramsService.js` — fetches saved parameter overrides on boot and merges them over the bundled defaults (mutates the shared `ADMIN_PARAMS`/inventory objects in place).
+  - `src/lib/paramsService.js` — fetches saved parameter overrides on boot and merges them over the bundled defaults (mutates the shared `ADMIN_PARAMS`/inventory objects in place). Load chain (since 2026-09-22): backend `GET /api/parameters` (8s timeout, one retry) → the same `app_parameters` row read directly through Supabase with the signed-in session (needs the `20260922_app_parameters_authenticated_read` migration) → this device's last good copy in `localStorage` → bundled defaults. `getLoadStatus()` reports which step won; `App.jsx` shows `ParamsSourceBanner` (with Retry) for the last two and does not raise the maintenance gate for them.
   - `src/lib/supabaseClient.js` — single browser Supabase client for login + role lookup (uses the **anon** key; RLS is the boundary).
   - `src/lib/permissions.js` — maps roles to the admin sections/keys they may edit (mirrors the backend's server-side allowlist).
   - `src/data/` — bundled defaults: `adminParams.js`, `inventory.js`, `devices.js`.
@@ -95,7 +95,7 @@ Managed as flat SQL files in `InternalCalcBackEnd/supabase/migrations/` (applied
 
 Key tables:
 
-- **`app_parameters`** — a **singleton** row (`id boolean primary key check (id)`) holding a `jsonb payload` of all admin overrides. The backend reads/writes this; the frontend merges it over bundled defaults.
+- **`app_parameters`** — a **singleton** row (`id boolean primary key check (id)`) holding a `jsonb payload` of all admin overrides. The backend reads/writes this; the frontend merges it over bundled defaults. RLS: no `anon` access; `authenticated` may `select` (read-only fallback path for the frontend when the backend host is unreachable); all writes go through the backend's service-role key.
 - **`user_roles`** — one role per user (`user_id` PK → `auth.users`). Roles: `admin`, `engineering`, `product`, `inventory`, `view`. (Sales `rep`/`customer` roles are carried in **auth metadata**, not this table.)
 - **Inventory tables** — panels/inverters/etc. with RLS guarded by `has_role(...)`.
 
