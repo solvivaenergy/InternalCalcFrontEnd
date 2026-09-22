@@ -7,7 +7,8 @@ import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
          availableBatteryPackages, availableDeliveryLocations } from '../data/adminParams.js';
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
-         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS } from '../config.js';
+         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
+         LUZON_REGIONS, resolveLocation } from '../config.js';
 import {
   computeRecommendedPanels, recommendInverters, buildPackageLineItems,
   computePaymentTerms, popularTenorsTable, systemSizing,
@@ -25,6 +26,7 @@ import {
 import * as paramsService from '../lib/paramsService.js';
 import { isValidPhPhone, formatPhPhone } from '../lib/validation.js';
 import { buildLeadPayload, submitLead, makeLeadRef, LEAD_CONSENT_TEXT } from '../lib/lead.js';
+import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE } from '../lib/crmContact.js';
 
 import MaintenanceGate, { readGatePass } from './MaintenanceGate.jsx';
 import Calculator from './Calculator.jsx';
@@ -32,14 +34,16 @@ import Summary from './Summary.jsx';
 import Schedule from './Schedule.jsx';
 import AdminShell, { MaintenanceModeBlock } from './AdminShell.jsx';
 import AuditHistory from './AuditHistory.jsx';
+import UserManagement from './UserManagement.jsx';   // v3-215
 import MobileFlow from './MobileFlow.jsx';
+import ParamsSourceBanner from './ParamsSourceBanner.jsx';
 // ── Supabase user management (this deployment's replacement for upstream
 // v3-207's shared-password AuthDialog sign-in). Identity and role come from
 // Supabase Auth + public.user_roles; the staff-key password dialog is gone.
 import Login from './Login.jsx';
 import ChangePasswordDialog from './ChangePasswordDialog.jsx';
 import ResetPassword from './ResetPassword.jsx';
-import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS } from '../lib/supabaseClient.js';
+import { supabase, fetchUserRole, ADMIN_ROLE_TO_ACCESS, isSsoAllowedEmail, SSO_REJECT_KEY } from '../lib/supabaseClient.js';
 import { fmt } from './ui.jsx';   // v3-123 — LiveTotalBar peso formatting
 
 // v3-70: Step 1 defaults are now Product-settable (ADMIN_PARAMS
@@ -67,6 +71,27 @@ const BUNDLED_DEFAULT_DP   = ADMIN_PARAMS.defaultDownPaymentPct;  // v3-159
 // below once the fetch resolves. These two constants complete that pattern.
 const BUNDLED_DEFAULT_IRR_YEARS = ADMIN_PARAMS.irrYearsDefault;        // v3-188
 const BUNDLED_DEFAULT_DU_INFL   = ADMIN_PARAMS.duRateInflationDefault; // v3-188
+
+// Back-derive the installation date from an issue date: seed at +14 days, then
+// walk forward until the first post-install due date clears the minimum-days
+// floor. Bounded as a guard against a non-numeric param.
+//
+// Shared by the model memo and handleGeneratePdf. The memo is keyed on
+// generatedDate, so a PDF stamped with a FRESH issue date must re-derive this
+// against that date — otherwise it prints a new "Date Issued" beside a payment
+// schedule still anchored to the tab-session date.
+function deriveInstallDate(anchorDate) {
+  const minDays = ADMIN_PARAMS.minDaysToFirstPostInstallPayment ?? 44;
+  const targetFirstPaymentMs = anchorDate.getTime() + minDays * 86400000;
+  const installDate = new Date(anchorDate);
+  installDate.setDate(installDate.getDate() + 14);  // seed: prior hardcoded value
+  for (let guard = 0; guard < 200; guard++) {
+    const candidateFirst = firstPostInstallDueDate(installDate);
+    if (candidateFirst.getTime() >= targetFirstPaymentMs) break;
+    installDate.setDate(installDate.getDate() + 1);
+  }
+  return installDate;
+}
 
 export function makeInitialState(kind = 'all') {
   const step1 = {
@@ -154,6 +179,10 @@ export function makeInitialState(kind = 'all') {
     // (18 km — inside the 30 km free zone), so the default quote total is
     // unchanged (a ₱0 location line, exactly as before).
     locationRegion: 'NCR',
+    // v3-210 — third level of the location cascade. null for NCR, which has no
+    // provinces; required elsewhere because city names are bare and "Rosario"
+    // exists in both Cavite and Batangas.
+    locationProvince: null,
     locationCity: 'Manila',
     // Distance from the Parañaque hub (Luzon only). Derived from the selected
     // city above; held in state so calculations.js and workbook AA38 parity
@@ -239,11 +268,15 @@ function isChunkLoadError(err) {
   const msg = String(err?.message || err || '');
   return /dynamically imported module|module script failed/i.test(msg);
 }
-// v3-203 — the four admin tab ids, valid as activeTab values only while
+// v3-203 — the admin tab ids, valid as activeTab values only while
 // adminAccess !== 'none'. Shared by App (content mount, bounce effect,
 // LiveTotalBar suppression) and Tabs (strip composition). Order here IS the
 // strip order after the divider.
-const ADMIN_TAB_IDS = ['inventory', 'engineering', 'product', 'finco', 'audit-history'];
+const ADMIN_TAB_IDS = ['inventory', 'engineering', 'product', 'finco', 'audit-history', 'users'];
+// The subset that is Super Admin ('edit') only — every other admin tier is
+// bounced off these to the Calculator. Audit History since v3-203; Users
+// (account creation, v3-215) joins it on the same gate.
+const SUPER_ADMIN_TAB_IDS = ['audit-history', 'users'];
 // Labels for the admin half of the v3-203 tab strip. Order here IS the strip
 // order. EVERY admin tier sees all four (v3-203 D2) — the read/write split is
 // per-section inside each tab, not per-tab.
@@ -254,6 +287,7 @@ const ADMIN_TAB_META = [
   { id: 'finco',       label: 'FinCo',       admin: true },
 ];
 const ADMIN_AUDIT_TAB = { id: 'audit-history', label: 'Audit History', admin: true };
+const ADMIN_USERS_TAB = { id: 'users', label: 'Users', admin: true };   // v3-215
 
 // v3-203 — Staff Sign-in key glyph (approved option E): the Solviva radiant
 // sun simplified to eight rays as the key head (the logo's twelve V-chevrons
@@ -329,7 +363,15 @@ const CONTACT_RECORD_VERSION = 2;   // v3-61: added installAddress
 // restored WITHOUT the wipe would show returns computed at one rate beside a
 // note describing another. Bumping now costs one reset; not bumping costs a
 // silent contradiction on a customer's screen later.
-const STATE_RECORD_VERSION   = 10;  // v3-204: existingPanelCount → existingKwp rename
+const STATE_RECORD_VERSION   = 13;  // v3-213: off-Luzon delivery locations retired; km rebased to fastest route
+// v3-209 — the bump is REQUIRED, not cosmetic. 29 locations (Regions I/II/CAR/V
+// and the non-Bulacan/Pampanga part of III) were removed from LUZON_REGIONS, and
+// many retained cities got new km. A restored session holding e.g.
+// locationRegion 'V' / locationCity 'Legazpi' would fall back to NCR in the
+// picker (Step2Packages.jsx:1169 and MobileFlow.jsx:1114 both guard with
+// `|| LUZON_REGIONS[0]`) but KEEP its stale locationKm of 460 until the rep
+// happened to touch the control — quoting a delivery charge for a destination
+// the calculator no longer offers. Wiping those sessions is the fix.
 
 // ─── PDF proposal requirements (v3-61) ───────────────────────────────────────
 // The PDF proposal is rep-mode-only and prints both parties' details plus an
@@ -372,6 +414,25 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((event, next) => {
       if (!mounted) return;
       if (event === 'PASSWORD_RECOVERY') setRecovery(true);
+      // v3-214 — UX layer of the Google domain rule. A brand-new Google
+      // sign-up outside the allow-list is REJECTED by the Postgres trigger
+      // before it ever reaches here; this catches the residual cases (guard
+      // not yet applied on an environment, or an allow-list edited in one
+      // place but not the other) and turns them into a readable message
+      // instead of a customer-role session for a stranger. Scoped to
+      // provider === 'google' so the seven @aboitizpower.com password accounts
+      // — and any existing user who merely LINKS Google — are untouched:
+      // app_metadata.provider is the account's FIRST provider, which for
+      // every existing user is 'email'.
+      if (event === 'SIGNED_IN' && next?.user?.app_metadata?.provider === 'google'
+          && !isSsoAllowedEmail(next.user.email)) {
+        try {
+          sessionStorage.setItem(SSO_REJECT_KEY,
+            'Sign in with Google is limited to Solviva Energy accounts (@solvivaenergy.com).');
+        } catch (_) { /* ignore */ }
+        supabase.auth.signOut();
+        return;
+      }
       setSession(next ?? null);
     });
     return () => { mounted = false; sub?.subscription?.unsubscribe(); };
@@ -565,13 +626,22 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // without explicit prop threading.
   const [paramsLoading, setParamsLoading] = useState(true);
   const [paramsLoadedFromServer, setParamsLoadedFromServer] = useState(false);
+  // Which step of paramsService's load chain supplied the values (backend /
+  // supabase / cache / defaults) plus the errors of the steps that failed.
+  // Drives <ParamsSourceBanner /> and its Retry button.
+  const [paramsStatus, setParamsStatus] = useState(null);
+  const [paramsRetrying, setParamsRetrying] = useState(false);
   const [paramsRev, setParamsRev] = useState(0);   // bumps on each save to force re-render
   useEffect(() => {
     let mounted = true;
     paramsService.load().then(() => {
       if (!mounted) return;
-      setParamsLoading(false);
+      // Loaded-from-server and status BEFORE the loading flag flips, so the
+      // first post-spinner render already sees them (the maintenance gate
+      // below reads paramsLoadedFromServer).
       setParamsLoadedFromServer(paramsService.isLoadedFromServer());
+      setParamsStatus(paramsService.getLoadStatus());
+      setParamsLoading(false);
       // v3-70: boot-race snap for the Product-settable Step 1 defaults.
       // First render ran before this fetch resolved, so a brand-new session
       // booted on the BUNDLED defaults. If a field still equals the bundled
@@ -618,6 +688,20 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     return () => { mounted = false; unsub(); };
   }, []);
 
+  // Banner Retry — re-runs the whole load chain. Subscribers bump paramsRev
+  // through notify(), so the calculator re-renders with whatever it finds.
+  const retryParams = async () => {
+    if (paramsRetrying) return;
+    setParamsRetrying(true);
+    try {
+      await paramsService.load();
+      setParamsLoadedFromServer(paramsService.isLoadedFromServer());
+      setParamsStatus(paramsService.getLoadStatus());
+    } finally {
+      setParamsRetrying(false);
+    }
+  };
+
   // Calculator state (Steps 1-4) — also persisted to sessionStorage so a
   // page reload restores the customer's inputs along with their contact info.
   // We merge any saved record on top of fresh defaults so newly-added fields
@@ -663,7 +747,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // anchored to the original quote-creation moment across reloads. Without
   // this, every reload would reset the validity window — which is wrong if
   // the customer is just refreshing their browser.
-  const [generatedDate] = useState(() => {
+  const [generatedDate, setGeneratedDate] = useState(() => {
     try {
       const raw = sessionStorage.getItem(GENERATED_DATE_KEY);
       if (raw) {
@@ -812,6 +896,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     setState(makeInitialState('all'));   // wipe Steps 1-4 to defaults
     updateMode('customer');               // flip mode (clears solviva_mode in storage)
     setAdminAccess('none');               // v3-203 — locking drops admin access too
+    // Story 004 AC4 — the issue date is per-QUOTE, so it must not survive the
+    // reset. Without this the next customer served in the same tab inherited
+    // the previous quote's issue date AND its validity window.
+    const fresh = new Date();
+    try { sessionStorage.setItem(GENERATED_DATE_KEY, fresh.toISOString()); } catch (_) { /* ignore */ }
+    setGeneratedDate(fresh);
     setLockConfirmOpen(false);
   };
 
@@ -927,9 +1017,34 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       setActiveTab(originalTab);
 
       // Step 8: Build PDF
+      // Story 004 AC1/AC4 — the issue date must come from the GENERATION event,
+      // not from whenever the tab was opened. Stamp it here, persist it so the
+      // validity window still survives a reload, and pass the freshly computed
+      // pair through directly: setGeneratedDate is async, so the useMemo'd
+      // validUntil would still hold the previous value on this tick.
+      const issuedAt = new Date();
+      try { sessionStorage.setItem(GENERATED_DATE_KEY, issuedAt.toISOString()); } catch (_) { /* ignore */ }
+      setGeneratedDate(issuedAt);
+      const validityDays = ADMIN_PARAMS.quoteValidityDays ?? DEFAULTS.quoteValidityDays;
+      const issuedValidUntil = new Date(issuedAt);
+      issuedValidUntil.setDate(issuedValidUntil.getDate() + validityDays);
+
+      // `model` is a useMemo keyed on generatedDate, so the value in scope here
+      // was built from the PREVIOUS anchor — setGeneratedDate above cannot
+      // rebind it on this tick. Re-derive the date-dependent parts against
+      // issuedAt, or the PDF prints a fresh "Date Issued" next to a payment
+      // schedule whose first due date is measured from the old one.
+      const issuedInstallDate = deriveInstallDate(issuedAt);
+      const issuedModel = {
+        ...model,
+        installDate: issuedInstallDate,
+        annex: buildAnnex(model.fullState, ADMIN_PARAMS, model.terms, issuedInstallDate),
+      };
+
       const { generateProposalPdf } = await import('../lib/pdfGenerator.js');
       await generateProposalPdf({
-        state, model, contact, agent, generatedDate, validUntil,
+        state, model: issuedModel, contact, agent,
+        generatedDate: issuedAt, validUntil: issuedValidUntil,
         brand: BRAND, adminParams: ADMIN_PARAMS, disclaimers: DISCLAIMERS,
         proposalContent: PROPOSAL_CONTENT,
         snapshots: { visualizing: visualizingPng, summary: summaryPng },
@@ -1206,15 +1321,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // forward one day at a time until the rounded first-payment date clears
     // the threshold. Bounded by max+1 days as a safety guard against infinite
     // loops if the param somehow lands at a non-numeric value.
-    const minDays = ADMIN_PARAMS.minDaysToFirstPostInstallPayment ?? 44;
-    const targetFirstPaymentMs = generatedDate.getTime() + minDays * 86400000;
-    const installDate = new Date(generatedDate);
-    installDate.setDate(installDate.getDate() + 14);  // seed: prior hardcoded value
-    for (let guard = 0; guard < 200; guard++) {
-      const candidateFirst = firstPostInstallDueDate(installDate);
-      if (candidateFirst.getTime() >= targetFirstPaymentMs) break;
-      installDate.setDate(installDate.getDate() + 1);
-    }
+    const installDate = deriveInstallDate(generatedDate);
     const annex = buildAnnex(fullState, ADMIN_PARAMS, terms, installDate);
     return {
       recommended, recPanelCount, panelCount, systemKwp,
@@ -1236,6 +1343,9 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       // v3-106 — stock flags for the Step 2 UI (out-of-stock notices).
       panelsAvailable, anyBatteryInStock, rsdInStock,
       pkg, terms, popularTenors, directPurchase, schedule, cashFlows, annex, installDate,
+      // Exposed so handleGeneratePdf can rebuild the date-dependent annex
+      // against a freshly stamped issue date (see deriveInstallDate).
+      fullState,
     };
   }, [state, generatedDate, paramsRev]);
 
@@ -1265,7 +1375,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // editable or read-only.
     if (
       (adminAccess === 'none' || adminAccess !== 'edit') &&
-      activeTab === 'audit-history'
+      SUPER_ADMIN_TAB_IDS.includes(activeTab)
     ) {
       setActiveTab('calculator');
     } else if (adminAccess === 'none' && ADMIN_TAB_IDS.includes(activeTab)) {
@@ -1324,7 +1434,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // Maintenance-mode gate (v3-51). Three-signal activation, same as v3-50
   // ContactGate's passwordRequired derivation:
   //   1. AUTH.testingPassword set (VITE_MAINTENANCE_PASSWORD present)
-  //   2. ADMIN_PARAMS.gateAuthEnabled === true (admin toggle on)
+  //   2. ADMIN_PARAMS.gateAuthEnabled === true (admin toggle on) AND that
+  //      value came from LIVE data (paramsLoadedFromServer). Fail OPEN on a
+  //      failed load (2026-09-22): the BUNDLED default is `true`, so a device
+  //      on cached/bundled values used to hit a maintenance screen nobody had
+  //      switched on. Prod never behaved that way (no maintenance password in
+  //      its bundle); this makes staging match. The banner covers the failure.
   //   3. sessionStorage GATE_PASS_KEY === '1' is NOT set (no in-session auth)
   // The customer-data-collection form that used to gate access in v3-50 is
   // GONE — customers land directly on the calculator when maintenance mode
@@ -1338,7 +1453,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // accept set. Plain rep mode does NOT bypass (unchanged — reps unlock the
   // gate itself, which takes the same passwords).
   const passwordRequired = !!AUTH.testingPassword
-                        && (ADMIN_PARAMS.gateAuthEnabled ?? true)
+                        && paramsLoadedFromServer
+                        && ADMIN_PARAMS.gateAuthEnabled === true
                         && !readGatePass()
                         && !gateUnlocked
                         && adminAccess === 'none';
@@ -1362,14 +1478,18 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // the flow's "Sales rep? Sign in" link opens the same AuthDialog.
   if (mode === 'customer' && phoneViewport) {
     return (
-      <MobileFlow
-        state={state}
-        updateState={updateState}
-        model={model}
-        adminParams={ADMIN_PARAMS}
-        contact={contact}
-        setContact={setContact}
-      />
+      <>
+        <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
+                            retrying={paramsRetrying} compact />
+        <MobileFlow
+          state={state}
+          updateState={updateState}
+          model={model}
+          adminParams={ADMIN_PARAMS}
+          contact={contact}
+          setContact={setContact}
+        />
+      </>
     );
   }
 
@@ -1384,7 +1504,9 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               mode={mode} onLockMode={() => setLockConfirmOpen(true)}
               adminAccess={adminAccess}
               onSignOut={onSignOut}
-              leadState={state} leadModel={model} />
+              leadState={state} leadModel={model} updateState={updateState} />
+      <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
+                          retrying={paramsRetrying} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             adminAccess={adminAccess}
@@ -1431,6 +1553,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           <>
             {activeTab === 'audit-history' ? (
               <AuditHistory accessLevel={adminAccess} />
+            ) : activeTab === 'users' ? (
+              <UserManagement accessLevel={adminAccess} />
             ) : (
               <>
                 <MaintenanceModeBlock
@@ -1506,7 +1630,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
 function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
                   generatedDate, validUntil, quoteExpired,
                   editing, setEditing, requireForPdf,
-                  mode, onLockMode, onSignOut, leadState, leadModel }) {
+                  mode, onLockMode, onSignOut, leadState, leadModel, updateState }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
@@ -1522,6 +1646,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
               agent={agent} updateAgent={updateAgent}
               mode={mode} requireAll={requireForPdf}
               leadState={leadState} leadModel={leadModel}
+              updateState={updateState}
               onDone={() => setEditing(false)}
             />
           </div>
@@ -1636,7 +1761,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
 // the customer-facing render already handles agent.name === '' by
 // falling back to "Solviva Customer Support" automatically.
 function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requireAll = false,
-                           leadState, leadModel, onDone }) {
+                           leadState, leadModel, updateState, onDone }) {
   const [draftCustomer, setDraftCustomer] = useState(contact);
   const [draftAgent, setDraftAgent] = useState(agent);
   // When the form is opened by the PDF gate (requireAll), surface validation
@@ -1651,6 +1776,75 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   const isLeadFlow = isCustomer && !requireAll;
   const [consentGiven, setConsentGiven] = useState(false);
   const [submitStatus, setSubmitStatus] = useState('idle'); // idle | sending | sent | error
+
+  // v3-211 — the 2E location cascade, mirrored here so "where is this job" sits
+  // with the installation address instead of being two screens apart.
+  //
+  // WRITTEN THROUGH, deliberately NOT drafted (v3-212, user decision): these
+  // controls read from and write to calculator state directly, so this copy and
+  // the Step 2E copy are the same fields and cannot show different values.
+  // Consequence to be aware of: unlike Name/Email/Mobile, a location change is
+  // live the moment it is made, so Cancel does NOT revert it. That is the price
+  // of one visible source of truth, and it matches how 2E already behaves.
+  const locState = {
+    location: leadState?.location ?? 'luzon',
+    locationRegion: leadState?.locationRegion ?? 'NCR',
+    locationProvince: leadState?.locationProvince ?? null,
+    locationCity: leadState?.locationCity ?? '',
+  };
+  const loc = resolveLocation(
+    locState.locationRegion, locState.locationProvince, locState.locationCity,
+  );
+  // Only the Luzon cascade is a km lookup; the dynamic off-island rows and
+  // "Other" price by their own rules (2F for Other), so the three selects are
+  // meaningless unless Luzon is picked.
+  const showCascade = locState.location === 'luzon';
+  // Guarded: ContactEditForm is only mounted by Header, which always supplies
+  // updateState — the check keeps the controls inert rather than throwing if
+  // that ever stops being true.
+  const applyLoc = (patch) => { if (updateState) updateState(patch); };
+
+  // 043D — Odoo lead lookup. Same idle/loading/done/error shape as
+  // submitStatus above, so this form keeps one async idiom.
+  const [projectNo, setProjectNo] = useState('');
+  const [lookup, setLookup] = useState('idle');   // idle | loading | done | error
+  const [lookupMsg, setLookupMsg] = useState('');
+
+  const runLookup = async () => {
+    if (!PROJECT_NUMBER_RE.test(projectNo)) return;
+    setLookup('loading');
+    setLookupMsg('');
+    const res = await fetchCrmContact(projectNo);
+    if (!res.ok) {
+      setLookup('error');
+      setLookupMsg(res.error);
+      return;
+    }
+    const { name, email, mobile, alternateName, warnings } = res.contact;
+    // Write into the DRAFT, never via setContact. draftCustomer is seeded once
+    // at mount (there is no prop-sync effect and the component has no key), so
+    // committing to the parent here would leave the visible inputs stale and
+    // the subsequent Save would overwrite the fetched values with them.
+    // The rep still commits with "Save changes"; Cancel still discards.
+    setDraftCustomer(d => ({
+      ...d,
+      ...(name ? { name } : {}),
+      ...(email ? { email } : {}),
+      // Odoo stores "+63 917 841 5976", which this form's own validator
+      // rejects; the backend returns the canonical 11-digit form and
+      // formatPhPhone renders it the way the field expects.
+      ...(mobile ? { mobile: formatPhPhone(mobile) } : {}),
+      // installAddress deliberately untouched — out of AC2 scope, and a CRM
+      // contact address is not necessarily the installation site.
+    }));
+    setLookup('done');
+    const notes = describeWarnings(warnings);
+    if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+    setLookupMsg(
+      `${name ? `✓ ${name}` : '✓ Lead'} — loaded from lead ${projectNo}` +
+      (notes.length ? ` · ${notes.join('; ')}` : ''),
+    );
+  };
 
   const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || '').trim());
 
@@ -1681,6 +1875,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     // the agent block, so draftAgent === agent (initial value) and this
     // is a no-op, but the explicit guard makes intent clear.
     if (!isCustomer) updateAgent(draftAgent);
+    // No location commit here: the cascade writes straight to calculator state
+    // as it is changed (v3-212), so it is already saved by the time Save is
+    // pressed. See the locState comment above.
 
     // v3-97 — the lead flow submits to Solviva rather than just closing.
     if (isLeadFlow) {
@@ -1795,6 +1992,46 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       <div>
         <div style={groupTitle}>Customer details</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* 043D — look a lead up in Odoo instead of retyping it. Rep-only:
+              the customer-facing form has no Project Number to enter. This is
+              a layout gate, not a security one — `mode` is flipped by a
+              client-side password, so the backend verifies the JWT itself. */}
+          {!isCustomer && (
+            <div>
+              <span style={labelStyle}>Project number (Odoo)</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input style={{ ...inputStyle, flex: 1 }} value={projectNo}
+                       inputMode="numeric"
+                       onChange={e => { setProjectNo(e.target.value.replace(/\D+/g, '')); setLookup('idle'); }}
+                       onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); runLookup(); } }}
+                       placeholder="52210" />
+                <button type="button" onClick={runLookup}
+                        disabled={lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)}
+                        style={{
+                          fontSize: 12.5, fontWeight: 600, padding: '7px 14px',
+                          borderRadius: 6, border: '1px solid #25543A',
+                          background: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? '#9CA3AF' : '#25543A',
+                          color: '#fff', cursor: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? 'default' : 'pointer',
+                          fontFamily: 'inherit', whiteSpace: 'nowrap',
+                        }}>
+                  {lookup === 'loading' ? 'Searching…' : 'Search'}
+                </button>
+              </div>
+              {/* Mirrors errMsg's styling but is NOT gated on showErrors — the
+                  lookup result must always be visible. Deliberately never calls
+                  setShowErrors: that has no path back to false, so a failed
+                  lookup would permanently redden Name and Email. */}
+              {lookupMsg && (
+                <span role="status" aria-live="polite"
+                      style={{
+                        fontSize: 10.5, marginTop: 3, display: 'block',
+                        color: lookup === 'error' ? '#DC2626' : '#15803D',
+                      }}>
+                  {lookupMsg}
+                </span>
+              )}
+            </div>
+          )}
           <div>
             <span style={labelStyle}>Name</span>
             <input style={inp(err.custName)} value={draftCustomer.name}
@@ -1821,9 +2058,66 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
             <textarea style={{ ...inp(err.custAddress), minHeight: 54, resize: 'vertical' }}
                    value={draftCustomer.installAddress || ''}
                    onChange={e => setDraftCustomer({ ...draftCustomer, installAddress: e.target.value })}
-                   placeholder="Unit/house no., street, barangay, city, province, ZIP" />
+                   placeholder="Unit/house no., street, barangay" />
             {errMsg(err.custAddress, 'Installation address is required for the proposal.')}
           </div>
+          {/* v3-211 — the same cascade as Step 2E, bound to the same state.
+              Sits with the installation address because it answers the same
+              question, and it is what sets the delivery charge. */}
+          <div>
+            <span style={labelStyle}>Installation location</span>
+            <select style={inputStyle} value={locState.location}
+                    onChange={e => applyLoc({ location: e.target.value })}>
+              <option value="luzon">Luzon main island</option>
+              {availableDeliveryLocations(ADMIN_PARAMS).map(l => (
+                <option key={l.id} value={l.id}>{l.label}</option>
+              ))}
+              <option value="other">{isCustomer ? 'Other' : 'Other (Specify in 2F)'}</option>
+            </select>
+          </div>
+          {showCascade && (
+            <>
+              <div>
+                <span style={labelStyle}>Region</span>
+                <select style={inputStyle} value={loc.region.code}
+                        onChange={e => {
+                          // Re-resolve so region, province and city land on a
+                          // valid triple together.
+                          const n = resolveLocation(e.target.value, null, null);
+                          applyLoc({ locationRegion: n.region.code, locationProvince: n.province,
+                                     locationCity: n.city.name, locationKm: n.city.km });
+                        }}>
+                  {LUZON_REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+                </select>
+              </div>
+              {/* NCR has no provinces — hidden rather than a one-item control. */}
+              {loc.provinces.length > 0 && (
+                <div>
+                  <span style={labelStyle}>Province</span>
+                  <select style={inputStyle} value={loc.province || ''}
+                          onChange={e => {
+                            const n = resolveLocation(loc.region.code, e.target.value, null);
+                            applyLoc({ locationProvince: n.province,
+                                       locationCity: n.city.name, locationKm: n.city.km });
+                          }}>
+                    {loc.provinces.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+              )}
+              <div>
+                <span style={labelStyle}>City / municipality</span>
+                <select style={inputStyle} value={loc.city ? loc.city.name : ''}
+                        onChange={e => {
+                          const c = loc.cities.find(x => x.name === e.target.value) || loc.cities[0];
+                          applyLoc({ locationCity: c.name, locationKm: c.km });
+                        }}>
+                  {loc.cities.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                </select>
+                {/* No km / delivery-charge caption here on purpose — that
+                    belongs to Step 2E, which owns the pricing explanation. */}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -2048,7 +2342,8 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
     // re-enforces the same allowlist on PUT /api/parameters, so read-only here
     // is a UI affordance over a real server-side boundary, not the boundary.
     ...(adminAccess !== 'none'
-      ? [...ADMIN_TAB_META, ...(adminAccess === 'edit' ? [ADMIN_AUDIT_TAB] : [])]
+      ? [...ADMIN_TAB_META,
+         ...(adminAccess === 'edit' ? [ADMIN_AUDIT_TAB, ADMIN_USERS_TAB] : [])]
       : []),
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;

@@ -8,8 +8,8 @@
 // Replaces the legacy floating "Sales Rep" / "Admin" env-var password buttons.
 // =============================================================================
 
-import React, { useState } from 'react';
-import { supabase, sendPasswordReset } from '../lib/supabaseClient.js';
+import React, { useState, useEffect } from 'react';
+import { supabase, sendPasswordReset, signInWithGoogle, SSO_REJECT_KEY, SSO_URL_ERROR_KEY } from '../lib/supabaseClient.js';
 import { COLORS } from './ui.jsx';
 
 export default function Login() {
@@ -24,6 +24,44 @@ export default function Login() {
   const [resetSent, setResetSent] = useState(false);
 
   const canSubmit = email.trim() !== '' && password !== '' && !submitting;
+  const [ssoPending, setSsoPending] = useState(false);
+
+  // v3-214 — two ways a Google attempt can come back to this screen with a
+  // message to show, both parked in sessionStorage and read once here:
+  //   • SSO_REJECT_KEY — App.jsx rejected the signed-in account's domain and
+  //     signed it out (which unmounts everything, so state cannot carry it);
+  //   • SSO_URL_ERROR_KEY — the Postgres domain guard refused the sign-up and
+  //     Supabase bounced back with the reason in the URL hash. That hash is
+  //     read and cleared by the SDK during client init, before this component
+  //     exists, so supabaseClient.js lifts it at module load instead.
+  useEffect(() => {
+    let note = null, urlErr = null;
+    try {
+      note = sessionStorage.getItem(SSO_REJECT_KEY);
+      urlErr = sessionStorage.getItem(SSO_URL_ERROR_KEY);
+      sessionStorage.removeItem(SSO_REJECT_KEY);
+      sessionStorage.removeItem(SSO_URL_ERROR_KEY);
+    } catch (_) { /* ignore */ }
+    if (note) { setError(note); return; }
+    if (urlErr) {
+      // The trigger's RAISE reaches the client as the generic "Database error
+      // saving new user" — translate it, since the real reason is the domain
+      // rule. Anything else (e.g. the user cancelled at Google) is shown as-is.
+      setError(/database error/i.test(urlErr)
+        ? 'Sign in with Google is limited to Solviva Energy accounts (@solvivaenergy.com).'
+        : urlErr.replace(/\+/g, ' '));
+    }
+  }, []);
+
+  const handleGoogle = async () => {
+    if (ssoPending) return;
+    setSsoPending(true);
+    setError(null);
+    const { error: ssoError } = await signInWithGoogle();
+    // On success the browser has already left for Google; we only get here
+    // when the redirect could not even start.
+    if (ssoError) { setError(ssoError.message || 'Google sign-in failed.'); setSsoPending(false); }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -118,6 +156,24 @@ export default function Login() {
         }}>
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
+
+        <div style={styles.divider} aria-hidden="true">
+          <span style={styles.dividerLine} />
+          <span style={styles.dividerText}>or</span>
+          <span style={styles.dividerLine} />
+        </div>
+
+        <button type="button" onClick={handleGoogle} disabled={ssoPending}
+                style={{ ...styles.googleButton, ...(ssoPending ? styles.buttonDisabled : {}) }}>
+          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" style={{ flexShrink: 0 }}>
+            <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.5 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.4 17.7 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4 7.1-10 7.1-17z"/>
+            <path fill="#FBBC05" d="M10.5 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.9-6.1z"/>
+            <path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-3.9-13.5-9.3l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/>
+          </svg>
+          {ssoPending ? 'Redirecting to Google…' : 'Sign in with Google'}
+        </button>
+        <p style={styles.ssoHint}>For @solvivaenergy.com Google Workspace accounts.</p>
       </form>
       ) : (
       <form style={styles.card} onSubmit={handleReset}>
@@ -243,5 +299,15 @@ const styles = {
     borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', marginTop: 4,
   },
   buttonDisabled: { backgroundColor: '#9CA3AF', cursor: 'not-allowed' },
+  divider: { display: 'flex', alignItems: 'center', gap: 10, margin: '18px 0 14px' },
+  dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.inputBorder },
+  dividerText: { fontSize: 11, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+  googleButton: {
+    width: '100%', padding: '11px', fontSize: 14, fontWeight: 600,
+    backgroundColor: '#FFFFFF', color: COLORS.textBody,
+    border: `1px solid ${COLORS.inputBorder}`, borderRadius: 8, cursor: 'pointer',
+    fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+  },
+  ssoHint: { fontSize: 11.5, color: COLORS.textMuted, textAlign: 'center', margin: '10px 0 0' },
   footer: { marginTop: 24, fontSize: 12, color: COLORS.textMuted, opacity: 0.8 },
 };

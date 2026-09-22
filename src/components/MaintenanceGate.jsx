@@ -9,7 +9,11 @@
 //
 // THREE-SIGNAL ACTIVATION (same gating as v3-50):
 //   1. AUTH.testingPassword set (VITE_MAINTENANCE_PASSWORD env var present)
-//   2. ADMIN_PARAMS.gateAuthEnabled === true (admin toggle ON)
+//   2. ADMIN_PARAMS.gateAuthEnabled === true (admin toggle ON) — and the
+//      value came from LIVE data (paramsService.isLoadedFromServer()). A
+//      failed parameter load no longer raises the gate: the bundled default
+//      is `true`, which used to show this screen to devices that simply
+//      could not reach the backend (2026-09-22).
 //   3. sessionStorage GATE_PASS_KEY === '1' is NOT set (customer hasn't
 //      already authed in this session)
 // All three must be true for the gate to render. App.jsx computes this
