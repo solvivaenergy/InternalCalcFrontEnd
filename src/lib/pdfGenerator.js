@@ -1934,14 +1934,23 @@ function drawPackageDetailPage(mgr) {
   // 0-3 inverter rows, not exactly one.
   ["inverter0", "inverter1", "inverter2"].forEach((k) => addSub(byKey(k)));
   if (panelCount > 0) {
-    // Static inclusion lines. The breaker's "30AT to 125AT" range is NOT
+    // Static inclusion line. The breaker's "30AT to 125AT" range is NOT
     // derivable — the catalog ships nine discrete single-rating SKUs and there
     // is no ampacity/sizing logic anywhere in src/ — so per product decision it
-    // stays generic boilerplate carrying no amount. "AC/DC Excess" is likewise a
-    // category label covering dcExtra + acExtra, whose money is already inside
-    // the Solar group amount.
+    // stays generic boilerplate carrying no amount.
     solarSubs.push({ text: "1 Unit/s AC Breaker, 30AT to 125AT, 2-pole" });
-    solarSubs.push({ text: "AC/DC Excess" });
+    // Excess cable, by length. This used to be a single "AC/DC Excess" label;
+    // Sales asked for the meters on the proposal, so print the engine's own
+    // dcExtra / acExtra lines — the same text the Summary tab shows ("5m of
+    // Add'l. DC Cable"). Gated on the metered length rather than the price so
+    // a ₱0/m rate still lists the run, and a 0m run prints nothing at all.
+    // Their money was always inside the Solar group amount; that is unchanged.
+    ["dcExtra", "acExtra"].forEach((k) => {
+      const it = byKey(k);
+      const meters = it && Number.isFinite(it.meters) ? it.meters : null;
+      const show = meters == null ? printable(it) : meters > 0;
+      if (it && it.description && show) solarSubs.push({ text: it.description });
+    });
   }
   // Story 026 #1 — the SELECTED roof material must appear. The roof item is
   // always pushed by the engine but is P0 for the 'metal' default, so the
