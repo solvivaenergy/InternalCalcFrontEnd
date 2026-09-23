@@ -1561,6 +1561,10 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   items.push({
     key: "dcExtra",
     description: `${dcExtraMeters}m of Add'l. DC Cable`,
+    // Metered length beyond the included baseline. The PDF's package-detail
+    // page lists this line by length rather than by price, so a run priced at
+    // ₱0/m still shows up and a 0m run drops out.
+    meters: dcExtraMeters,
     directPrice: dcExtraDirect,
     cogs:
       panelsTotal === 0 ? 0 : dcExtraMeters * ap.additionalDcCablePerMeterCogs,
@@ -1576,6 +1580,7 @@ export function buildPackageLineItems(state, adminParams, schedule) {
   items.push({
     key: "acExtra",
     description: `${acExtraMeters}m of Add'l. AC Cable`,
+    meters: acExtraMeters, // see dcExtra
     directPrice: acExtraDirect,
     cogs:
       panelsTotal === 0 ? 0 : acExtraMeters * ap.additionalAcCablePerMeterCogs,
