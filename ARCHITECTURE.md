@@ -83,10 +83,12 @@ flowchart LR
   | `PUT /api/parameters` | Save parameter overrides | Bearer token + `x-solviva-role` header; server re-checks role |
   | `GET /api/users` | List accounts with their resolved role (Users tab) | Bearer token; `user_roles.role = 'admin'` only |
   | `POST /api/users` | Create an account: role, optional name/mobile, password or Google-only | Bearer token; `user_roles.role = 'admin'` only |
+  | `PATCH /api/users/:id` | Edit an account's role, display name and/or mobile (Users tab → Edit) | Bearer token; `user_roles.role = 'admin'` only; refuses to demote the caller |
+  | `POST /api/users/:id/archive` / `.../restore` | Archive = ban the account (reversible, nothing deleted); restore lifts it | Bearer token; `user_roles.role = 'admin'` only; refuses to archive the caller |
 - **Modules**:
   - `src/quoteService.js` — `buildQuote()` pricing engine.
   - `src/parametersService.js` — `getParameters()` / `putParameters()`; enforces which role may write which parameter sections (server-side security boundary).
-  - `src/usersService.js` — `listUsers()` / `createUser()` behind the Super Admin check. Creating writes `app_metadata.role`, `user_metadata` and `public.user_roles` exactly as `scripts/set-user-role.mjs` does (`rep` is stored as `view` in the table), so the Users tab and the seed scripts produce identical accounts.
+  - `src/usersService.js` — `listUsers()` / `createUser()` / `updateUser()` / `setUserArchived()` behind the Super Admin check. Creating and updating write `app_metadata.role`, `user_metadata` and `public.user_roles` exactly as `scripts/set-user-role.mjs` does (`rep` is stored as `view` in the table), so the Users tab and the seed scripts produce identical accounts. Archiving sets `ban_duration` the way `scripts/deactivate-user.mjs` does; GoTrue then refuses sign-in, refresh and authenticated calls (`user_banned`), and restore clears it.
 - **DB access**: uses the **service-role key** (bypasses RLS). This key must **never** be exposed to the browser or committed.
 - **CORS**: `CORS_ORIGINS` env var (comma-separated or `*`).
 
