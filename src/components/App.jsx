@@ -2,7 +2,7 @@
 // APP — top-level shell, tab navigation, state container
 // =============================================================================
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
          availableBatteryPackages, availableDeliveryLocations } from '../data/adminParams.js';
 import { DEVICES } from '../data/devices.js';
@@ -27,6 +27,11 @@ import * as paramsService from '../lib/paramsService.js';
 import { isValidPhPhone, formatPhPhone } from '../lib/validation.js';
 import { buildLeadPayload, submitLead, makeLeadRef, LEAD_CONSENT_TEXT } from '../lib/lead.js';
 import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE } from '../lib/crmContact.js';
+// Sprint Dinuguan — Odoo hand-offs. deepLink.js also runs at import time to
+// lift ?leadId= off the URL before the login / SSO round-trip can drop it
+// (064A); odooQuotation.js pushes a generated proposal as a quotation (064C).
+import { consumePendingLeadId } from '../lib/deepLink.js';
+import { buildOdooQuotationPayload, pushProposalToOdoo } from '../lib/odooQuotation.js';
 
 import MaintenanceGate, { readGatePass } from './MaintenanceGate.jsx';
 import Calculator from './Calculator.jsx';
@@ -37,6 +42,7 @@ import AuditHistory from './AuditHistory.jsx';
 import UserManagement from './UserManagement.jsx';   // v3-215
 import MobileFlow from './MobileFlow.jsx';
 import ParamsSourceBanner from './ParamsSourceBanner.jsx';
+import OdooSyncBanner from './OdooSyncBanner.jsx';   // sprint Dinuguan
 // ── Supabase user management (this deployment's replacement for upstream
 // v3-207's shared-password AuthDialog sign-in). Identity and role come from
 // Supabase Auth + public.user_roles; the staff-key password dialog is gone.
@@ -520,7 +526,11 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   //   • restoreBannerShown  — set after the banner has been displayed once
   //     so toggling tabs / re-renders don't keep re-triggering it.
   const [contact, setContactRaw] = useState(() => {
-    const EMPTY = { name: '', email: '', mobile: '', installAddress: '' };
+    // leadId (sprint Dinuguan, 064A/064C): the Odoo crm.lead the customer was
+    // loaded from — via the Project Number search or a deep link from Odoo.
+    // null when the customer was typed in by hand, in which case no quotation
+    // is pushed to Odoo. Optional and additive, so no record-version bump.
+    const EMPTY = { name: '', email: '', mobile: '', installAddress: '', leadId: null };
     try {
       const raw = sessionStorage.getItem(CONTACT_STORAGE_KEY);
       if (!raw) return EMPTY;
@@ -534,6 +544,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         email:  parsed.email  || '',
         mobile: parsed.mobile || '',
         installAddress: parsed.installAddress || '',
+        leadId: Number.isInteger(parsed.leadId) && parsed.leadId > 0 ? parsed.leadId : null,
       };
     } catch (_) {
       return EMPTY;
@@ -555,6 +566,15 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       }
     } catch (_) { /* ignore */ }
   };
+  // Sprint Dinuguan — a ref so async work (the deep-link lookup, the post-PDF
+  // Odoo push) patches the CURRENT contact rather than the one captured when
+  // the effect was scheduled.
+  const contactRef = useRef(contact);
+  contactRef.current = contact;
+  const patchContact = (patch) => setContact({ ...contactRef.current, ...patch });
+  // Outcome of the last Odoo hand-off, rendered by <OdooSyncBanner/>:
+  // { status: 'success' | 'error', title, message?, warnings? } or null.
+  const [odooSync, setOdooSync] = useState(null);
 
   // Agent info: starts from config defaults, but agents can override per-device
   // via the header Edit dialog. Persisted in localStorage so each agent only
@@ -837,6 +857,49 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     } catch (_) { /* ignore */ }
   };
 
+  // ─── 064A — deep link from Odoo ────────────────────────────────────────────
+  // deepLink.js parked ?leadId= in sessionStorage at import time. Once a rep
+  // is in rep mode, consume it ONCE and run the same lookup the Project Number
+  // search does, committing straight to the contact (the search writes to the
+  // edit form's draft because the rep still has to press Save there; a deep
+  // link has no form open, so the result lands directly). Customer mode
+  // leaves the id parked: it is picked up if the user unlocks rep mode later.
+  useEffect(() => {
+    if (mode !== 'rep') return undefined;
+    const pending = consumePendingLeadId();
+    if (!pending) return undefined;
+    let cancelled = false;
+    (async () => {
+      const res = await fetchCrmContact(String(pending));
+      if (cancelled) return;
+      if (!res.ok) {
+        setOdooSync({
+          status: 'error',
+          title: `Could not load Odoo lead ${pending}.`,
+          message: `${res.error} Enter the customer details by hand, or search the Project Number again from "Edit contact details".`,
+        });
+        return;
+      }
+      const { name, email, mobile, alternateName, warnings } = res.contact;
+      patchContact({
+        ...(name ? { name } : {}),
+        ...(email ? { email } : {}),
+        ...(mobile ? { mobile: formatPhPhone(mobile) } : {}),
+        leadId: pending,
+      });
+      const notes = describeWarnings(warnings);
+      if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+      setOdooSync({
+        status: 'success',
+        title: `${name ? name : 'Customer'} loaded from Odoo lead ${pending}.`,
+        message: 'Name, email and mobile came from the opportunity. Add the installation address under "Edit contact details" before generating the proposal; the proposal will be saved to this opportunity as a quotation.',
+        warnings: notes,
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   // v3-203 — unified Staff Sign-in dialog visibility. Opens from the sun-key
   // glyph (header, footer, and the maintenance gate's fixed corner). One
   // dialog for every tier: rep/maintenance passwords flip mode to 'rep';
@@ -1042,13 +1105,52 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       };
 
       const { generateProposalPdf } = await import('../lib/pdfGenerator.js');
-      await generateProposalPdf({
+      const pdfResult = await generateProposalPdf({
         state, model: issuedModel, contact, agent,
         generatedDate: issuedAt, validUntil: issuedValidUntil,
         brand: BRAND, adminParams: ADMIN_PARAMS, disclaimers: DISCLAIMERS,
         proposalContent: PROPOSAL_CONTENT,
         snapshots: { visualizing: visualizingPng, summary: summaryPng },
       });
+
+      // ─── 064C/J/K — push the proposal to Odoo as a quotation ─────────────
+      // Only for a customer loaded from an Odoo lead (product decision: no
+      // lead, no quotation). Runs AFTER doc.save(), inside its own try so no
+      // Odoo outcome can reach the "PDF generation failed" path below — the
+      // PDF is already on disk; the banner carries the result either way.
+      if (contact.leadId) {
+        try {
+          const payload = buildOdooQuotationPayload({
+            state, model: issuedModel, contact, agent,
+            issuedAt, validUntil: issuedValidUntil,
+            quoteRef: pdfResult?.quoteRef || '',
+          });
+          const push = await pushProposalToOdoo(payload);
+          if (push.ok) {
+            setOdooSync({
+              status: 'success',
+              title: `Quotation ${push.order?.name || ''} created in Odoo from proposal ${payload.proposal.quoteRef}.`,
+              message: push.salespersonSource === 'lead'
+                ? 'The salesperson was taken from the lead because your account has no matching Odoo user.'
+                : '',
+              warnings: push.warnings,
+            });
+          } else {
+            setOdooSync({
+              status: 'error',
+              title: 'The proposal PDF was generated, but no quotation was created in Odoo.',
+              message: push.error,
+            });
+          }
+        } catch (pushErr) {
+          console.error('[odoo-quotation]', pushErr);
+          setOdooSync({
+            status: 'error',
+            title: 'The proposal PDF was generated, but no quotation was created in Odoo.',
+            message: 'Unexpected error while contacting the server. Try again or create the quotation in Odoo.',
+          });
+        }
+      }
     } catch (err) {
       console.error('[generateProposalPdf]', err);
       // Restore on error
@@ -1507,6 +1609,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               leadState={state} leadModel={model} updateState={updateState} />
       <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
                           retrying={paramsRetrying} />
+      <OdooSyncBanner sync={odooSync} onDismiss={() => setOdooSync(null)} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             adminAccess={adminAccess}
@@ -1664,6 +1767,13 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
             <strong>Quote for:</strong> {contact.name || '—'}
             {contact.email && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{contact.email}</span></>}
             {contact.mobile && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{contact.mobile}</span></>}
+            {/* 064A/064C — which Odoo opportunity the proposal will be saved to. */}
+            {mode === 'rep' && contact.leadId && (
+              <><span style={styles.metaSep}>·</span>
+                <span style={styles.metaMuted} title="The generated proposal is saved to this Odoo opportunity as a quotation">
+                  Odoo lead {contact.leadId}
+                </span></>
+            )}
           </div>
           <div style={styles.metaRow}>
             {agent.name ? (
@@ -1806,7 +1916,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
 
   // 043D — Odoo lead lookup. Same idle/loading/done/error shape as
   // submitStatus above, so this form keeps one async idiom.
-  const [projectNo, setProjectNo] = useState('');
+  // Seeded from the linked lead (064A/064C) so the field shows which
+  // opportunity the proposal will be saved to.
+  const [projectNo, setProjectNo] = useState(contact.leadId ? String(contact.leadId) : '');
   const [lookup, setLookup] = useState('idle');   // idle | loading | done | error
   const [lookupMsg, setLookupMsg] = useState('');
 
@@ -1836,6 +1948,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       ...(mobile ? { mobile: formatPhPhone(mobile) } : {}),
       // installAddress deliberately untouched — out of AC2 scope, and a CRM
       // contact address is not necessarily the installation site.
+      // 064C — remember the lead so the generated proposal is saved to this
+      // opportunity as a quotation. Committed with the rest on Save.
+      leadId: Number(projectNo),
     }));
     setLookup('done');
     const notes = describeWarnings(warnings);
@@ -2028,6 +2143,26 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                         color: lookup === 'error' ? '#DC2626' : '#15803D',
                       }}>
                   {lookupMsg}
+                </span>
+              )}
+              {/* 064C — the link decides whether Generate PDF also creates an
+                  Odoo quotation. Unlink covers the wrong-lead case; a fresh
+                  search re-links. */}
+              {draftCustomer.leadId ? (
+                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#4B5563' }}>
+                  Linked to Odoo lead {draftCustomer.leadId} — each generated proposal is saved to
+                  this opportunity as a new quotation.{' '}
+                  <button type="button"
+                          onClick={() => { setDraftCustomer(d => ({ ...d, leadId: null })); setProjectNo(''); setLookup('idle'); setLookupMsg(''); }}
+                          style={{ background: 'none', border: 'none', padding: 0, color: '#B45309',
+                                   fontSize: 10.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                                   textDecoration: 'underline' }}>
+                    Unlink
+                  </button>
+                </span>
+              ) : (
+                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#6B7280' }}>
+                  Not linked to an Odoo lead — the proposal will not be saved to Odoo.
                 </span>
               )}
             </div>

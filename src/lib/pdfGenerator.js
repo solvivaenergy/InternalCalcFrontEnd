@@ -3711,4 +3711,7 @@ export async function generateProposalPdf({
   const safeName = (contact?.name || "customer").replace(/[^a-zA-Z0-9]+/g, "_");
   const fname = `Solviva-Proposal-${ctx.quoteRef}-${safeName}.pdf`;
   doc.save(fname);
+  // Sprint Dinuguan (064C) — the caller pushes the proposal to Odoo under the
+  // same reference the PDF carries, so the quotation and the document match.
+  return { quoteRef: ctx.quoteRef, fileName: fname };
 }
