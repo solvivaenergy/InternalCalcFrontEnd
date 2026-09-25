@@ -149,6 +149,9 @@ export async function pushProposalToOdoo(payload) {
   if (res.status === 401) return { ok: false, error: "Session expired — sign in again to push the quotation to Odoo.", code };
   if (res.status === 404) return { ok: false, error: `Odoo lead ${leadId} was not found, so no quotation was created.`, code };
   if (res.status === 422) return { ok: false, error: detail || "The Odoo lead has no customer contact linked, so no quotation was created.", code };
+  if (res.status === 503 && code === "push_disabled") {
+    return { ok: false, error: "Saving quotations to Odoo is switched off on this server, so none was created. The PDF was generated.", code };
+  }
   if (res.status === 503) return { ok: false, error: "Odoo is not configured on the server — contact IT. The PDF was generated.", code };
   return { ok: false, error: detail || "Odoo did not accept the quotation. The PDF was generated; try again or create it in Odoo.", code };
 }
