@@ -132,10 +132,14 @@ export const DEFAULTS = {
 // quote at no extra charge; only meters beyond the included baseline are
 // billed at the per-meter rate (admin-editable, src/data/adminParams.js).
 //
-// Centralised here so the UI label, the input default, and the calc all
-// reference the same number — change one place and all three follow.
-export const INCLUDED_DC_CABLE_METERS = 30;
-export const INCLUDED_AC_CABLE_METERS = 10;
+// Centralised so the UI label, the input default, and the calc all reference
+// the same number — change one place and all three follow. The numbers live
+// in src/engine/constants.js since 2026-09-27 (the engine must not import this
+// file, which reads import.meta.env); re-exported here so UI imports stand.
+export {
+  INCLUDED_DC_CABLE_METERS,
+  INCLUDED_AC_CABLE_METERS,
+} from "./engine/constants.js";
 
 // Land-travel-distance threshold (Luzon location surcharge). The first
 // v3-199 — the free radius is now the adminParams.luzonFreeTravelKm
