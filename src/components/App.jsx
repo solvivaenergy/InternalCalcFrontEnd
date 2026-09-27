@@ -8,11 +8,11 @@ import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT,
 import { DEFAULTS, BRAND, AGENT, AUTH,
          INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
          LUZON_REGIONS, resolveLocation } from '../config.js';
-// The sizing/pricing pipeline is computeProposal() in src/engine/proposal.js
+// The sizing/pricing pipeline is computeProposal() in @solviva/calc-engine (proposal.js)
 // (this file's model memo, lifted out 2026-09-27). Only the PDF path still
 // reaches into the engine directly, to rebuild the annex on the issue date.
 import { buildAnnex, optimizeSystem } from '../lib/schedule.js';
-import { computeProposal, deriveInstallDate } from '../engine/proposal.js';
+import { computeProposal, deriveInstallDate } from '@solviva/calc-engine/proposal.js';
 // pdfGenerator is imported dynamically inside handleGeneratePdf so the
 // jsPDF + jspdf-autotable bundle (~140 KB gzipped) only loads when a rep
 // actually clicks "Generate PDF". Keeps the customer-facing initial load
@@ -1187,7 +1187,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // is defined just after `model` is constructed below (it depends on
   // `model.terms.negativeBalance` so it can't be hoisted above the useMemo).
 
-  // The pipeline itself is computeProposal() in src/engine/proposal.js — this
+  // The pipeline itself is computeProposal() in @solviva/calc-engine (proposal.js) — this
   // memo's body, lifted out verbatim on 2026-09-27 so the backend can run the
   // same code for a public estimate. paramsRev stays in the deps on purpose:
   // the engine reads the live ADMIN_PARAMS that paramsService mutates, so an

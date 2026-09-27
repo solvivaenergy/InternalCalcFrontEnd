@@ -38,15 +38,15 @@
 // device reads on its next load — so changes propagate globally.
 // =============================================================================
 
-import { ADMIN_PARAMS, BASELINE_RATE } from "../engine/data/adminParams.js";
+import { ADMIN_PARAMS, BASELINE_RATE } from "@solviva/calc-engine/data/adminParams.js";
 import {
   PANEL_SETTINGS,
   INVERTERS_SINGLE_PHASE,
   INVERTERS_THREE_PHASE,
-} from "../engine/data/inventory.js";
-import { DEVICES } from "../engine/data/devices.js";
+} from "@solviva/calc-engine/data/inventory.js";
+import { DEVICES } from "@solviva/calc-engine/data/devices.js";
 // The merge itself (legacy-blob migrations, COGS back-fill, derived prices)
-// is engine/runtime.js since 2026-09-27, so the backend runs the identical
+// is @solviva/calc-engine runtime.js since 2026-09-27, so the backend runs the identical
 // code; this module fetches, caches, and writes the result into the live
 // objects. runtime.js must stay imported before anything reads a price: it
 // derives the bundled defaults' prices when it loads.
@@ -59,7 +59,7 @@ import {
   migrateLegacyMinDp,
   migrateLegacyDeliveryLocations,
   seedPhaseAndComponentMargins,
-} from "../engine/runtime.js";
+} from "@solviva/calc-engine/runtime.js";
 import { getAccessToken, supabase } from "./supabaseClient.js";
 
 // Parameters endpoint. When VITE_API_BASE_URL is set (production), the admin

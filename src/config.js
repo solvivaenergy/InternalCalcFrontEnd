@@ -134,12 +134,12 @@ export const DEFAULTS = {
 //
 // Centralised so the UI label, the input default, and the calc all reference
 // the same number — change one place and all three follow. The numbers live
-// in src/engine/constants.js since 2026-09-27 (the engine must not import this
+// in the @solviva/calc-engine package since 2026-09-27 (the engine must not import this
 // file, which reads import.meta.env); re-exported here so UI imports stand.
 export {
   INCLUDED_DC_CABLE_METERS,
   INCLUDED_AC_CABLE_METERS,
-} from "./engine/constants.js";
+} from "@solviva/calc-engine/constants.js";
 
 // Land-travel-distance threshold (Luzon location surcharge). The first
 // v3-199 — the free radius is now the adminParams.luzonFreeTravelKm

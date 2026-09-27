@@ -53,5 +53,11 @@ export default defineConfig({
     esbuildOptions: {
       loader: { '.js': 'jsx' },
     },
+    // The engine is pure ESM with no dependencies, and paramsService fills its
+    // exported objects (ADMIN_PARAMS, DEVICES, …) in place. Serving its files
+    // unbundled in dev keeps exactly one instance of each module, the same as
+    // the production build — pre-bundling could split the package into chunks
+    // whose copies the live mutation would not reach.
+    exclude: ['@solviva/calc-engine'],
   },
 });
