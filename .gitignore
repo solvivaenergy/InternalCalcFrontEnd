@@ -5,6 +5,10 @@ dist/
 *.log
 .netlify/
 
+# Engine parity captures and the parameter payloads they run on hold COGS and
+# margins (scripts/engine-parity/README.md). Write them outside the repo.
+/scripts/engine-parity/*.json
+
 # Office lock/temp files — created whenever a spreadsheet in the repo is opened
 # (e.g. "~$Serviceable Location List.xlsx"). Never wanted in a commit.
 ~$*
