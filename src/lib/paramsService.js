@@ -12,7 +12,8 @@
 // happened repeatedly for one rep whose browser could reach supabase.co but
 // not onrender.com (the backend host), on prod and staging alike. load() now
 // tries, in order, and records which one won in getLoadStatus():
-//   1. backend   — GET ${API_BASE}/api/parameters, 8s timeout, one retry.
+//   1. backend   — GET ${API_BASE}/api/parameters with the session JWT
+//                  (required since 2026-09-27), 8s timeout, one retry.
 //   2. supabase  — the same row read straight through PostgREST with the
 //                  signed-in user's session (RLS policy: backend repo,
 //                  supabase/migrations/20260922_app_parameters_authenticated_read.sql).
@@ -151,12 +152,19 @@ async function fetchWithTimeout(url, opts, ms) {
 // Step 1 — the backend. One retry covers a transient blip or a backend that
 // is still waking up; a hard block (proxy, extension) fails both fast.
 async function loadFromBackend() {
+  // Since 2026-09-27 the backend answers 401 without a signed-in user's JWT:
+  // the row carries COGS and margins. load() only runs once a session exists
+  // (App.jsx mounts CalculatorApp after auth), so the token is there. The
+  // local-dev fallback session's placeholder token is ignored by the dev
+  // backend, which reads a JSON file and skips the check.
+  const token = await getAccessToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
   let lastErr = null;
   for (let attempt = 1; attempt <= BACKEND_ATTEMPTS; attempt++) {
     try {
       const res = await fetchWithTimeout(
         API_URL,
-        { method: "GET", cache: "no-store" },
+        { method: "GET", cache: "no-store", headers },
         BACKEND_TIMEOUT_MS,
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
