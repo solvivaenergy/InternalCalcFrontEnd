@@ -1,0 +1,67 @@
+name: Build & Deploy to Testing (GitHub Pages)
+
+# Testing pipeline: pushes to the `testing` branch build the app against the
+# isolated TESTING environment (its own Supabase project and its own Render
+# backend) and publish it to a SEPARATE repo's GitHub Pages site, served at
+# testing-internalcalc.solvivaenergy.com. Staging and production are untouched —
+# see deploy-staging.yml for the staging equivalent.
+
+on:
+  push:
+    branches: [testing]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "pages-testing"
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  # Testing backend on Render (free plan: sleeps after ~15 min idle, first
+  # request then takes up to a minute).
+  TESTING_BACKEND_URL: "https://internalcalcbackend-testing.onrender.com"
+  # Repo that hosts the testing GitHub Pages site (owner/name).
+  TESTING_PAGES_REPO: "solvivaenergy/InternalCalcFrontEnd-Testing"
+  # Custom domain for testing (written to CNAME on each deploy).
+  TESTING_DOMAIN: "testing-internalcalc.solvivaenergy.com"
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # This branch reads four build-time variables: the backend URL, the
+      # Supabase pair for the TESTING project, and the maintenance password
+      # (shared with staging).
+      - name: Build with testing environment variables
+        env:
+          VITE_API_BASE_URL: ${{ env.TESTING_BACKEND_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.TESTING_VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.TESTING_VITE_SUPABASE_ANON_KEY }}
+          VITE_MAINTENANCE_PASSWORD: ${{ secrets.STAGING_VITE_MAINTENANCE_PASSWORD }}
+        run: npm run build
+
+      - name: Deploy to testing Pages repo
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          # Same PAT the staging pipeline uses; it must have push access to the
+          # testing Pages repo.
+          personal_token: ${{ secrets.STAGING_PAGES_DEPLOY_TOKEN }}
+          external_repository: ${{ env.TESTING_PAGES_REPO }}
+          publish_branch: gh-pages
+          publish_dir: ./dist
+          cname: ${{ env.TESTING_DOMAIN }}
