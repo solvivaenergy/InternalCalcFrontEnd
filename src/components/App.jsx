@@ -25,7 +25,7 @@ import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE } from '../lib/crm
 // lift ?leadId= off the URL before the login / SSO round-trip can drop it
 // (064A); odooQuotation.js pushes a generated proposal as a quotation (064C).
 import { consumePendingLeadId } from '../lib/deepLink.js';
-import { buildOdooQuotationPayload, pushProposalToOdoo } from '../lib/odooQuotation.js';
+import { buildOdooQuotationPayload, pushProposalToOdoo, attachProposalPdf } from '../lib/odooQuotation.js';
 
 import MaintenanceGate, { readGatePass } from './MaintenanceGate.jsx';
 import Calculator from './Calculator.jsx';
@@ -1100,13 +1100,30 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           });
           const push = await pushProposalToOdoo(payload);
           if (push.ok) {
+            // 064F — attach the PDF the browser just saved to that quotation.
+            // A failure here is a warning on the same banner: the quotation
+            // exists and the PDF is on disk either way.
+            let pdfNote = '';
+            const pdfWarnings = [];
+            if (pdfResult?.pdfBlob && push.order?.id) {
+              const att = await attachProposalPdf({
+                orderId: push.order.id, quoteRef: payload.proposal.quoteRef,
+                fileName: pdfResult.fileName, pdfBlob: pdfResult.pdfBlob,
+              });
+              if (att.ok) {
+                pdfNote = ' The proposal PDF is attached to it.';
+                pdfWarnings.push(...att.warnings);
+              } else {
+                pdfWarnings.push(`The PDF could not be attached to the quotation (${att.error}); upload it in Odoo by hand.`);
+              }
+            }
             setOdooSync({
               status: 'success',
-              title: `Quotation ${push.order?.name || ''} created in Odoo from proposal ${payload.proposal.quoteRef}.`,
+              title: `Quotation ${push.order?.name || ''} created in Odoo from proposal ${payload.proposal.quoteRef}.${pdfNote}`,
               message: push.salespersonSource === 'lead'
                 ? 'The salesperson was taken from the lead because your account has no matching Odoo user.'
                 : '',
-              warnings: push.warnings,
+              warnings: [...push.warnings, ...pdfWarnings],
             });
           } else {
             setOdooSync({

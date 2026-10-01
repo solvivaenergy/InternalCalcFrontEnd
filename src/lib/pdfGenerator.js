@@ -3713,5 +3713,8 @@ export async function generateProposalPdf({
   doc.save(fname);
   // Sprint Dinuguan (064C) — the caller pushes the proposal to Odoo under the
   // same reference the PDF carries, so the quotation and the document match.
-  return { quoteRef: ctx.quoteRef, fileName: fname };
+  // 064F — the same bytes the browser just saved, so the caller can attach
+  // the identical document to that quotation (pdfBlob is a Blob of
+  // application/pdf; nothing is re-rendered).
+  return { quoteRef: ctx.quoteRef, fileName: fname, pdfBlob: doc.output("blob") };
 }
