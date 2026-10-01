@@ -1,7 +1,9 @@
 // =============================================================================
 // ODOO SYNC BANNER — outcome of the Odoo hand-offs (stories 064A / 064C)
 // -----------------------------------------------------------------------------
-// Rendered by App.jsx under the header in rep mode. Two moments feed it:
+// Rendered by App.jsx directly under the tab bar (above the active tab's
+// content; v3-223 — it sat between the header and the tabs before). Two
+// moments feed it:
 //   • a deep link from Odoo loaded (or failed to load) the customer (064A);
 //   • a generated proposal was pushed (or failed to push) as a quotation (064C).
 // Green for success, amber for anything the rep needs to act on. The PDF is

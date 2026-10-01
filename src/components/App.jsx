@@ -1372,12 +1372,15 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               leadState={state} leadModel={model} updateState={updateState} />
       <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
                           retrying={paramsRetrying} />
-      <OdooSyncBanner sync={odooSync} onDismiss={() => setOdooSync(null)} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             adminAccess={adminAccess}
             negativeBalance={model.terms.negativeBalance}
             onGeneratePdf={handleGeneratePdf} pdfGenerating={pdfGenerating} />
+      {/* v3-223 — the Odoo hand-off banner sits UNDER the tab bar (user
+          decision 2026-10-02), between the navigation and the active tab's
+          content, instead of between the header and the tabs. */}
+      <OdooSyncBanner sync={odooSync} onDismiss={() => setOdooSync(null)} />
       <main className="app-main" style={styles.main}>
         {activeTab === 'calculator' && (
           <Calculator state={state} updateState={updateState} model={model}
