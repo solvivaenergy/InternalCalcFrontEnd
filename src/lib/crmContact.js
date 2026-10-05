@@ -10,6 +10,7 @@
 // =============================================================================
 
 import { getAccessToken } from "./supabaseClient.js";
+import { formatPhPhone } from "./validation.js";
 
 // Same base resolution as paramsService.js:50-57, including the trailing-slash
 // trim. Deliberately NOT falling back to a relative path: on GitHub Pages a
@@ -38,11 +39,58 @@ const WARNING_TEXT = {
   phone_unnormalisable: "the phone number could not be read — enter it manually",
   phone_agent_blocklisted:
     "the only number on the lead is a Solviva agent's — enter the customer's",
+  salesperson_unavailable:
+    "Odoo did not return the assigned salesperson — check the Solviva Agent details",
 };
 
 export function describeWarnings(warnings) {
   if (!Array.isArray(warnings)) return [];
   return warnings.map((w) => WARNING_TEXT[w]).filter(Boolean);
+}
+
+// v3-224 — the Solviva Agent details follow the lead's ASSIGNED salesperson
+// (user decision 2026-10-05). The lookup's `salesperson` block is that person's
+// Odoo user: { source: 'lead' | 'calculator-user' | 'none', name, email,
+// mobile, warnings[] } — 'calculator-user' means the lead has no salesperson
+// yet and the signed-in user's own Odoo record stood in (the same rule the
+// backend applies to the quotation's salesperson).
+//
+// Returns the agent record to apply, or null when Odoo named nobody (the
+// current details stay). A missing mobile is filled from the current record
+// only when that record is already the same person — the signed-in rep looking
+// up their own lead keeps the number seeded on their account. For anyone else
+// it is left blank rather than printing the wrong person's number; the PDF
+// gate then asks for it.
+export function agentFromSalesperson(salesperson, current) {
+  if (!salesperson || !salesperson.name) return null;
+  const email = salesperson.email || "";
+  const same = !!(email && current?.email
+    && current.email.trim().toLowerCase() === email.trim().toLowerCase());
+  return {
+    name: salesperson.name,
+    email,
+    phone: salesperson.mobile
+      ? formatPhPhone(salesperson.mobile)
+      : (same ? (current.phone || "") : ""),
+    source: "odoo-lead",
+  };
+}
+
+// Rep-facing notes about the agent block after a lookup, in the same
+// "· note; note" trail as describeWarnings(). `applied` is what
+// agentFromSalesperson() returned. An undefined `salesperson` (a backend that
+// predates the field) says nothing; null (lookup failed) is covered by the
+// salesperson_unavailable warning.
+export function describeAgentNotes(salesperson, applied) {
+  if (!salesperson) return [];
+  if (!applied) return ["the lead has no assigned salesperson in Odoo — check the Solviva Agent details"];
+  const notes = [];
+  if (salesperson.source === "calculator-user") {
+    notes.push("the lead has no assigned salesperson in Odoo, so your own Odoo user is the agent");
+  }
+  if (!applied.phone) notes.push(`${applied.name} has no mobile number in Odoo — enter it under Solviva Agent details`);
+  if (!applied.email) notes.push(`${applied.name} has no email in Odoo — enter it under Solviva Agent details`);
+  return notes;
 }
 
 /**

@@ -20,7 +20,8 @@ import { computeProposal, deriveInstallDate } from '@solviva/calc-engine/proposa
 import * as paramsService from '../lib/paramsService.js';
 import { isValidPhPhone, formatPhPhone } from '../lib/validation.js';
 import { buildLeadPayload, submitLead, makeLeadRef, LEAD_CONSENT_TEXT } from '../lib/lead.js';
-import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE } from '../lib/crmContact.js';
+import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE,
+         agentFromSalesperson, describeAgentNotes } from '../lib/crmContact.js';
 // Sprint Dinuguan — Odoo hand-offs. deepLink.js also runs at import time to
 // lift ?leadId= off the URL before the login / SSO round-trip can drop it
 // (064A); odooQuotation.js pushes a generated proposal as a quotation (064C).
@@ -562,6 +563,11 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // identity, pulled from their Supabase account rather than typed in. The
     // stored record also carries the rep's uid so one rep's edits never leak
     // into another rep's session on a shared device.
+    // v3-224 — once a customer is loaded from an Odoo lead, the agent becomes
+    // that lead's ASSIGNED salesperson from Odoo (name, email, mobile; user
+    // decision 2026-10-05), applied by the deep-link effect and the Project
+    // Number search below. `source` ('odoo-lead' | 'edited') only drives the
+    // hint under the agent fields.
     const AGENT_RECORD_VERSION = 3;
     const repDefault = repIdentity
       ? {
@@ -590,6 +596,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             name:  parsed.name  ?? repDefault.name,
             email: parsed.email ?? repDefault.email,
             phone: parsed.phone ?? repDefault.phone,
+            source: parsed.source === 'odoo-lead' ? 'odoo-lead' : 'edited',
           };
         }
         // Stale record (old format or a different rep) — wipe it and fall
@@ -609,6 +616,10 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       }));
     } catch (_) { /* ignore */ }
   };
+  // v3-224 — the deep-link effect below is async and must read the CURRENT
+  // agent (same reason as contactRef).
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
 
   const [editingContacts, setEditingContacts] = useState(false);
 
@@ -853,19 +864,28 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         });
         return;
       }
-      const { name, email, mobile, alternateName, warnings } = res.contact;
+      const { name, email, mobile, alternateName, warnings, salesperson } = res.contact;
       patchContact({
         ...(name ? { name } : {}),
         ...(email ? { email } : {}),
         ...(mobile ? { mobile: formatPhPhone(mobile) } : {}),
         leadId: pending,
       });
+      // v3-224 — the Solviva Agent details follow the lead's assigned
+      // salesperson (user decision 2026-10-05). A deep link commits straight
+      // to the contact, so the agent is committed here too.
+      const nextAgent = agentFromSalesperson(salesperson, agentRef.current);
+      if (nextAgent) updateAgent(nextAgent);
       const notes = describeWarnings(warnings);
       if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+      notes.push(...describeAgentNotes(salesperson, nextAgent));
       setOdooSync({
         status: 'success',
         title: `${name ? name : 'Customer'} loaded from Odoo lead ${pending}.`,
-        message: 'Name, email and mobile came from the opportunity. Add the installation address under "Edit contact details" before generating the proposal; the proposal will be saved to this opportunity as a quotation.',
+        message: (nextAgent
+          ? `Name, email and mobile came from the opportunity; the Solviva Agent details are ${nextAgent.name}'s, from Odoo. `
+          : 'Name, email and mobile came from the opportunity. ')
+          + 'Add the installation address under "Edit contact details" before generating the proposal; the proposal will be saved to this opportunity as a quotation.',
         warnings: notes,
       });
     })();
@@ -1120,9 +1140,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             setOdooSync({
               status: 'success',
               title: `Quotation ${push.order?.name || ''} created in Odoo from proposal ${payload.proposal.quoteRef}.${pdfNote}`,
-              message: push.salespersonSource === 'lead'
-                ? 'The salesperson was taken from the lead because your account has no matching Odoo user.'
-                : '',
+              // v3-224 — the salesperson is the lead's assigned rep; the
+              // backend's warnings say when it had to fall back.
               warnings: [...push.warnings, ...pdfWarnings],
             });
           } else {
@@ -1698,7 +1717,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       setLookupMsg(res.error);
       return;
     }
-    const { name, email, mobile, alternateName, warnings } = res.contact;
+    const { name, email, mobile, alternateName, warnings, salesperson } = res.contact;
     // Write into the DRAFT, never via setContact. draftCustomer is seeded once
     // at mount (there is no prop-sync effect and the component has no key), so
     // committing to the parent here would leave the visible inputs stale and
@@ -1718,11 +1737,19 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       // opportunity as a quotation. Committed with the rest on Save.
       leadId: Number(projectNo),
     }));
+    // v3-224 — the Solviva Agent details follow the lead's assigned
+    // salesperson (user decision 2026-10-05). Into the DRAFT like the customer
+    // fields: Save commits both, Cancel discards both. Customer mode has no
+    // agent block, so nothing to fill there.
+    const nextAgent = isCustomer ? null : agentFromSalesperson(salesperson, draftAgent);
+    if (nextAgent) setDraftAgent(nextAgent);
     setLookup('done');
     const notes = describeWarnings(warnings);
     if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+    if (!isCustomer) notes.push(...describeAgentNotes(salesperson, nextAgent));
     setLookupMsg(
       `${name ? `✓ ${name}` : '✓ Lead'} — loaded from lead ${projectNo}` +
+      (nextAgent ? ` · agent: ${nextAgent.name}` : '') +
       (notes.length ? ` · ${notes.join('; ')}` : ''),
     );
   };
@@ -2033,29 +2060,32 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           <div>
             <span style={labelStyle}>Name</span>
             <input style={inp(requireAll && err.agentName)} value={draftAgent.name}
-                   onChange={e => setDraftAgent({ ...draftAgent, name: e.target.value })}
+                   onChange={e => setDraftAgent({ ...draftAgent, name: e.target.value, source: 'edited' })}
                    placeholder="Customer Service" />
             {requireAll && errMsg(err.agentName, 'Agent name is required.')}
           </div>
           <div>
             <span style={labelStyle}>Email</span>
             <input style={inp(requireAll && err.agentEmail)} type="email" value={draftAgent.email}
-                   onChange={e => setDraftAgent({ ...draftAgent, email: e.target.value })}
+                   onChange={e => setDraftAgent({ ...draftAgent, email: e.target.value, source: 'edited' })}
                    placeholder="agent@solvivaenergy.com" />
             {requireAll && errMsg(err.agentEmail, 'Enter a valid email address.')}
           </div>
           <div>
             <span style={labelStyle}>Mobile</span>
             <input style={inp(requireAll && err.agentPhone)} type="tel" value={draftAgent.phone}
-                   onChange={e => setDraftAgent({ ...draftAgent, phone: formatPhPhone(e.target.value) })}
+                   onChange={e => setDraftAgent({ ...draftAgent, phone: formatPhPhone(e.target.value), source: 'edited' })}
                    placeholder="0917-123-4567" />
             {requireAll && errMsg(err.agentPhone, 'Enter a valid PH mobile number.')}
           </div>
         </div>
+        {/* v3-224 — say where the values came from: the lead's assigned
+            salesperson in Odoo, or the session defaults. */}
         {!requireAll && (
           <div style={{ fontSize: 11, color: '#6B7280', marginTop: 6, fontStyle: 'italic' }}>
-            If left blank, customers will see Solviva Customer Support's contact info instead.
-            Cleared when this browser session ends.
+            {draftAgent.source === 'odoo-lead'
+              ? "Filled from Odoo — the lead's assigned salesperson. Changes here last for this browser session; loading another lead replaces them."
+              : "If left blank, customers will see Solviva Customer Support's contact info instead. Cleared when this browser session ends."}
           </div>
         )}
       </div>
