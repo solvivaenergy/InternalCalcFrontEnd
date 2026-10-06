@@ -1,10 +1,11 @@
 // =============================================================================
-// USERS SERVICE — Super Admin account management client (v3-215)
+// USERS SERVICE — Super Admin account management client (v3-215, v3-218)
 // -----------------------------------------------------------------------------
-// Lists and creates calculator accounts through the backend's /api/users.
-// Everything privileged happens server-side: supabase.auth.admin.* needs the
-// service-role key, and production's user_roles has no INSERT policy for the
-// browser client — so this module only ever sends the caller's own JWT.
+// Lists, creates, edits, archives and restores calculator accounts through the
+// backend's /api/users. Everything privileged happens server-side:
+// supabase.auth.admin.* needs the service-role key, and production's
+// user_roles has no INSERT policy for the browser client — so this module only
+// ever sends the caller's own JWT.
 //
 // Same { ok, ... } shape as paramsService.save / crmContact.fetchCrmContact:
 // never throws, the caller renders `error` inline.
@@ -81,21 +82,42 @@ async function readError(res, fallback) {
   return body?.error || fallback || `HTTP ${res.status}`;
 }
 
-/** Resolves to { ok: true, users } or { ok: false, error }. */
-export async function listUsers() {
+// One fetch wrapper for every route: config + session checks, JSON body,
+// backend `error` surfaced verbatim, network failure as a friendly line.
+// Resolves to { ok: true, body } or { ok: false, error }.
+async function request(path, { method = "GET", body } = {}, fallbackError) {
   if (!API_BASE) {
     return { ok: false, error: "User management unavailable — backend not configured." };
   }
   const headers = await authHeaders();
   if (!headers) return { ok: false, error: "Session expired — sign in again." };
   try {
-    const res = await fetch(`${API_BASE}/api/users`, { headers, cache: "no-store" });
-    if (!res.ok) return { ok: false, error: await readError(res, "Could not load users.") };
-    const body = await res.json();
-    return { ok: true, users: Array.isArray(body?.users) ? body.users : [] };
+    const init = { method, headers, cache: "no-store" };
+    if (body !== undefined) {
+      init.headers = { ...headers, "Content-Type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    const res = await fetch(`${API_BASE}${path}`, init);
+    if (!res.ok) return { ok: false, error: await readError(res, fallbackError) };
+    return { ok: true, body: await res.json().catch(() => ({})) };
   } catch (_) {
     return { ok: false, error: "Could not reach the server — try again shortly." };
   }
+}
+
+/**
+ * Resolves to { ok: true, users, actorId } or { ok: false, error }. `actorId`
+ * is the caller's own auth user id, so the table can mark "you" and hide the
+ * actions the backend refuses on one's own account.
+ */
+export async function listUsers() {
+  const r = await request("/api/users", {}, "Could not load users.");
+  if (!r.ok) return r;
+  return {
+    ok: true,
+    users: Array.isArray(r.body?.users) ? r.body.users : [],
+    actorId: r.body?.actorId || null,
+  };
 }
 
 /**
@@ -103,21 +125,43 @@ export async function listUsers() {
  * password? | ssoOnly? }. Resolves to { ok: true, user } or { ok: false, error }.
  */
 export async function createUser(input) {
-  if (!API_BASE) {
-    return { ok: false, error: "User management unavailable — backend not configured." };
-  }
-  const headers = await authHeaders();
-  if (!headers) return { ok: false, error: "Session expired — sign in again." };
-  try {
-    const res = await fetch(`${API_BASE}/api/users`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
-    if (!res.ok) return { ok: false, error: await readError(res, "Could not create the user.") };
-    const body = await res.json();
-    return { ok: true, user: body?.user || null };
-  } catch (_) {
-    return { ok: false, error: "Could not reach the server — try again shortly." };
-  }
+  const r = await request("/api/users", { method: "POST", body: input }, "Could not create the user.");
+  return r.ok ? { ok: true, user: r.body?.user || null } : r;
+}
+
+/**
+ * Edit an account. `patch` holds only the fields to change out of
+ * { role, displayName, mobile }; send null (or "") to clear name/mobile.
+ * Resolves to { ok: true, user } or { ok: false, error }.
+ */
+export async function updateUser(id, patch) {
+  const r = await request(
+    `/api/users/${encodeURIComponent(id)}`,
+    { method: "PATCH", body: patch },
+    "Could not update the user.",
+  );
+  return r.ok ? { ok: true, user: r.body?.user || null } : r;
+}
+
+/**
+ * Archive = the account can no longer sign in; role and details are kept so
+ * it can be restored. Resolves to { ok: true, user } or { ok: false, error }.
+ */
+export async function archiveUser(id) {
+  const r = await request(
+    `/api/users/${encodeURIComponent(id)}/archive`,
+    { method: "POST" },
+    "Could not archive the user.",
+  );
+  return r.ok ? { ok: true, user: r.body?.user || null } : r;
+}
+
+/** Lift an archive. Resolves to { ok: true, user } or { ok: false, error }. */
+export async function restoreUser(id) {
+  const r = await request(
+    `/api/users/${encodeURIComponent(id)}/restore`,
+    { method: "POST" },
+    "Could not restore the user.",
+  );
+  return r.ok ? { ok: true, user: r.body?.user || null } : r;
 }

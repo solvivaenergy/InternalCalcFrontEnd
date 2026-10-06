@@ -323,9 +323,9 @@ function pageBreakIfNeeded(mgr, reservedHeight) {
 
 /**
  * After an autotable runs, reconcile mgr.pageNumber to the actual number of
- * pages in the PDF, stamping a footer on any pages autotable silently added
- * without firing didAddPage. This ensures finalizeFooters knows about every
- * page that exists and re-renders "N / total" correctly.
+ * pages in the PDF, stamping a footer (with its page number) on any pages
+ * autotable silently added without firing didAddPage. That stamp is the only
+ * one a page gets — finalizeFooters no longer re-draws numbers (v3-223).
  */
 function reconcilePageNumber(mgr) {
   const actualPageCount = mgr.doc.internal.getNumberOfPages();
@@ -432,27 +432,18 @@ function drawTopHeaderFigma(mgr) {
   mgr.y = topY + 14;
 }
 
+// v3-223 — no longer re-stamps the page numbers. Every page already carries
+// its number from the footer drawer that ran when the page was created
+// (drawFooter, drawScheduleFooterFigma, reconcilePageNumber); this pass used
+// to draw each number a second time for a "N / total" format that was later
+// dropped. On most pages the second stamp landed exactly on the first and was
+// invisible, but the schedule pages stamp with baseline "top" at the Figma
+// coordinates and the re-stamp used the default baseline at 286.2mm, so pages
+// 6–7 showed two numbers one above the other. footerStamps stays as the
+// record of what was stamped; the only job left here is to leave the
+// document on its last page.
 function finalizeFooters(mgr) {
-  const total = mgr.pageNumber;
-  for (const stamp of mgr.footerStamps) {
-    mgr.doc.setPage(stamp.pageNumber);
-    if (stamp.figmaExact) {
-      mgr.doc.setFont("helvetica", "normal");
-      mgr.doc.setFontSize(7.5);
-      mgr.doc.setTextColor(73, 73, 73);
-      mgr.doc.text(String(stamp.pageNumber), 202.5, 286.2, {
-        align: "right",
-      });
-      continue;
-    }
-    mgr.doc.setFont("helvetica", "normal");
-    mgr.doc.setFontSize(7.5);
-    mgr.doc.setTextColor(...C.textTertiary);
-    mgr.doc.text(`${stamp.pageNumber}`, PAGE_W - MARGIN, stamp.y, {
-      align: "right",
-    });
-  }
-  mgr.doc.setPage(total);
+  mgr.doc.setPage(mgr.pageNumber);
 }
 
 // ─── Layout primitives ──────────────────────────────────────────────────────
@@ -3704,11 +3695,17 @@ export async function generateProposalPdf({
   });
   drawTermsAndConditions(mgr);
 
-  // Re-stamp totals
+  // Leave the document on its last page (page numbers are already stamped)
   finalizeFooters(mgr);
 
   // Save
   const safeName = (contact?.name || "customer").replace(/[^a-zA-Z0-9]+/g, "_");
   const fname = `Solviva-Proposal-${ctx.quoteRef}-${safeName}.pdf`;
   doc.save(fname);
+  // Sprint Dinuguan (064C) — the caller pushes the proposal to Odoo under the
+  // same reference the PDF carries, so the quotation and the document match.
+  // 064F — the same bytes the browser just saved, so the caller can attach
+  // the identical document to that quotation (pdfBlob is a Blob of
+  // application/pdf; nothing is re-rendered).
+  return { quoteRef: ctx.quoteRef, fileName: fname, pdfBlob: doc.output("blob") };
 }

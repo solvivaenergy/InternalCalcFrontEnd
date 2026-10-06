@@ -384,6 +384,35 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           </div>
         )}
 
+        {/* Story 072 (v3-222) — the Product-set minimum system size (Quote
+            Limits, minSystemKwp) has floored the recommendation. The engine
+            does that silently (v3-68); this says so, with the size the
+            inputs actually asked for and the size the proposal now carries.
+            rawRecommendation is the unfloored panel count (the workbook's
+            Q34); recPanelCount is what the tiles below show, which an
+            optimisation mode may have raised further. */}
+        {(() => {
+          const floor = recommended?.minPanelsFloor || 0;
+          const asked = Math.ceil(Math.max(0, recommended?.rawRecommendation || 0));
+          if (!panelsAvailable || floor <= 0 || asked >= floor) return null;
+          const watts = recommended.panelWatts || 0;
+          const kwp = (n) => `${((n * watts) / 1000).toFixed(2)} kWp`;
+          const minKwp = adminParams?.minSystemKwp;
+          const proposed = Math.max(recPanelCount || 0, floor);
+          return (
+            <div style={{ margin: '0 0 16px' }}>
+              <CalloutBox kind="warn">
+                <strong>Below the minimum system size.</strong> Your inputs size
+                to {asked} panel{asked === 1 ? '' : 's'} ({kwp(asked)}), under
+                Solviva&rsquo;s minimum of {Number.isFinite(minKwp) ? `${minKwp} kWp` : kwp(floor)}.
+                The proposed system defaults to the minimum: {proposed} panels
+                ({kwp(proposed)}). Raise your desired savings or the panel count
+                below if you need a larger system.
+              </CalloutBox>
+            </div>
+          );
+        })()}
+
         {(() => {
           // Override flags drive the amber treatment on the Selected tiles.
           // A null state value means "use the recommendation" — either the

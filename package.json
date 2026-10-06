@@ -1,6 +1,6 @@
 {
   "name": "solviva-calculator",
-  "version": "3.217.0",
+  "version": "3.224.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"node ../InternalCalcBackEnd/dev-server.js\" \"vite\"",
@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.4",
+    "@solviva/calc-engine": "https://github.com/solvivaenergy/InternalCalcBackEnd/releases/download/calc-engine-v1.0.0/solviva-calc-engine-1.0.0.tgz",
     "@supabase/supabase-js": "^2.52.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^2.5.2",

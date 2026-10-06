@@ -2,23 +2,17 @@
 // APP — top-level shell, tab navigation, state container
 // =============================================================================
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
-         availableBatteryPackages, availableDeliveryLocations } from '../data/adminParams.js';
-import { DEVICES } from '../data/devices.js';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT,
+         availableDeliveryLocations } from '../data/adminParams.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
          INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
          LUZON_REGIONS, resolveLocation } from '../config.js';
-import {
-  computeRecommendedPanels, recommendInverters, buildPackageLineItems,
-  computePaymentTerms, popularTenorsTable, systemSizing,
-  availableInverters,
-} from '../lib/calculations.js';
-import {
-  buildHourlyCurve, batteryDailyExcess, roundBatteryKwhToPackage,
-  computeCashFlows, buildAnnex,
-  firstPostInstallDueDate, optimizeSystem,
-} from '../lib/schedule.js';
+// The sizing/pricing pipeline is computeProposal() in @solviva/calc-engine (proposal.js)
+// (this file's model memo, lifted out 2026-09-27). Only the PDF path still
+// reaches into the engine directly, to rebuild the annex on the issue date.
+import { buildAnnex, optimizeSystem } from '../lib/schedule.js';
+import { computeProposal, deriveInstallDate } from '@solviva/calc-engine/proposal.js';
 // pdfGenerator is imported dynamically inside handleGeneratePdf so the
 // jsPDF + jspdf-autotable bundle (~140 KB gzipped) only loads when a rep
 // actually clicks "Generate PDF". Keeps the customer-facing initial load
@@ -26,7 +20,13 @@ import {
 import * as paramsService from '../lib/paramsService.js';
 import { isValidPhPhone, formatPhPhone } from '../lib/validation.js';
 import { buildLeadPayload, submitLead, makeLeadRef, LEAD_CONSENT_TEXT } from '../lib/lead.js';
-import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE } from '../lib/crmContact.js';
+import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE,
+         agentFromSalesperson, describeAgentNotes } from '../lib/crmContact.js';
+// Sprint Dinuguan — Odoo hand-offs. deepLink.js also runs at import time to
+// lift ?leadId= off the URL before the login / SSO round-trip can drop it
+// (064A); odooQuotation.js pushes a generated proposal as a quotation (064C).
+import { consumePendingLeadId } from '../lib/deepLink.js';
+import { buildOdooQuotationPayload, pushProposalToOdoo, attachProposalPdf } from '../lib/odooQuotation.js';
 
 import MaintenanceGate, { readGatePass } from './MaintenanceGate.jsx';
 import Calculator from './Calculator.jsx';
@@ -37,6 +37,7 @@ import AuditHistory from './AuditHistory.jsx';
 import UserManagement from './UserManagement.jsx';   // v3-215
 import MobileFlow from './MobileFlow.jsx';
 import ParamsSourceBanner from './ParamsSourceBanner.jsx';
+import OdooSyncBanner from './OdooSyncBanner.jsx';   // sprint Dinuguan
 // ── Supabase user management (this deployment's replacement for upstream
 // v3-207's shared-password AuthDialog sign-in). Identity and role come from
 // Supabase Auth + public.user_roles; the staff-key password dialog is gone.
@@ -71,27 +72,6 @@ const BUNDLED_DEFAULT_DP   = ADMIN_PARAMS.defaultDownPaymentPct;  // v3-159
 // below once the fetch resolves. These two constants complete that pattern.
 const BUNDLED_DEFAULT_IRR_YEARS = ADMIN_PARAMS.irrYearsDefault;        // v3-188
 const BUNDLED_DEFAULT_DU_INFL   = ADMIN_PARAMS.duRateInflationDefault; // v3-188
-
-// Back-derive the installation date from an issue date: seed at +14 days, then
-// walk forward until the first post-install due date clears the minimum-days
-// floor. Bounded as a guard against a non-numeric param.
-//
-// Shared by the model memo and handleGeneratePdf. The memo is keyed on
-// generatedDate, so a PDF stamped with a FRESH issue date must re-derive this
-// against that date — otherwise it prints a new "Date Issued" beside a payment
-// schedule still anchored to the tab-session date.
-function deriveInstallDate(anchorDate) {
-  const minDays = ADMIN_PARAMS.minDaysToFirstPostInstallPayment ?? 44;
-  const targetFirstPaymentMs = anchorDate.getTime() + minDays * 86400000;
-  const installDate = new Date(anchorDate);
-  installDate.setDate(installDate.getDate() + 14);  // seed: prior hardcoded value
-  for (let guard = 0; guard < 200; guard++) {
-    const candidateFirst = firstPostInstallDueDate(installDate);
-    if (candidateFirst.getTime() >= targetFirstPaymentMs) break;
-    installDate.setDate(installDate.getDate() + 1);
-  }
-  return installDate;
-}
 
 export function makeInitialState(kind = 'all') {
   const step1 = {
@@ -520,7 +500,11 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   //   • restoreBannerShown  — set after the banner has been displayed once
   //     so toggling tabs / re-renders don't keep re-triggering it.
   const [contact, setContactRaw] = useState(() => {
-    const EMPTY = { name: '', email: '', mobile: '', installAddress: '' };
+    // leadId (sprint Dinuguan, 064A/064C): the Odoo crm.lead the customer was
+    // loaded from — via the Project Number search or a deep link from Odoo.
+    // null when the customer was typed in by hand, in which case no quotation
+    // is pushed to Odoo. Optional and additive, so no record-version bump.
+    const EMPTY = { name: '', email: '', mobile: '', installAddress: '', leadId: null };
     try {
       const raw = sessionStorage.getItem(CONTACT_STORAGE_KEY);
       if (!raw) return EMPTY;
@@ -534,6 +518,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         email:  parsed.email  || '',
         mobile: parsed.mobile || '',
         installAddress: parsed.installAddress || '',
+        leadId: Number.isInteger(parsed.leadId) && parsed.leadId > 0 ? parsed.leadId : null,
       };
     } catch (_) {
       return EMPTY;
@@ -555,6 +540,15 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       }
     } catch (_) { /* ignore */ }
   };
+  // Sprint Dinuguan — a ref so async work (the deep-link lookup, the post-PDF
+  // Odoo push) patches the CURRENT contact rather than the one captured when
+  // the effect was scheduled.
+  const contactRef = useRef(contact);
+  contactRef.current = contact;
+  const patchContact = (patch) => setContact({ ...contactRef.current, ...patch });
+  // Outcome of the last Odoo hand-off, rendered by <OdooSyncBanner/>:
+  // { status: 'success' | 'error', title, message?, warnings? } or null.
+  const [odooSync, setOdooSync] = useState(null);
 
   // Agent info: starts from config defaults, but agents can override per-device
   // via the header Edit dialog. Persisted in localStorage so each agent only
@@ -569,6 +563,11 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     // identity, pulled from their Supabase account rather than typed in. The
     // stored record also carries the rep's uid so one rep's edits never leak
     // into another rep's session on a shared device.
+    // v3-224 — once a customer is loaded from an Odoo lead, the agent becomes
+    // that lead's ASSIGNED salesperson from Odoo (name, email, mobile; user
+    // decision 2026-10-05), applied by the deep-link effect and the Project
+    // Number search below. `source` ('odoo-lead' | 'edited') only drives the
+    // hint under the agent fields.
     const AGENT_RECORD_VERSION = 3;
     const repDefault = repIdentity
       ? {
@@ -597,6 +596,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             name:  parsed.name  ?? repDefault.name,
             email: parsed.email ?? repDefault.email,
             phone: parsed.phone ?? repDefault.phone,
+            source: parsed.source === 'odoo-lead' ? 'odoo-lead' : 'edited',
           };
         }
         // Stale record (old format or a different rep) — wipe it and fall
@@ -616,6 +616,10 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       }));
     } catch (_) { /* ignore */ }
   };
+  // v3-224 — the deep-link effect below is async and must read the CURRENT
+  // agent (same reason as contactRef).
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
 
   const [editingContacts, setEditingContacts] = useState(false);
 
@@ -837,6 +841,58 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     } catch (_) { /* ignore */ }
   };
 
+  // ─── 064A — deep link from Odoo ────────────────────────────────────────────
+  // deepLink.js parked ?leadId= in sessionStorage at import time. Once a rep
+  // is in rep mode, consume it ONCE and run the same lookup the Project Number
+  // search does, committing straight to the contact (the search writes to the
+  // edit form's draft because the rep still has to press Save there; a deep
+  // link has no form open, so the result lands directly). Customer mode
+  // leaves the id parked: it is picked up if the user unlocks rep mode later.
+  useEffect(() => {
+    if (mode !== 'rep') return undefined;
+    const pending = consumePendingLeadId();
+    if (!pending) return undefined;
+    let cancelled = false;
+    (async () => {
+      const res = await fetchCrmContact(String(pending));
+      if (cancelled) return;
+      if (!res.ok) {
+        setOdooSync({
+          status: 'error',
+          title: `Could not load Odoo lead ${pending}.`,
+          message: `${res.error} Enter the customer details by hand, or search the Project Number again from "Edit contact details".`,
+        });
+        return;
+      }
+      const { name, email, mobile, alternateName, warnings, salesperson } = res.contact;
+      patchContact({
+        ...(name ? { name } : {}),
+        ...(email ? { email } : {}),
+        ...(mobile ? { mobile: formatPhPhone(mobile) } : {}),
+        leadId: pending,
+      });
+      // v3-224 — the Solviva Agent details follow the lead's assigned
+      // salesperson (user decision 2026-10-05). A deep link commits straight
+      // to the contact, so the agent is committed here too.
+      const nextAgent = agentFromSalesperson(salesperson, agentRef.current);
+      if (nextAgent) updateAgent(nextAgent);
+      const notes = describeWarnings(warnings);
+      if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+      notes.push(...describeAgentNotes(salesperson, nextAgent));
+      setOdooSync({
+        status: 'success',
+        title: `${name ? name : 'Customer'} loaded from Odoo lead ${pending}.`,
+        message: (nextAgent
+          ? `Name, email and mobile came from the opportunity; the Solviva Agent details are ${nextAgent.name}'s, from Odoo. `
+          : 'Name, email and mobile came from the opportunity. ')
+          + 'Add the installation address under "Edit contact details" before generating the proposal; the proposal will be saved to this opportunity as a quotation.',
+        warnings: notes,
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   // v3-203 — unified Staff Sign-in dialog visibility. Opens from the sun-key
   // glyph (header, footer, and the maintenance gate's fixed corner). One
   // dialog for every tier: rep/maintenance passwords flip mode to 'rep';
@@ -1042,13 +1098,68 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       };
 
       const { generateProposalPdf } = await import('../lib/pdfGenerator.js');
-      await generateProposalPdf({
+      const pdfResult = await generateProposalPdf({
         state, model: issuedModel, contact, agent,
         generatedDate: issuedAt, validUntil: issuedValidUntil,
         brand: BRAND, adminParams: ADMIN_PARAMS, disclaimers: DISCLAIMERS,
         proposalContent: PROPOSAL_CONTENT,
         snapshots: { visualizing: visualizingPng, summary: summaryPng },
       });
+
+      // ─── 064C/J/K — push the proposal to Odoo as a quotation ─────────────
+      // Only for a customer loaded from an Odoo lead (product decision: no
+      // lead, no quotation). Runs AFTER doc.save(), inside its own try so no
+      // Odoo outcome can reach the "PDF generation failed" path below — the
+      // PDF is already on disk; the banner carries the result either way.
+      if (contact.leadId) {
+        try {
+          const payload = buildOdooQuotationPayload({
+            state, model: issuedModel, contact, agent,
+            issuedAt, validUntil: issuedValidUntil,
+            quoteRef: pdfResult?.quoteRef || '',
+          });
+          const push = await pushProposalToOdoo(payload);
+          if (push.ok) {
+            // 064F — attach the PDF the browser just saved to that quotation.
+            // A failure here is a warning on the same banner: the quotation
+            // exists and the PDF is on disk either way.
+            let pdfNote = '';
+            const pdfWarnings = [];
+            if (pdfResult?.pdfBlob && push.order?.id) {
+              const att = await attachProposalPdf({
+                orderId: push.order.id, quoteRef: payload.proposal.quoteRef,
+                fileName: pdfResult.fileName, pdfBlob: pdfResult.pdfBlob,
+              });
+              if (att.ok) {
+                pdfNote = ' The proposal PDF is attached to it.';
+                pdfWarnings.push(...att.warnings);
+              } else {
+                pdfWarnings.push(`The PDF could not be attached to the quotation (${att.error}); upload it in Odoo by hand.`);
+              }
+            }
+            setOdooSync({
+              status: 'success',
+              title: `Quotation ${push.order?.name || ''} created in Odoo from proposal ${payload.proposal.quoteRef}.${pdfNote}`,
+              // v3-224 — the salesperson is the lead's assigned rep; the
+              // backend's warnings say when it had to fall back.
+              warnings: [...push.warnings, ...pdfWarnings],
+            });
+          } else {
+            setOdooSync({
+              status: 'error',
+              title: 'The proposal PDF was generated, but no quotation was created in Odoo.',
+              message: push.error,
+            });
+          }
+        } catch (pushErr) {
+          console.error('[odoo-quotation]', pushErr);
+          setOdooSync({
+            status: 'error',
+            title: 'The proposal PDF was generated, but no quotation was created in Odoo.',
+            message: 'Unexpected error while contacting the server. Try again or create the quotation in Odoo.',
+          });
+        }
+      }
     } catch (err) {
       console.error('[generateProposalPdf]', err);
       // Restore on error
@@ -1112,242 +1223,15 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // is defined just after `model` is constructed below (it depends on
   // `model.terms.negativeBalance` so it can't be hoisted above the useMemo).
 
-  const model = useMemo(() => {
-    const phase = state.phase === 3 ? 'three' : 'single';
-    // v3-106 — availability forcing happens HERE, at the top of the model,
-    // so every downstream consumer (pricing, schedule, annex, PDF, lead
-    // payload) inherits it from one place:
-    //   • RSD out of stock  → rsdEnabled forced OFF in the pricing inputs
-    //     (a stale session's true can't price an unavailable device).
-    //   • Panels out of stock (per phase) → recommendedPanelCount is already
-    //     0 from computeRecommendedPanels; the rep's panelCount override is
-    //     ALSO ignored (forced 0) below.
-    //   • Batteries all out of stock → batteryKwh forced 0 below.
-    const rsdInStock = ADMIN_PARAMS.rsdAvailable !== false;
-    // v3-116 — a persisted session may hold a delivery-location id that has
-    // since been deleted or marked out of stock. Force it back to 'luzon'
-    // (v3-106 "availability never blocks the flow") so pricing, Summary, PDF
-    // and the lead payload never see a dead id; the 2E Select then shows
-    // Luzon main island with its region/city cascade.
-    const effectiveLocation =
-      state.location === 'luzon' || state.location === 'other'
-        ? state.location
-        : (availableDeliveryLocations(ADMIN_PARAMS).some(l => l.id === state.location)
-            ? state.location : 'luzon');
-    const inputs = { ...state, phase, deviceLibrary: DEVICES,
-                     location: effectiveLocation,
-                     rsdEnabled: rsdInStock ? state.rsdEnabled : false };
-    const recommended = computeRecommendedPanels(inputs, ADMIN_PARAMS);
-    const panelsAvailable = recommended.panelsAvailable !== false;
-    // v3-110 — Step 2A optimization objective. 'panels' (default) keeps the
-    // v3-109 pipeline BYTE-IDENTICAL: recommendation = W7 (workbook parity)
-    // + the v3-71 battery auto-optimizer, untouched below. 'battery' / 'cost'
-    // derive the recommendation from the optimizeSystem sweep instead. With
-    // panels out of stock every mode collapses to the v3-106 zero-array path
-    // (a sweep over a forced-0 array is meaningless), so sweepActive gates on
-    // panelsAvailable.
-    const optimizationMode =
-      state.optimizationMode === 'battery' || state.optimizationMode === 'cost'
-        ? state.optimizationMode : 'panels';
-    // v3-130 — EVERY mode's recommendation now comes from the sweep. Mode
-    // 'panels' is the sim-certified minimum array with store-all-excess
-    // battery (user decision (a), reversing v3-110's "Mode 1 = W7"); W7
-    // remains the panels-out-of-stock fallback and everything else it feeds.
-    const sweepActive = panelsAvailable;
-    // v3-136 — peaks-and-valleys sizing. hasSub7Device mirrors
-    // buildHourlyCurve's row-validity gate (name + count + both times) so the
-    // checkbox never renders for a row the sim would skip anyway.
-    // conservativeLocked = Variant B: at a 100% target with a sub-7-day
-    // device, conservative certification is FORCED — an average-week system
-    // cannot deliver a true 100% (the daily cap stops light-day surplus from
-    // offsetting appliance-day shortfall), so that claim must not be
-    // quotable. The user's own checkbox choice is preserved in state and
-    // restored when the lock releases.
-    const hasSub7Device = (state.deviceRows || []).some(r =>
-      r && r.deviceName && r.count && r.onTime != null && r.offTime != null
-        // v3-137 — 1–6 days only: an unset/0-day row contributes zero load
-        // (dwFrac 0), so it must not summon the checkbox/caveat (user-
-        // reported: a fresh row with days/wk "—" fired the control).
-        && (r.daysPerWeek || 0) >= 1 && (r.daysPerWeek || 0) < 7);
-    const conservativeLocked =
-      hasSub7Device && (state.desiredSavingsPct || 0) >= 1 - 1e-9;
-    const conservativeSizing =
-      hasSub7Device && (conservativeLocked || !!state.conservativeSizing);
-    const recSweep = sweepActive
-      ? optimizeSystem(optimizationMode, inputs, ADMIN_PARAMS, recommended,
-                       { conservative: conservativeSizing })
-      : null;
-    const recPanelCount = recSweep ? recSweep.panelCount
-                                   : recommended.recommendedPanelCount;
-    const panelCount = panelsAvailable ? (state.panelCount ?? recPanelCount) : 0;
-    const systemKwp = panelCount * recommended.panelWatts / 1000;
-    const recInverters = recommendInverters(systemKwp, phase);
-    // v3-106 — a persisted session may hold an inverter pick that has since
-    // gone out of stock. State stores a COPY of the inverter object, so its
-    // own `available` field is stale; match by ratedKw against the LIVE
-    // in-stock list instead, and fall back to the slot's recommendation.
-    const inStockKw = new Set(availableInverters(phase).map(i => i.ratedKw));
-    // v3-175 — a panels-only EXPANSION order carries no inverter at all: the
-    // three slots are forced empty regardless of any earlier pick, so the
-    // quote can never price an inverter the customer told us they don't need.
-    // This is a FLAG, not a per-slot null — null already means "use the
-    // recommendation" (the fallback below), which is precisely why "— None —"
-    // in the 2C dropdown could never zero a slot before this release.
-    const expansionActive = !!state.expansionMode
-      && (state.existingKwp || 0) > 0 && panelCount > 0;
-    const effectiveInverters = expansionActive
-      ? [null, null, null]
-      : state.selectedInverters.map((sel, i) => {
-          const chosen = sel ?? recInverters[i] ?? null;
-          return (chosen && !inStockKw.has(chosen.ratedKw))
-            ? (recInverters[i] ?? null)
-            : chosen;
-        });
-    const sizing = systemSizing(panelCount, recommended.panelWatts, effectiveInverters, phase);
-    const recommendedObj = { ...recommended, systemKwp, recommendedPanelCount: recPanelCount };
-    const stateForBattRec = { ...inputs, panelCount, selectedInverters: effectiveInverters, batteryKwh: 0 };
-    // v3-71: the battery package is now an OUTPUT of the recommendation, not
-    // an input to it. Pipeline:
-    //   1. Probe the hourly curve with no battery → raw daily excess solar.
-    //   2. optimizeBatteryPackage() picks the package that stores ALL of
-    //      that excess at the lowest total cost (units + racks + ATS +
-    //      critical-loads + labor; labor branch follows hasSolar).
-    //   3. recBatteryKwh = excess rounded UP to the AUTO winner's unit size
-    //      — this is what the Recommended tile displays, pinned to the
-    //      optimizer regardless of any rep package override.
-    //   4. activeBatteryPackage = the rep's explicit pick (if any and still
-    //      existing — a deleted id silently falls back to auto) else the
-    //      auto winner. Pricing, the kWh ladder, and the annex all follow
-    //      the ACTIVE package.
-    //   5. activeRecBatteryKwh = excess re-rounded to the ACTIVE package's
-    //      unit size — the "recommended value on the active ladder". It's
-    //      what state.batteryKwh === null falls back to, and what the
-    //      Selected tile's override/amber/snap-back logic compares against
-    //      (recBatteryKwh may not exist on an overridden pack's ladder).
-    // v3-106 — the optimizer + resolver already skip out-of-stock packages;
-    // here we (a) require an explicit rep pick to still be IN STOCK (else it
-    // silently falls back to auto, same as a deleted id), and (b) force
-    // batteryKwh to 0 when EVERY package is out of stock so the placeholder
-    // package's prices never reach a line item.
-    const inStockBatteryPackages = availableBatteryPackages(ADMIN_PARAMS);
-    const anyBatteryInStock = inStockBatteryPackages.length > 0;
-    const explicitBatteryPackage = state.batteryPackageId
-      ? inStockBatteryPackages.find(p => p.id === state.batteryPackageId) || null
-      : null;
-    let autoBatteryPackage, recBatteryKwh, activeBatteryPackage,
-        activeRecBatteryKwh, batteryKwh, optimization;
-    if (!sweepActive) {
-      // ── Panels-out-of-stock ONLY (v3-130): every in-stock mode now takes
-      //    its recommendation — battery included — from the sweep branch
-      //    below, so Mode 1's certified config is exactly what the quote
-      //    prices (the v3-71 recomputation could round a boundary-case
-      //    battery below what the certification used).
-      const dailyExcess = batteryDailyExcess(stateForBattRec, ADMIN_PARAMS, recommendedObj);
-      autoBatteryPackage = optimizeBatteryPackage(ADMIN_PARAMS, dailyExcess, panelCount > 0);
-      recBatteryKwh = anyBatteryInStock
-        ? roundBatteryKwhToPackage(dailyExcess, autoBatteryPackage)
-        : 0;
-      activeBatteryPackage = explicitBatteryPackage || autoBatteryPackage;
-      activeRecBatteryKwh = explicitBatteryPackage
-        ? roundBatteryKwhToPackage(dailyExcess, activeBatteryPackage)
-        : recBatteryKwh;
-      batteryKwh = anyBatteryInStock ? (state.batteryKwh ?? activeRecBatteryKwh) : 0;
-      optimization = { mode: 'panels', feasible: true, achievedPct: null,
-                       targetPct: state.desiredSavingsPct };
-    } else {
-      // ── v3-130: ALL in-stock modes route here. 'battery'/'cost' size the
-      //    battery to the TARGET; 'panels' starts from the v3-71 store-all-
-      //    excess rec and steps up only at rounding boundaries — the sweep's
-      //    certified config IS the recommendation, battery included.
-      autoBatteryPackage = recSweep.batteryPackage
-        || optimizeBatteryPackage(ADMIN_PARAMS, 0, panelCount > 0);
-      recBatteryKwh = anyBatteryInStock ? recSweep.batteryKwh : 0;
-      // Active recommendation adapts to live overrides — a pinned array
-      // (panel override) and/or a pinned package — mirroring how the
-      // mode-'panels' excess probe follows the overridden array. Re-running
-      // the sweep constrained yields the recommended kWh ON THE ACTIVE
-      // LADDER (activeRecBatteryKwh semantics, v3-71).
-      const constrained = (panelsAvailable && state.panelCount != null)
-        || explicitBatteryPackage != null;
-      const activeSweep = constrained
-        ? optimizeSystem(optimizationMode, inputs, ADMIN_PARAMS, recommended, {
-            fixedPanelCount: (panelsAvailable && state.panelCount != null) ? panelCount : null,
-            restrictPackageId: explicitBatteryPackage ? explicitBatteryPackage.id : null,
-            conservative: conservativeSizing,   // v3-136 — overrides certify at the same corner
-          })
-        : recSweep;
-      activeBatteryPackage = explicitBatteryPackage
-        || activeSweep.batteryPackage
-        || autoBatteryPackage;
-      activeRecBatteryKwh = anyBatteryInStock ? activeSweep.batteryKwh : 0;
-      batteryKwh = anyBatteryInStock ? (state.batteryKwh ?? activeRecBatteryKwh) : 0;
-      // The amber notice + PDF caveat read the UNCONSTRAINED sweep — the
-      // recommendation's own feasibility, not an override's.
-      optimization = { mode: optimizationMode, feasible: recSweep.feasible,
-                       achievedPct: recSweep.achievedPct,
-                       targetPct: recSweep.targetPct };
-    }
-    // fullState carries the RESOLVED package id so the calc chain
-    // (calculations.js resolveBatteryPackage call sites) prices the auto
-    // winner without knowing the optimizer exists. Downstream consumers
-    // never see a null batteryPackageId.
-    const fullState = { ...inputs, panelCount, selectedInverters: effectiveInverters, batteryKwh,
-                        batteryPackageId: activeBatteryPackage.id };
-    const pkg = buildPackageLineItems(fullState, ADMIN_PARAMS, null);
-    const terms = computePaymentTerms(fullState, ADMIN_PARAMS, pkg);
-    // v3-100 — Direct Purchase IS a separate option now (v5.1 split it from the
-    // 1-month tenor): tenor 0, 0% interest, no DST, balance due in full upon
-    // installation. Lili's "%" column stays % of the NET PRICE; the two
-    // milestones are the DP at signing and the balance upon installation.
-    const dpTerms = computePaymentTerms({ ...fullState, tenor: 0 }, ADMIN_PARAMS, pkg);
-    const directPurchase = {
-      dpPct: fullState.downPaymentPct,
-      dpAmount: dpTerms.dpTotalCharge,
-      monthly: dpTerms.customerMonthlyPmt,
-      total: dpTerms.summaryTotalDue,   // = totalAmountDue for a Direct Purchase (dst 0)
-      rate: dpTerms.rtoRate,
-      financeCharge: dpTerms.totalInterest,
-    };
-    const popularTenors = popularTenorsTable(fullState, ADMIN_PARAMS, pkg);
-    const schedule = buildHourlyCurve(fullState, ADMIN_PARAMS, recommendedObj);
-    const cashFlows = computeCashFlows(fullState, ADMIN_PARAMS, schedule, terms,
-                                       recommendedObj, state.irrYears);
-    // Install date is back-derived so the first post-installation payment
-    // due date falls at least `minDaysToFirstPostInstallPayment` days after
-    // the quote's generation date. Engineering Admin tunes this floor based
-    // on Solviva's installation queue + capacity. The 15th/30th payment
-    // rounding rule in buildAnnex's dueDateForMonth() can shift first-payment
-    // by a few days depending on the calendar, so we walk install date
-    // forward one day at a time until the rounded first-payment date clears
-    // the threshold. Bounded by max+1 days as a safety guard against infinite
-    // loops if the param somehow lands at a non-numeric value.
-    const installDate = deriveInstallDate(generatedDate);
-    const annex = buildAnnex(fullState, ADMIN_PARAMS, terms, installDate);
-    return {
-      recommended, recPanelCount, panelCount, systemKwp,
-      recInverters, effectiveInverters, sizing, expansionActive,
-      recBatteryKwh, batteryKwh, activeBatteryPackage,
-      autoBatteryPackage, activeRecBatteryKwh,
-      // v3-110 — the Step 2A objective + the sweep's feasibility verdict
-      // (drives the amber notice, the PDF disclosure line, and the lead
-      // payload). mode 'panels' is always feasible:true / achievedPct null.
-      optimizationMode, optimization,
-      // v3-136 — peaks-and-valleys sizing. `conservativeSizing` is the
-      // EFFECTIVE value (state OR the 100%-target Variant-B lock);
-      // `conservativeLocked` drives the disabled checkbox + lock copy;
-      // `hasSub7Device` gates the whole control (hidden when every device
-      // runs 7 days — the corners equal the average day). Consumed by the
-      // Step 2A checkbox block, the PDF disclosure suffix, and the lead
-      // payload.
-      hasSub7Device, conservativeSizing, conservativeLocked,
-      // v3-106 — stock flags for the Step 2 UI (out-of-stock notices).
-      panelsAvailable, anyBatteryInStock, rsdInStock,
-      pkg, terms, popularTenors, directPurchase, schedule, cashFlows, annex, installDate,
-      // Exposed so handleGeneratePdf can rebuild the date-dependent annex
-      // against a freshly stamped issue date (see deriveInstallDate).
-      fullState,
-    };
-  }, [state, generatedDate, paramsRev]);
+  // The pipeline itself is computeProposal() in @solviva/calc-engine (proposal.js) — this
+  // memo's body, lifted out verbatim on 2026-09-27 so the backend can run the
+  // same code for a public estimate. paramsRev stays in the deps on purpose:
+  // the engine reads the live ADMIN_PARAMS that paramsService mutates, so an
+  // admin save must recompute even though state and generatedDate are unchanged.
+  const model = useMemo(
+    () => computeProposal(state, generatedDate),
+    [state, generatedDate, paramsRev],
+  );
 
   // v3-56 — auto-bounce away from Summary/Schedule tabs when they're hidden.
   // Two triggers:
@@ -1512,6 +1396,10 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             adminAccess={adminAccess}
             negativeBalance={model.terms.negativeBalance}
             onGeneratePdf={handleGeneratePdf} pdfGenerating={pdfGenerating} />
+      {/* v3-223 — the Odoo hand-off banner sits UNDER the tab bar (user
+          decision 2026-10-02), between the navigation and the active tab's
+          content, instead of between the header and the tabs. */}
+      <OdooSyncBanner sync={odooSync} onDismiss={() => setOdooSync(null)} />
       <main className="app-main" style={styles.main}>
         {activeTab === 'calculator' && (
           <Calculator state={state} updateState={updateState} model={model}
@@ -1664,6 +1552,13 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
             <strong>Quote for:</strong> {contact.name || '—'}
             {contact.email && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{contact.email}</span></>}
             {contact.mobile && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{contact.mobile}</span></>}
+            {/* 064A/064C — which Odoo opportunity the proposal will be saved to. */}
+            {mode === 'rep' && contact.leadId && (
+              <><span style={styles.metaSep}>·</span>
+                <span style={styles.metaMuted} title="The generated proposal is saved to this Odoo opportunity as a quotation">
+                  Odoo lead {contact.leadId}
+                </span></>
+            )}
           </div>
           <div style={styles.metaRow}>
             {agent.name ? (
@@ -1806,7 +1701,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
 
   // 043D — Odoo lead lookup. Same idle/loading/done/error shape as
   // submitStatus above, so this form keeps one async idiom.
-  const [projectNo, setProjectNo] = useState('');
+  // Seeded from the linked lead (064A/064C) so the field shows which
+  // opportunity the proposal will be saved to.
+  const [projectNo, setProjectNo] = useState(contact.leadId ? String(contact.leadId) : '');
   const [lookup, setLookup] = useState('idle');   // idle | loading | done | error
   const [lookupMsg, setLookupMsg] = useState('');
 
@@ -1820,7 +1717,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       setLookupMsg(res.error);
       return;
     }
-    const { name, email, mobile, alternateName, warnings } = res.contact;
+    const { name, email, mobile, alternateName, warnings, salesperson } = res.contact;
     // Write into the DRAFT, never via setContact. draftCustomer is seeded once
     // at mount (there is no prop-sync effect and the component has no key), so
     // committing to the parent here would leave the visible inputs stale and
@@ -1836,12 +1733,23 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       ...(mobile ? { mobile: formatPhPhone(mobile) } : {}),
       // installAddress deliberately untouched — out of AC2 scope, and a CRM
       // contact address is not necessarily the installation site.
+      // 064C — remember the lead so the generated proposal is saved to this
+      // opportunity as a quotation. Committed with the rest on Save.
+      leadId: Number(projectNo),
     }));
+    // v3-224 — the Solviva Agent details follow the lead's assigned
+    // salesperson (user decision 2026-10-05). Into the DRAFT like the customer
+    // fields: Save commits both, Cancel discards both. Customer mode has no
+    // agent block, so nothing to fill there.
+    const nextAgent = isCustomer ? null : agentFromSalesperson(salesperson, draftAgent);
+    if (nextAgent) setDraftAgent(nextAgent);
     setLookup('done');
     const notes = describeWarnings(warnings);
     if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+    if (!isCustomer) notes.push(...describeAgentNotes(salesperson, nextAgent));
     setLookupMsg(
       `${name ? `✓ ${name}` : '✓ Lead'} — loaded from lead ${projectNo}` +
+      (nextAgent ? ` · agent: ${nextAgent.name}` : '') +
       (notes.length ? ` · ${notes.join('; ')}` : ''),
     );
   };
@@ -2030,6 +1938,26 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                   {lookupMsg}
                 </span>
               )}
+              {/* 064C — the link decides whether Generate PDF also creates an
+                  Odoo quotation. Unlink covers the wrong-lead case; a fresh
+                  search re-links. */}
+              {draftCustomer.leadId ? (
+                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#4B5563' }}>
+                  Linked to Odoo lead {draftCustomer.leadId} — each generated proposal is saved to
+                  this opportunity as a new quotation.{' '}
+                  <button type="button"
+                          onClick={() => { setDraftCustomer(d => ({ ...d, leadId: null })); setProjectNo(''); setLookup('idle'); setLookupMsg(''); }}
+                          style={{ background: 'none', border: 'none', padding: 0, color: '#B45309',
+                                   fontSize: 10.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                                   textDecoration: 'underline' }}>
+                    Unlink
+                  </button>
+                </span>
+              ) : (
+                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#6B7280' }}>
+                  Not linked to an Odoo lead — the proposal will not be saved to Odoo.
+                </span>
+              )}
             </div>
           )}
           <div>
@@ -2132,29 +2060,32 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           <div>
             <span style={labelStyle}>Name</span>
             <input style={inp(requireAll && err.agentName)} value={draftAgent.name}
-                   onChange={e => setDraftAgent({ ...draftAgent, name: e.target.value })}
+                   onChange={e => setDraftAgent({ ...draftAgent, name: e.target.value, source: 'edited' })}
                    placeholder="Customer Service" />
             {requireAll && errMsg(err.agentName, 'Agent name is required.')}
           </div>
           <div>
             <span style={labelStyle}>Email</span>
             <input style={inp(requireAll && err.agentEmail)} type="email" value={draftAgent.email}
-                   onChange={e => setDraftAgent({ ...draftAgent, email: e.target.value })}
+                   onChange={e => setDraftAgent({ ...draftAgent, email: e.target.value, source: 'edited' })}
                    placeholder="agent@solvivaenergy.com" />
             {requireAll && errMsg(err.agentEmail, 'Enter a valid email address.')}
           </div>
           <div>
             <span style={labelStyle}>Mobile</span>
             <input style={inp(requireAll && err.agentPhone)} type="tel" value={draftAgent.phone}
-                   onChange={e => setDraftAgent({ ...draftAgent, phone: formatPhPhone(e.target.value) })}
+                   onChange={e => setDraftAgent({ ...draftAgent, phone: formatPhPhone(e.target.value), source: 'edited' })}
                    placeholder="0917-123-4567" />
             {requireAll && errMsg(err.agentPhone, 'Enter a valid PH mobile number.')}
           </div>
         </div>
+        {/* v3-224 — say where the values came from: the lead's assigned
+            salesperson in Odoo, or the session defaults. */}
         {!requireAll && (
           <div style={{ fontSize: 11, color: '#6B7280', marginTop: 6, fontStyle: 'italic' }}>
-            If left blank, customers will see Solviva Customer Support's contact info instead.
-            Cleared when this browser session ends.
+            {draftAgent.source === 'odoo-lead'
+              ? "Filled from Odoo — the lead's assigned salesperson. Changes here last for this browser session; loading another lead replaces them."
+              : "If left blank, customers will see Solviva Customer Support's contact info instead. Cleared when this browser session ends."}
           </div>
         )}
       </div>
