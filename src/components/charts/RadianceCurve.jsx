@@ -402,7 +402,7 @@ function CelestialTimeline({ trackLeft, trackRight, compact = false }) {
   // pixel scale.
   // v3-42: SUN_SIZE bumped 56→72 desktop, 36→44 compact-mobile. The TwinSun
   // glyph (8 yellow rays + green inner sun) has more empty space between its
-  // rays than the simple yellow `logo-sun-v2.png` it replaced in v3-41, so at
+  // rays than the simple yellow `logo-sun-v4.png` it replaced in v3-41, so at
   // 56px it read as visually lighter than the solid 28px moon glyphs at the
   // arc's bookends. 72px restores visual parity with the moons. Vertical
   // clearance still works: desktop sun apex is at bottomPx=60, sun's top edge
@@ -456,7 +456,7 @@ function CelestialTimeline({ trackLeft, trackRight, compact = false }) {
               transform: 'translate(-50%, 50%)',
               width: SIZE, height: SIZE,
             }}>
-              {s.kind === 'sun'     && <img src="/twinsun-v3.png" alt=""
+              {s.kind === 'sun'     && <img src="/twinsun-v5.png" alt=""
                                             width={SIZE} height={SIZE}
                                             style={{ display: 'block' }} />}
               {s.kind === 'moon'    && <MoonGlyph    size={SIZE} />}

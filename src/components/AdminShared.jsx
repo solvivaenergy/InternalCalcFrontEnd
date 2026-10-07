@@ -862,6 +862,10 @@ export function PromoCodesTable({ codes, canEdit, onChange }) {
               {/* v3-151 — percent or flat peso. */}
               <th style={tableStyles.th}>Type</th>
               <th style={{ ...tableStyles.th, textAlign: 'right' }}>Discount</th>
+              {/* v3-221 — public-view gate. Ticked = customers may enter the
+                  code; unticked = staff only (reps + every admin tier).
+                  Stored as `publicDisabled: true`; absent = enabled. */}
+              <th style={{ ...tableStyles.th, textAlign: 'center' }}>Public</th>
               {canEdit && <th style={tableStyles.th} aria-label="actions" />}
             </tr>
           </thead>
@@ -935,6 +939,19 @@ export function PromoCodesTable({ codes, canEdit, onChange }) {
                   ) : (
                     normalizePromoType(p.type) === 'peso'
                       ? fmt.peso(p.discount || 0) : fmt.pct(p.discount, 0)
+                  )}
+                </td>
+                <td style={{ ...tableStyles.td, textAlign: 'center' }}>
+                  {canEdit ? (
+                    <input type="checkbox"
+                      checked={p.publicDisabled !== true}
+                      aria-label="Available in the public view"
+                      title="Ticked: customers may enter this code. Unticked: staff only."
+                      onChange={e => updateRow(i, { publicDisabled: !e.target.checked })} />
+                  ) : (
+                    p.publicDisabled === true
+                      ? <span style={{ color: COLORS.textMuted }}>Staff only</span>
+                      : 'Yes'
                   )}
                 </td>
                 {canEdit && (

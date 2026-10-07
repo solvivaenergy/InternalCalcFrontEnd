@@ -39,7 +39,7 @@ import {
   CalloutBox, COLORS, fmt,
 } from './ui.jsx';
 import { resolveMinDpPct, allowedDpOptions, DP_EPS } from '../lib/calculations.js';
-import { normalizePromoType } from '../data/adminParams.js';   // v3-152 — peso vs percent promo display
+import { normalizePromoType, findPromo } from '../data/adminParams.js';   // v3-152 — peso vs percent promo display; v3-221 — findPromo (public-view gate)
 
 // ─── Hardcoded Step 3 dropdown value sets ────────────────────────────────────
 // These are the customer-facing options for tenor and DP%. The base lists are
@@ -99,8 +99,12 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
   }, [state.downPaymentPct, state.tenor, minDpPct, maxTenor]);
 
   // Promo code feedback
-  const promoCode = (state.promoCode || '').trim().toUpperCase();
-  const matchedPromo = adminParams.promoCodes.find(p => p.code === promoCode);
+  // v3-221 — the lookup routes through findPromo(), the SAME source App uses
+  // to mask the engine input: in customer mode a public-disabled code is no
+  // match, so the line reads "Code not recognized" (D3 — no new customer
+  // copy, and the public is not told the code exists) while the engine, fed
+  // the masked '', applies no discount. Staff views match every code.
+  const matchedPromo = findPromo(adminParams.promoCodes, state.promoCode, mode === 'customer');
   // v3-152 — BUGFIX. This line read `pct: matchedPromo.discount` and formatted
   // it with fmt.pct() unconditionally, which was correct while every promo was
   // a fraction. v3-151 added flat peso codes, whose `discount` is a peso

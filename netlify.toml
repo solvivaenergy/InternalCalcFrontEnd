@@ -21,6 +21,25 @@
   status = 200
   force  = true
 
+# v3-222 — a MISSING static image must 404, never fall through to the SPA page.
+# Twice now (v3-217, v3-221) a deploy without the right files under public/
+# let the fallback below answer /logo-*.png with index.html at HTTP 200, and
+# the one-year immutable header then cached that HTML as the image on every
+# visitor's phone. With this rule a missing asset fails visibly on the first
+# smoke instead of silently for a year. Real files under public/ are served
+# before any redirect, so present assets are unaffected.
+# (This deployment serves from GitHub Pages, where a missing path already
+# returns HTTP 404; the rule is carried so the legacy Netlify config stays in
+# step with upstream.)
+[[redirects]]
+  from   = "/*.png"
+  to     = "/404.html"
+  status = 404
+[[redirects]]
+  from   = "/*.jpg"
+  to     = "/404.html"
+  status = 404
+
 # SPA fallback — any unknown route falls through to index.html so client-side
 # state like the agent-mode flag still works.
 # Note: paths starting with /.netlify/functions/* are handled by Netlify

@@ -80,7 +80,7 @@ export default function MaintenanceGate({ onUnlock, agent, brand }) {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} />
+        <img src="/logo-full-v4.png" alt="Solviva Energy" style={styles.logo} />
 
         <h1 style={styles.heroHeadline}>We'll be right back.</h1>
         <p style={styles.subtitle}>

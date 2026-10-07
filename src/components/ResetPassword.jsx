@@ -48,7 +48,7 @@ export default function ResetPassword({ onDone }) {
   return (
     <div style={styles.page}>
       <form style={styles.card} onSubmit={handleSubmit}>
-        <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} />
+        <img src="/logo-full-v4.png" alt="Solviva Energy" style={styles.logo} />
         <h1 style={styles.title}>Set a new password</h1>
 
         {success ? (

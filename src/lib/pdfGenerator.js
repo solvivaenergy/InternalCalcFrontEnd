@@ -3221,11 +3221,11 @@ export async function generateProposalPdf({
     bannerData,
     fallbackBannerData,
   ] = await Promise.all([
-    fetchPublicImageDataUrl("/logo-full-v2.png"),
-    fetchPublicImageDataUrl("/logo-sun-v2.png"),
+    fetchPublicImageDataUrl("/logo-full-v4.png"),
+    fetchPublicImageDataUrl("/logo-sun-v4.png"),
     fetchPublicImageDataUrl("/proposal-background.jpg"),
     fetchPublicImageDataUrl("/proposal-banner.png"),
-    fetchPublicImageDataUrl("/twinsun-v3.png"),
+    fetchPublicImageDataUrl("/twinsun-v5.png"),
   ]);
   ctx.assets.logo = logoData;
   ctx.assets.logoSun = logoSunData;
@@ -3235,7 +3235,7 @@ export async function generateProposalPdf({
   // permanent local asset (/proposal-banner.png) exported from the Figma PDF
   // Proposal file. It was previously fetched from an ephemeral Figma MCP URL
   // that 404'd, which silently dropped the PDF back to the tiny pixelated
-  // /twinsun-v3.png fallback.
+  // /twinsun-v5.png fallback.
   const rawBannerData = bannerData || fallbackBannerData;
   ctx.assets.banner = await cropBannerToRatio(rawBannerData);
 

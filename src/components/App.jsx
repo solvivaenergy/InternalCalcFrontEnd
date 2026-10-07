@@ -4,7 +4,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT, optimizeBatteryPackage,
-         availableBatteryPackages, availableDeliveryLocations } from '../data/adminParams.js';
+         availableBatteryPackages, availableDeliveryLocations,
+         findPromo } from '../data/adminParams.js';   // v3-221 — public-view promo gate
 import { DEVICES } from '../data/devices.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
          INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
@@ -412,7 +413,7 @@ function BootSplash() {
         minHeight: '100vh', display: 'flex', alignItems: 'center',
         justifyContent: 'center', flexDirection: 'column', gap: 12,
       }}>
-        <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
+        <img src="/logo-sun-v4.png" alt="Solviva" width="48" height="48"
              style={{ opacity: 0.7 }} />
         <div style={{ fontSize: 13, color: '#6B7280' }}>Loading…</div>
       </div>
@@ -748,7 +749,13 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     } catch (_) { /* fine */ }
     const coarse = typeof window.matchMedia === 'function'
       && window.matchMedia('(pointer: coarse)').matches;
-    return coarse && window.innerWidth < 640;
+    // v3-220 (D1) — the width test is the SHORTER viewport side, not innerWidth.
+    // An iPhone mini in landscape is 812px wide: testing innerWidth flipped the
+    // app to the desktop shell, MobileFlow unmounted and its local screen state
+    // died, and rotating back remounted it at screen 0. A phone stays a phone
+    // in either orientation; a tablet (shorter side >= 640) and a resized
+    // desktop window are unaffected.
+    return coarse && Math.min(window.innerWidth, window.innerHeight) < 640;
   };
   const [phoneViewport, setPhoneViewport] = useState(detectPhoneViewport);
   useEffect(() => {
@@ -940,8 +947,20 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         ? state.location
         : (availableDeliveryLocations(ADMIN_PARAMS).some(l => l.id === state.location)
             ? state.location : 'luzon');
+    // v3-221 — public-view promo gate (user-directed, Pat; D2/D4). In
+    // CUSTOMER mode a promo code that is public-disabled (or unrecognised)
+    // is MASKED to '' before it reaches the engine, so the price never
+    // carries a discount the public may not use; the typed text stays in
+    // state untouched, so a rep signing in over this session sees the code
+    // activate with every other input intact. Staff views (rep + every
+    // admin tier run in rep mode) pass the code through verbatim. The rule
+    // lives in findPromo() (adminParams.js) — Step 3D reads the same source.
+    const promoCodeForEngine = mode === 'customer'
+      ? (findPromo(ADMIN_PARAMS.promoCodes, state.promoCode, true)?.code ?? '')
+      : state.promoCode;
     const inputs = { ...state, phase, deviceLibrary: DEVICES,
                      location: effectiveLocation,
+                     promoCode: promoCodeForEngine,
                      rsdEnabled: rsdInStock ? state.rsdEnabled : false };
     const recommended = computeRecommendedPanels(inputs, ADMIN_PARAMS);
     const panelsAvailable = recommended.panelsAvailable !== false;
@@ -1158,7 +1177,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       panelsAvailable, anyBatteryInStock, rsdInStock,
       pkg, terms, popularTenors, directPurchase, schedule, cashFlows, annex, installDate,
     };
-  }, [state, generatedDate, paramsRev]);
+  }, [state, generatedDate, paramsRev, mode]);   // v3-221 — mode drives the promo mask
 
   // v3-56 — auto-bounce away from Summary/Schedule tabs when they're hidden.
   // Two triggers:
@@ -1246,7 +1265,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           minHeight: '100vh', display: 'flex', alignItems: 'center',
           justifyContent: 'center', flexDirection: 'column', gap: 12,
         }}>
-          <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
+          <img src="/logo-sun-v4.png" alt="Solviva" width="48" height="48"
                style={{ opacity: 0.7 }} />
           <div style={{ fontSize: 13, color: '#6B7280' }}>Loading…</div>
         </div>
@@ -1475,7 +1494,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
     return (
       <header style={styles.header}>
         <div className="header-inner" style={{ ...styles.headerInner, alignItems: 'flex-start' }}>
-          <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
+          <img src="/logo-full-v4.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
           <div style={{ flex: 1 }}>
             <ContactEditForm
               contact={contact} setContact={setContact}
@@ -1495,7 +1514,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
   return (
     <header style={styles.header}>
       <div className="header-inner" style={styles.headerInner}>
-        <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
+        <img src="/logo-full-v4.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
         <div className="header-meta" style={styles.headerMeta}>
           <div style={styles.metaRow}>
             <strong>Quote for:</strong> {contact.name || '—'}

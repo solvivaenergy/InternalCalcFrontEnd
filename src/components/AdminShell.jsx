@@ -152,6 +152,9 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
       if (seen.has(c)) return { ok: false, msg: `Duplicate promo code "${c}" — codes must be unique.` };
       seen.add(c);
     }
+    // v3-221 — mirrors the server's publicDisabled boolean guard.
+    const badFlag = (params.promoCodes || []).find(p => p.publicDisabled !== undefined && typeof p.publicDisabled !== 'boolean');
+    if (badFlag) return { ok: false, msg: `Promo code "${(badFlag.code || '').trim().toUpperCase()}" has a non-boolean publicDisabled value.` };
     return { ok: true };
   })();
   const battPkgsValid = Array.isArray(params.batteryPackages) && params.batteryPackages.length > 0;

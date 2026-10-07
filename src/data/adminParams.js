@@ -566,6 +566,12 @@ export const ADMIN_PARAMS = {
     // price) or 'peso' (discount is a flat VAT-inclusive peso amount). An
     // ABSENT type reads as 'percent', so every code saved before v3-151 keeps
     // its exact behaviour with no migration.
+    // v3-221 — `publicDisabled: true` keeps a code out of the PUBLIC view
+    // (desktop customer mode; the mobile flow has no promo input). Sales reps
+    // and every admin tier still apply it. ABSENT reads as enabled, so every
+    // code saved before v3-221 keeps its exact behaviour with no migration.
+    // See promoUsableIn() / findPromo() below — the single source for both
+    // the App's engine-input mask and Step 3D's lookup.
     { code: 'SENIOR', label: 'Senior Citizen',                               type: 'percent', discount: 0.03 },
     { code: 'SOLV',   label: 'Solviva Partner',                              type: 'percent', discount: 0.15 },
     { code: 'CASH',   label: 'Cash / Check / Direct Deposit Payment Method', type: 'percent', discount: 0.12 },
@@ -1424,6 +1430,26 @@ export const PROMO_TYPE_IDS = PROMO_TYPES.map(t => t.id);
 // Absent/unknown reads as 'percent' — the only type that existed before v3-151.
 export function normalizePromoType(value) {
   return PROMO_TYPE_IDS.includes(value) ? value : 'percent';
+}
+
+// ─── v3-221 · public-view promo gate ─────────────────────────────────────────
+// A promo is usable in the public (customer) view unless it carries
+// `publicDisabled: true`; staff views (rep + every admin tier) use every code.
+// ONE source for App (masks the engine input) and Step 3D (the feedback
+// line) — never re-implement the rule at a call site.
+export function promoUsableIn(promo, publicView) {
+  if (!promo) return false;
+  return !(publicView && promo.publicDisabled === true);
+}
+
+// Normalises the typed code exactly as the engine does (trim + upper-case)
+// and returns the matching promo, or undefined when there is no match OR the
+// match is public-disabled and the caller is the public view. A disabled
+// code therefore reads as "not recognised" to a customer — by design (D3).
+export function findPromo(codes, typed, publicView) {
+  const code = (typed || '').trim().toUpperCase();
+  const promo = (codes || []).find(p => p.code === code);
+  return promoUsableIn(promo, publicView) ? promo : undefined;
 }
 
 // The peso value a promo takes off a given package price. Percent codes scale

@@ -629,6 +629,13 @@ export default async (request, context) => {
         if ((p?.type === undefined || p.type === 'percent') && d > 1) {
           return json(400, { error: `Refusing to save: promo code "${c}" percentage must be a fraction between 0 and 1.` });
         }
+        // v3-221 — publicDisabled is optional and ABSENT reads as enabled
+        // (every pre-v3-221 code keeps its behaviour). A present value must
+        // be a real boolean: a string "false" would read as ENABLED by the
+        // gate's strict `=== true` test only by accident, so refuse it.
+        if (p?.publicDisabled !== undefined && typeof p.publicDisabled !== 'boolean') {
+          return json(400, { error: `Refusing to save: promo code "${c}" has a non-boolean publicDisabled value.` });
+        }
       }
     }
     // quoteValidityDays must be a positive integer ≥ 1. Zero, negatives, and

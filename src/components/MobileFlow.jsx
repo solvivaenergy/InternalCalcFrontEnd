@@ -303,7 +303,7 @@ const CSS = `
 .mfl-payoff .k{display:flex;gap:12px;flex-wrap:wrap;font-size:10.5px;color:#5A7358;margin-top:8px}
 .mfl-payoff .k i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;
   vertical-align:-1px;background:#3B7B5A}
-.mfl-payoff .k i.ln{border-radius:0;height:0;border-top:2px dashed #C9862B;width:13px}
+.mfl-payoff .k i.ln{border-radius:0;height:7px;border-top:2px dashed #C9862B;width:13px;background:rgba(201,134,43,.3)}
 /* v3-193 — the payment caption lives here, NOT over the bars. #8A5C1C on white
    clears WCAG AA at 11px; the old in-plot label was #9A6B1F over #3B7B5A. */
 .mfl-payoff .mfl-paycap{font-size:11px;font-weight:700;color:#8A5C1C;margin-top:6px}
@@ -535,10 +535,22 @@ function MobilePayoff({ state, model, adminParams }) {
                  width={bw.toFixed(1)} height={hs.toFixed(1)} rx="1.5" fill="#3B7B5A" />;
   });
 
+  let paymentBand = null;
   let paymentLine = null;
   if (!directPurchase) {
     const py = YB - h(pmt);
     const px = X0 + Math.min(payYears, years) * slot;
+    // v3-220 (A) — the payment is ALSO an area, not only a line. When the
+    // payment sits within ~15% of year-one savings (₱10,112 against ₱8,800 in
+    // Pat's screenshot, the typical RTO shape) the 2px dashed line lands on the
+    // bar tops and reads as part of them. A translucent amber band from the
+    // baseline to the payment level, years 1..payYears, drawn BEFORE the bars
+    // so they show through, is legible at any contrast; the dashed line stays
+    // as the band's top edge and the end dot still marks where payments stop.
+    paymentBand = (
+      <rect x={X0} y={py.toFixed(1)} width={(px - X0).toFixed(1)}
+            height={(YB - py).toFixed(1)} fill="#C9862B" fillOpacity="0.22" />
+    );
     // v3-193 — NO TEXT INSIDE THE PLOT. Both amber labels used to sit over the
     // savings bars at 9.5px: "₱X/mo paid" just above the dashed line and
     // "payments end yr N" near the baseline, amber on green, illegible on a
@@ -570,6 +582,7 @@ function MobilePayoff({ state, model, adminParams }) {
              + (directPurchase ? '. There is no monthly payment.'
                 : `, against a fixed monthly payment of ${fmtPeso(pmt)} that ends after year ${payYears}.`)}>
         <line x1={X0} y1={YB} x2={X1} y2={YB} stroke="#D9E2CC" />
+        {paymentBand}
         {bars}
         {paymentLine}
         <text x={X0} y={YT - 12} fontSize="9.5" fontWeight="700" fill="#1F3D2E">
@@ -764,7 +777,7 @@ function WelcomeScreen({ onStart }) {
   const rotor = useRotator(TAGLINES, true);
   return (
     <div className="mfl-screen mfl-welcome">
-      <img className="mfl-biglogo" src="/logo-full-transparent-v1.png"
+      <img className="mfl-biglogo" src="/logo-full-transparent-v3.png"
            alt="Solviva — An AboitizPower Company" />
       <img className="mfl-heroimg" src="/mobile-hero-v1.jpg"
            alt="Rooftop solar installation" />
@@ -1626,7 +1639,7 @@ export default function MobileFlow({
       {screen > 0 && (
         <>
           <div className="mfl-header">
-            <img src="/logo-full-transparent-v1.png" alt="Solviva" />
+            <img src="/logo-full-transparent-v3.png" alt="Solviva" />
           </div>
           <div className="mfl-progress">
             {Array.from({ length: 6 }, (_, i) => (
