@@ -831,81 +831,13 @@ function drawCoverPage1(mgr) {
   };
 
   // ── System package tiles (1:225) ──
-  const recPanelCount = model.recommended?.recommendedPanelCount ?? 0;
-  // Prefer the RESOLVED count off the model (same rule as the package-detail
-  // page). `recommended.recommendedPanelCount` is the Excel-mirror W7 figure,
-  // but since v3-130 the array the quote is sized and priced on is the
-  // optimizeSystem sweep (model.panelCount / model.systemKwp). Falling back
-  // to W7 here printed "18 panels" beside a 10 kWp tile that was really 16
-  // panels — the two tiles were reading different recommendations.
-  const panelCount = model.panelCount ?? state.panelCount ?? recPanelCount;
-  const panelWatts = model.recommended?.panelWatts ?? 630;
-  const systemKwp = model.systemKwp ?? (panelCount * panelWatts) / 1000;
-  const batteryKwh = model.batteryKwh ?? 0;
-  const inverters = (model.effectiveInverters || []).filter(
-    (inv) => inv && inv.ratedKw,
-  );
-  const inverterTotalKw = inverters.reduce((a, b) => a + Number(b.ratedKw), 0);
-  const batteryUnitKwh =
-    model.activeBatteryPackage?.batteryUnitKwh || state.batteryUnitKwh || 5;
-  const batteryUnitCount =
-    batteryKwh > 0 ? Math.ceil(batteryKwh / batteryUnitKwh) : 0;
-  // v3-143 — storage-only orders (no solar array) show N/A on the solar
-  // tiles, mirroring the inverter tile, so a battery-only quote never
-  // implies a phantom 0kWp / 0-panel solar package.
-  const hasSolar = panelCount > 0;
-
-  drawTilesRow(
-    "System package",
-    88,
-    1502,
-    [
-      [
-        {
-          txt: hasSolar ? `${fmtKwp(systemKwp)}kWp` : "N/A",
-          size: 100,
-          c: DGREEN,
-        },
-        { txt: "Peak system", size: 38, c: BLACK },
-        { txt: hasSolar ? "capacity" : "Not included", size: 38, c: BLACK },
-      ],
-      [
-        { txt: hasSolar ? `${panelCount}` : "N/A", size: 100, c: DGREEN },
-        { txt: "No. of panels", size: 38, c: BLACK },
-        {
-          txt: hasSolar ? `${panelWatts}W panels` : "Not included",
-          size: 38,
-          c: NEUTRAL,
-        },
-      ],
-      [
-        {
-          txt: inverters.length ? `${inverterTotalKw}kW` : "N/A",
-          size: 100,
-          c: DGREEN,
-        },
-        { txt: "Inverter", size: 38, c: BLACK },
-        {
-          txt: inverters.length ? "Hybrid" : "Not included",
-          size: 38,
-          c: NEUTRAL,
-        },
-      ],
-      [
-        { txt: `${batteryKwh.toFixed(0)} kWh`, size: 100, c: DGREEN },
-        { txt: "Battery/s", size: 38, c: BLACK },
-        {
-          txt:
-            batteryUnitCount > 0
-              ? `${batteryUnitCount} unit(s) of ${batteryUnitKwh}kWh`
-              : "-",
-          size: 38,
-          c: NEUTRAL,
-        },
-      ],
-    ],
-    { leftPx: 88, widthPx: 2304, bg: TILEG },
-  );
+  // Tile content is built by systemPackageTiles() so page 2's repeat row can
+  // never disagree with the cover.
+  drawTilesRow("System package", 88, 1502, systemPackageTiles(mgr), {
+    leftPx: 88,
+    widthPx: 2304,
+    bg: TILEG,
+  });
 
   // ── System package payment details (1:272) ──
   const terms = model.terms || {};
@@ -935,142 +867,197 @@ function drawCoverPage1(mgr) {
   );
 
   // ── Savings and investment returns (1:273) ──
+  // Shared with page 4 (drawSavingsRow) through savingsTiles().
+  drawTilesRow("Savings and investment returns", 94, 2727, savingsTiles(mgr), {
+    leftPx: 94,
+    widthPx: 2298,
+    bg: DGREEN,
+  });
+
+  mgr.y = fxmm(3256);
+}
+
+// ─── Stat tiles shared by the cover, page 2 and page 4 ──────────────────────
+// Tile content for the four System-package tiles (Figma 1:225 on the cover,
+// 385:165 on page 2). Sizes are Figma px — drawTilesRow (cover) and
+// drawFigmaTileRow (flow pages) both convert them.
+function systemPackageTiles(mgr) {
+  const { state, model } = mgr.ctx;
+  const DGREEN = [31, 82, 43];
+  const BLACK = [0, 0, 0];
+  const NEUTRAL = [71, 84, 103];
+
+  const recPanelCount = model.recommended?.recommendedPanelCount ?? 0;
+  // Prefer the RESOLVED count off the model (same rule as the package-detail
+  // page). `recommended.recommendedPanelCount` is the Excel-mirror W7 figure,
+  // but since v3-130 the array the quote is sized and priced on is the
+  // optimizeSystem sweep (model.panelCount / model.systemKwp). Falling back
+  // to W7 here printed "18 panels" beside a 10 kWp tile that was really 16
+  // panels — the two tiles were reading different recommendations.
+  const panelCount = model.panelCount ?? state.panelCount ?? recPanelCount;
+  const panelWatts = model.recommended?.panelWatts ?? 630;
+  const systemKwp = model.systemKwp ?? (panelCount * panelWatts) / 1000;
+  const batteryKwh = model.batteryKwh ?? 0;
+  const inverters = (model.effectiveInverters || []).filter(
+    (inv) => inv && inv.ratedKw,
+  );
+  const inverterTotalKw = inverters.reduce((a, b) => a + Number(b.ratedKw), 0);
+  const batteryUnitKwh =
+    model.activeBatteryPackage?.batteryUnitKwh || state.batteryUnitKwh || 5;
+  const batteryUnitCount =
+    batteryKwh > 0 ? Math.ceil(batteryKwh / batteryUnitKwh) : 0;
+  // v3-143 — storage-only orders (no solar array) show N/A on the solar
+  // tiles, mirroring the inverter tile, so a battery-only quote never
+  // implies a phantom 0kWp / 0-panel solar package.
+  const hasSolar = panelCount > 0;
+
+  return [
+    [
+      {
+        txt: hasSolar ? `${fmtKwp(systemKwp)}kWp` : "N/A",
+        size: 100,
+        c: DGREEN,
+      },
+      { txt: "Peak system", size: 38, c: BLACK },
+      { txt: hasSolar ? "capacity" : "Not included", size: 38, c: BLACK },
+    ],
+    [
+      { txt: hasSolar ? `${panelCount}` : "N/A", size: 100, c: DGREEN },
+      { txt: "No. of panels", size: 38, c: BLACK },
+      {
+        txt: hasSolar ? `${panelWatts}W panels` : "Not included",
+        size: 38,
+        c: NEUTRAL,
+      },
+    ],
+    [
+      {
+        txt: inverters.length ? `${inverterTotalKw}kW` : "N/A",
+        size: 100,
+        c: DGREEN,
+      },
+      { txt: "Inverter", size: 38, c: BLACK },
+      {
+        txt: inverters.length ? "Hybrid" : "Not included",
+        size: 38,
+        c: NEUTRAL,
+      },
+    ],
+    [
+      { txt: `${batteryKwh.toFixed(0)} kWh`, size: 100, c: DGREEN },
+      { txt: "Battery/s", size: 38, c: BLACK },
+      {
+        txt:
+          batteryUnitCount > 0
+            ? `${batteryUnitCount} unit(s) of ${batteryUnitKwh}kWh`
+            : "-",
+        size: 38,
+        c: NEUTRAL,
+      },
+    ],
+  ];
+}
+
+// Tile content for the four Savings-and-investment-returns tiles (Figma
+// 1:273 on the cover, 385:220 on page 4).
+function savingsTiles(mgr) {
+  const { state, model } = mgr.ctx;
+  const LIME = [210, 255, 30];
+  const WHITE = [255, 255, 255];
   const cf = model.cashFlows || {};
   const irrYears = state.irrYears ?? 25;
   const utilityRate = Number(state.utilityRate || 0);
   const paybackBig =
     cf.paybackMonths != null && isFinite(cf.paybackMonths)
       ? `${(cf.paybackMonths / 12).toFixed(1)} yrs`
-      : "\u2014";
-  const irrBig = cf.irr != null ? pct(cf.irr, 1) : "\u2014";
-  const lcoeBig = cf.lcoe != null ? `\u20B1${cf.lcoe.toFixed(1)}` : "\u2014";
+      : "—";
+  const irrBig = cf.irr != null ? pct(cf.irr, 1) : "—";
+  const lcoeBig = cf.lcoe != null ? `₱${cf.lcoe.toFixed(1)}` : "—";
   const duSavings = cf.totalDuSavings ?? 0;
+  // Seven-figure savings print as "₱2.5M" so they can never overrun a
+  // tile (story 013 AC4).
   const duBig =
     duSavings >= 1e6
-      ? `\u20B1${(duSavings / 1e6).toFixed(1)}M`
+      ? `₱${(duSavings / 1e6).toFixed(1)}M`
       : peso(duSavings);
 
-  drawTilesRow(
-    "Savings and investment returns",
-    94,
-    2727,
+  return [
     [
-      [
-        { txt: paybackBig, size: 100, c: LIME },
-        { txt: "Payback period", size: 38, c: WHITE },
-      ],
-      [
-        { txt: irrBig, size: 100, c: LIME },
-        { txt: `IRR (${irrYears} years)`, size: 38, c: WHITE },
-        { txt: "Annualized", size: 38, c: WHITE },
-      ],
-      [
-        { txt: lcoeBig, size: 100, c: LIME },
-        { txt: "LCOE", size: 38, c: WHITE },
-        { txt: "vs. current rate of", size: 38, c: WHITE },
-        { txt: `\u20B1${utilityRate.toFixed(2)}/kWh`, size: 38, c: WHITE },
-      ],
-      [
-        { txt: duBig, size: 100, c: LIME },
-        { txt: `${irrYears}-year savings`, size: 38, c: WHITE },
-        { txt: "Cumulative", size: 38, c: WHITE },
-      ],
+      { txt: paybackBig, size: 100, c: LIME },
+      { txt: "Payback period", size: 38, c: WHITE },
     ],
-    { leftPx: 94, widthPx: 2298, bg: DGREEN },
-  );
-
-  mgr.y = fxmm(3256);
+    [
+      { txt: irrBig, size: 100, c: LIME },
+      { txt: `IRR (${irrYears} years)`, size: 38, c: WHITE },
+      { txt: "Annualized", size: 38, c: WHITE },
+    ],
+    [
+      { txt: lcoeBig, size: 100, c: LIME },
+      { txt: "LCOE", size: 38, c: WHITE },
+      { txt: "vs. current rate of", size: 38, c: WHITE },
+      { txt: `₱${utilityRate.toFixed(2)}/kWh`, size: 38, c: WHITE },
+    ],
+    [
+      { txt: duBig, size: 100, c: LIME },
+      { txt: `${irrYears}-year savings`, size: 38, c: WHITE },
+      { txt: "Cumulative", size: 38, c: WHITE },
+    ],
+  ];
 }
 
-function drawSystemRow(mgr, showHeading = true) {
-  const { ctx } = mgr;
-  const { state, model } = ctx;
-
-  const recPanelCount = model.recommended?.recommendedPanelCount ?? 0;
-  // Resolved count first — see the cover-tile comment above; W7 is only the
-  // last-resort fallback.
-  const panelCount = model.panelCount ?? state.panelCount ?? recPanelCount;
-  const panelWatts = model.recommended?.panelWatts ?? 630;
-  const systemKwp = model.systemKwp ?? (panelCount * panelWatts) / 1000;
-  const batteryKwh = model.batteryKwh ?? 0;
-
-  const inverters = (model.effectiveInverters || []).filter(
-    (inv) => inv && inv.ratedKw,
-  );
-  const inverterKws = inverters.map((inv) => Number(inv.ratedKw));
-  const inverterTotalKw = inverterKws.reduce((a, b) => a + b, 0);
-
-  const batteryUnitKwh =
-    model.activeBatteryPackage?.batteryUnitKwh || state.batteryUnitKwh || 5;
-  const batteryUnitCount =
-    batteryKwh > 0 ? Math.ceil(batteryKwh / batteryUnitKwh) : 0;
-  const batterySub =
-    batteryUnitCount > 0
-      ? `${batteryUnitCount} unit(s) of ${batteryUnitKwh} kWh`
-      : "\u2014";
-  // v3-143 — storage-only orders (no solar array) show N/A on the solar tiles.
-  const hasSolar = panelCount > 0;
-
-  if (showHeading) {
-    mgr.doc.setFont("helvetica", "bold");
-    mgr.doc.setFontSize(12);
-    mgr.doc.setTextColor(27, 119, 188);
-    mgr.doc.text("System package", MARGIN, mgr.y + 3);
-    mgr.y += 7;
-  }
-
-  const tileW = (CONTENT_W - 9) / 4;
-  const tileH = 28;
-  const tiles = [
-    {
-      bigNum: hasSolar ? `${fmtKwp(systemKwp)}kWp` : "N/A",
-      line1: "Peak system",
-      line2: hasSolar ? "capacity" : "Not included",
-    },
-    {
-      bigNum: hasSolar ? `${panelCount}` : "N/A",
-      line1: "No. of panels",
-      line2: hasSolar ? `${panelWatts}W panels` : "Not included",
-    },
-    {
-      bigNum: inverters.length ? `${inverterTotalKw}kW` : "N/A",
-      line1: "Inverter",
-      line2: inverters.length ? "Hybrid" : "Not included",
-    },
-    {
-      bigNum: `${batteryKwh.toFixed(0)} kWh`,
-      line1: "Battery/s",
-      line2: batterySub,
-    },
-  ];
-
-  tiles.forEach((t, i) => {
-    const tx = MARGIN + i * (tileW + 3);
-    mgr.doc.setFillColor(234, 241, 233);
-    mgr.doc.setDrawColor(222, 233, 225);
-    mgr.doc.setLineWidth(0.2);
-    mgr.doc.roundedRect(tx, mgr.y, tileW, tileH, 3, 3, "FD");
-
-    mgr.doc.setFont("helvetica", "normal");
-    mgr.doc.setFontSize(19);
-    mgr.doc.setTextColor(...C.brandGreen);
-    mgr.doc.text(t.bigNum, tx + tileW / 2, mgr.y + 12, { align: "center" });
-
-    mgr.doc.setFont("helvetica", "bold");
-    mgr.doc.setFontSize(8.5);
-    mgr.doc.setTextColor(...C.textBody);
-    mgr.doc.text(t.line1, tx + tileW / 2, mgr.y + 19, { align: "center" });
-
-    // CHANGED: If it's the first tile, mimic the exact styling of line 1.
-    // Otherwise, use the smaller, muted style for the subtext.
-    const isFirstTile = i === 0;
-    mgr.doc.setFont("helvetica", isFirstTile ? "bold" : "normal");
-    mgr.doc.setFontSize(isFirstTile ? 8.5 : 7.2);
-    mgr.doc.setTextColor(...(isFirstTile ? C.textBody : C.textMuted));
-
-    mgr.doc.text(t.line2, tx + tileW / 2, mgr.y + 23.5, { align: "center" });
+// Flow-page counterpart of the cover's drawTilesRow: the same Figma geometry
+// (407px tall, 80px gaps, 32px radius, text block vertically centred with 8px
+// line gaps, every line Inter Medium) at a given top in mm, spanning
+// CONTENT_W. Stories 010 and 013 — pages 2 and 4 used to draw their own
+// smaller tiles (19pt / 15pt numbers in 28mm / 24mm boxes), so the same
+// figures appeared at three different sizes across the proposal.
+function drawFigmaTileRow(mgr, tiles, { bg, top }) {
+  const d = mgr.doc;
+  const gap = fxmm(80);
+  const tileW = (CONTENT_W - 3 * gap) / 4;
+  const tileH = fxmm(407);
+  tiles.forEach((lines, i) => {
+    const tx = tileLeft(i);
+    d.setFillColor(...bg);
+    d.roundedRect(tx, top, tileW, tileH, fxmm(32), fxmm(32), "F");
+    const totalH =
+      lines.reduce((a, l) => a + fxmm(l.size), 0) +
+      fxmm(8) * (lines.length - 1);
+    let ly = top + (tileH - totalH) / 2;
+    const cx = tx + tileW / 2;
+    lines.forEach((l) => {
+      d.setFont("helvetica", l.style || "medium");
+      d.setFontSize(fxpt(l.size));
+      d.setTextColor(...l.c);
+      d.text(l.txt, cx, ly, { align: "center", baseline: "top" });
+      ly += fxmm(l.size) + fxmm(8);
+    });
   });
-  mgr.y += tileH;
+  return top + tileH;
+}
+// Left edge of tile i in a drawFigmaTileRow (also the definitions column
+// under the page 4 tiles).
+function tileLeft(i) {
+  const gap = fxmm(80);
+  const tileW = (CONTENT_W - 3 * gap) / 4;
+  return MARGIN + i * (tileW + gap);
+}
+
+// Page 2's "Recommended solar system package" tiles (Figma 385:165) — the
+// cover's tiles, byte-for-byte the same content, at the cover's size
+// (story 010).
+function drawSystemRow(mgr, showHeading = true) {
+  if (showHeading) {
+    mgr.doc.setFont("helvetica", "semibold");
+    mgr.doc.setFontSize(fxpt(64));
+    mgr.doc.setTextColor(0, 106, 198);
+    mgr.doc.text("System package", MARGIN, mgr.y + 4);
+    mgr.y += 10;
+  }
+  mgr.y = drawFigmaTileRow(mgr, systemPackageTiles(mgr), {
+    bg: [234, 241, 233],
+    top: mgr.y,
+  });
 }
 
 function drawQuoteAtAGlanceRow(mgr) {
@@ -1132,76 +1119,27 @@ function drawQuoteAtAGlanceRow(mgr) {
   mgr.y += rows.length * rowH;
 }
 
+// Page 4's "Savings and investment returns" tiles (Figma 385:219-234) \u2014 the
+// cover's tiles at the cover's size and colours (story 013: the page used to
+// draw 15pt numbers in a different lime over 24mm boxes).
 function drawSavingsRow(mgr) {
-  const { ctx } = mgr;
-  const { state, model } = ctx;
-  const cf = model.cashFlows || {};
-  const irrYears = state.irrYears ?? 25;
-  const utilityRate = Number(state.utilityRate || 0);
-
-  const paybackBig =
-    cf.paybackMonths != null && isFinite(cf.paybackMonths)
-      ? `${(cf.paybackMonths / 12).toFixed(1)} yrs`
-      : "\u2014";
-  const irrBig = cf.irr != null ? pct(cf.irr, 1) : "\u2014";
-  const lcoeBig = cf.lcoe != null ? `\u20B1${cf.lcoe.toFixed(1)}` : "\u2014";
-  const duSavings = cf.totalDuSavings ?? 0;
-  const duBig =
-    duSavings >= 1e6
-      ? `\u20B1${(duSavings / 1e6).toFixed(1)}M`
-      : peso(duSavings);
-
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(12);
-  mgr.doc.setTextColor(27, 119, 188);
-  mgr.doc.text("Savings and investment returns", MARGIN, mgr.y + 3);
-  mgr.y += 7;
-
-  const tileW = (CONTENT_W - 9) / 4;
-  const tileH = 24;
-  const tileY = mgr.y;
-
-  const tiles = [
-    { big: paybackBig, sub: ["Payback period"] },
-    { big: irrBig, sub: [`IRR (${irrYears} years)`, "Annualized"] },
-    {
-      big: lcoeBig,
-      sub: [
-        "LCOE",
-        "vs. current rate of",
-        `\u20B1${utilityRate.toFixed(2)}/kWh`,
-      ],
-    },
-    { big: duBig, sub: [`${irrYears}-year savings`, "Cumulative"] },
-  ];
-
-  tiles.forEach((t, i) => {
-    const tx = MARGIN + i * (tileW + 3);
-    const cx = tx + tileW / 2;
-    mgr.doc.setFillColor(...C.brandGreen);
-    mgr.doc.setDrawColor(...C.brandGreen);
-    mgr.doc.setLineWidth(0.2);
-    mgr.doc.roundedRect(tx, tileY, tileW, tileH, 2, 2, "FD");
-
-    mgr.doc.setFont("helvetica", "bold");
-    mgr.doc.setFontSize(15);
-    mgr.doc.setTextColor(208, 245, 90);
-    mgr.doc.text(t.big, cx, tileY + 9, { align: "center" });
-
-    mgr.doc.setFont("helvetica", "normal");
-    mgr.doc.setFontSize(6.3);
-    mgr.doc.setTextColor(...C.white);
-    t.sub.forEach((line, li) => {
-      mgr.doc.text(line, cx, tileY + 13.5 + li * 3, { align: "center" });
-    });
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(64));
+  mgr.doc.setTextColor(0, 106, 198);
+  mgr.doc.text("Savings and investment returns", MARGIN, mgr.y + 4);
+  // Frame: title top at 321px, tiles at 440px.
+  mgr.y = drawFigmaTileRow(mgr, savingsTiles(mgr), {
+    bg: [31, 82, 43],
+    top: mgr.y + 9,
   });
-
-  mgr.y = tileY + tileH;
 }
 
-// Colored definitions row beneath the savings tiles (Figma page 4).
+// Definitions row beneath the savings tiles (Figma 385:235-238): Inter 32px,
+// Semi Bold Brand/Dark Green 2 term, Regular black body, 1.58 line height,
+// one column per tile, 40px below the tiles.
 function drawSavingsDefinitions(mgr) {
-  const tileW = (CONTENT_W - 9) / 4;
+  const gap = fxmm(80);
+  const tileW = (CONTENT_W - 3 * gap) / 4;
   const defs = [
     {
       term: "Payback Period",
@@ -1220,23 +1158,24 @@ function drawSavingsDefinitions(mgr) {
       rest: "reflect cumulative savings against grid electricity costs, adjusted for annual yield reduction. All figures assume distribution utility tariff rates remain flat.",
     },
   ];
-  const fontSize = 6;
-  const lineH = 2.4;
-  const startY = mgr.y + 4;
+  const fontSize = fxpt(32);
+  const lineH = fxmm(32 * 1.58);
+  // 40px below the tiles, then down to the first baseline.
+  const startY = mgr.y + fxmm(40) + fxmm(32) * 0.8;
   let maxBottom = startY;
 
   defs.forEach((d, i) => {
-    const tx = MARGIN + i * (tileW + 3);
+    const tx = tileLeft(i);
     const tokens = [{ text: d.term + " ", bold: true }];
     (d.rest.match(/\S+\s*/g) || []).forEach((w) =>
       tokens.push({ text: w, bold: false }),
     );
-    const maxW = tileW - 1;
+    const maxW = tileW;
     const lines = [];
     let cur = [];
     let curW = 0;
     for (const tok of tokens) {
-      mgr.doc.setFont("helvetica", tok.bold ? "bold" : "normal");
+      mgr.doc.setFont("helvetica", tok.bold ? "semibold" : "normal");
       mgr.doc.setFontSize(fontSize);
       const w = mgr.doc.getTextWidth(tok.text);
       if (curW + w > maxW && cur.length) {
@@ -1254,9 +1193,9 @@ function drawSavingsDefinitions(mgr) {
     for (const line of lines) {
       let x = tx;
       for (const tok of line) {
-        mgr.doc.setFont("helvetica", tok.bold ? "bold" : "normal");
+        mgr.doc.setFont("helvetica", tok.bold ? "semibold" : "normal");
         mgr.doc.setFontSize(fontSize);
-        mgr.doc.setTextColor(...(tok.bold ? C.brandGreen : C.textMuted));
+        mgr.doc.setTextColor(...(tok.bold ? [80, 137, 8] : [36, 36, 36]));
         mgr.doc.text(tok.text, x, y);
         x += mgr.doc.getTextWidth(tok.text);
       }
@@ -1265,21 +1204,21 @@ function drawSavingsDefinitions(mgr) {
     if (y > maxBottom) maxBottom = y;
   });
 
-  mgr.y = maxBottom + 1;
+  mgr.y = maxBottom;
 }
 
-// Dark gray section title bar with a small checkbox glyph (Figma page 4 tables).
+// Dark grey table title bar (Figma 385:242): 100px tall #757575, a solid
+// 56px white square 35px in, Inter Medium 40px white label 123px in.
 function drawTableTitleBar(mgr, label) {
-  const h = 7;
-  mgr.doc.setFillColor(110, 110, 110);
+  const h = fxmm(100);
+  mgr.doc.setFillColor(117, 117, 117);
   mgr.doc.rect(MARGIN, mgr.y, CONTENT_W, h, "F");
-  mgr.doc.setDrawColor(255, 255, 255);
-  mgr.doc.setLineWidth(0.3);
-  mgr.doc.roundedRect(MARGIN + 3, mgr.y + 2, 3, 3, 0.4, 0.4, "S");
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(9);
+  mgr.doc.setFillColor(255, 255, 255);
+  mgr.doc.rect(MARGIN + fxmm(35), mgr.y + fxmm(21), fxmm(56), fxmm(56), "F");
+  mgr.doc.setFont("helvetica", "medium");
+  mgr.doc.setFontSize(fxpt(40));
   mgr.doc.setTextColor(255, 255, 255);
-  mgr.doc.text(label, MARGIN + 8.5, mgr.y + 4.8);
+  mgr.doc.text(label, MARGIN + fxmm(123), mgr.y + h / 2, { baseline: "middle" });
   mgr.y += h;
 }
 
@@ -1360,11 +1299,48 @@ function drawStep1Page(mgr) {
   mgr.doc.text("Current energy consumption", MARGIN, mgr.y + 4);
   mgr.y += 9;
 
-  // We define the column split widths here to use for BOTH top and bottom sections
-  const leftW = CONTENT_W * 0.55;
-  const rightX = MARGIN + leftW + 6;
-  const rightW = CONTENT_W - leftW - 6;
+  // Columns per the Figma frame (385:87): a 1146px left column and a 1040px
+  // usage card 116px apart, scaled from the frame's 2305px content width onto
+  // CONTENT_W so the page keeps its 15mm margins. Used by BOTH the top
+  // section and the savings goal below.
+  const FXW = CONTENT_W / fxmm(2305);
+  const leftW = fxmm(1146) * FXW;
+  const colGap = fxmm(116) * FXW;
+  const rightX = MARGIN + leftW + colGap;
+  const rightW = CONTENT_W - leftW - colGap;
   const splitStartY = mgr.y;
+
+  // Usage-pattern figures, computed up front: the "No devices listed" panel
+  // on the left is sized to the usage card's bottom edge, so the card's
+  // height has to be known before the left column is drawn.
+  const dayKwh = recommended.dayTimeKwh ?? 0;
+  const nightKwh = recommended.nightTimeKwh ?? 0;
+  const totalKwh = recommended.estMonthlyKwh ?? dayKwh + nightKwh;
+  const total = Math.max(0.0001, dayKwh + nightKwh);
+  const dayPct = dayKwh / total;
+  const isDaytime = dayPct >= 0.5;
+  const DAY_COLOR = [255, 212, 58];
+  const NIGHT_COLOR = [0, 106, 198];
+  const usageDesc = isDaytime
+    ? "You consume most electricity during daylight hours when solar produces maximum power."
+    : "You consume most electricity during evening hours when solar production is lower.";
+  // Card metrics (Figma 385:135): 64px padding; 44px Medium headings; a
+  // 108px icon; 40px Regular body; a 320px ring chart; the frame stacks them
+  // heading / 42 / icon / 24 / heading / 24 / body / 95 / heading / 42 / ring.
+  const cardPad = fxmm(64);
+  const cardInnerW = rightW - 2 * cardPad;
+  const H44 = fxmm(44 * 1.21);
+  const H40 = fxmm(40 * 1.21);
+  const pieD = fxmm(320);
+  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFontSize(fxpt(40));
+  const usageDescLines = mgr.doc.splitTextToSize(usageDesc, cardInnerW);
+  const cardContentH =
+    H44 + fxmm(42) + fxmm(108) + fxmm(24) + H44 + fxmm(24) +
+    usageDescLines.length * H40 + fxmm(95) + H44 + fxmm(42) + pieD;
+  // The frame's card is 1074px (91mm) tall; it only grows if the body copy
+  // wraps further than the frame's two lines.
+  const cardH = Math.max(fxmm(1074), cardContentH + 2 * cardPad);
 
   // ─── LEFT: utility rate, monthly bill, appliances ───
   let leftY = splitStartY;
@@ -1388,11 +1364,12 @@ function drawStep1Page(mgr) {
   drawRateRow("Current monthly electric bill:", peso(state.monthlyBill));
 
   leftY += 2;
-  mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(9);
-  mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text("Major appliances/devices:", MARGIN, leftY + 3);
-  leftY += 6;
+  // Figma 385:129 — Inter Bold 44px.
+  mgr.doc.setFont("helvetica", "bold");
+  mgr.doc.setFontSize(fxpt(44));
+  mgr.doc.setTextColor(0, 0, 0);
+  mgr.doc.text("Major appliances/devices:", MARGIN, leftY + 3.5);
+  leftY += 7;
 
   const hrsPerDay = (r) => {
     if (r.onTime == null || r.offTime == null) return "\u2014";
@@ -1436,95 +1413,127 @@ function drawStep1Page(mgr) {
     });
     leftY = mgr.doc.lastAutoTable.finalY;
   } else {
-    mgr.doc.setFont("helvetica", "italic");
-    mgr.doc.setFontSize(8);
-    mgr.doc.setTextColor(...C.textTertiary);
-    mgr.doc.text("No devices listed", MARGIN, leftY + 3);
-    leftY += 5;
+    // Story 008 — Figma 385:130: a Neutral/50 panel carrying the plug glyph
+    // and a Semi Bold Neutral/500 caption, in place of the italic grey
+    // one-liner nobody noticed. The panel's bottom lines up with the usage
+    // card's (both end at y=1527px in the frame).
+    const boxTop = leftY;
+    const boxH = Math.max(splitStartY + cardH - boxTop, 30);
+    const boxCx = MARGIN + leftW / 2;
+    const boxCy = boxTop + boxH / 2;
+    mgr.doc.setFillColor(242, 244, 247);
+    mgr.doc.rect(MARGIN, boxTop, leftW, boxH, "F");
+    const plug = mgr.ctx.assets?.icons?.plug;
+    const plugSize = fxmm(164);
+    if (plug) {
+      mgr.doc.addImage(
+        plug,
+        "PNG",
+        boxCx - plugSize / 2,
+        boxCy - fxmm(121),
+        plugSize,
+        plugSize,
+        undefined,
+        "MEDIUM",
+      );
+    }
+    mgr.doc.setFont("helvetica", "semibold");
+    mgr.doc.setFontSize(fxpt(40));
+    mgr.doc.setTextColor(102, 112, 133);
+    mgr.doc.text("No devices listed", boxCx, boxCy + fxmm(67), {
+      align: "center",
+      baseline: "top",
+    });
+    leftY = boxTop + boxH;
   }
 
-  // ─── RIGHT: Usage pattern card ───
-  const dayKwh = recommended.dayTimeKwh ?? 0;
-  const nightKwh = recommended.nightTimeKwh ?? 0;
-  const totalKwh = recommended.estMonthlyKwh ?? dayKwh + nightKwh;
-  const total = Math.max(0.0001, dayKwh + nightKwh);
-  const dayPct = dayKwh / total;
-  const isDaytime = dayPct >= 0.5;
-  const DAY_COLOR = [255, 212, 58];
-  const NIGHT_COLOR = [0, 106, 198];
-
+  // ─── RIGHT: Usage pattern card (Figma 385:135) ───
+  // Story 009 — the frame keeps the card at 1074px (91mm) but fills it: 44px
+  // Medium headings, the 108px green sun, 40px body, a 320px ring chart and
+  // one-line legend rows. The old card drew the same content at about half
+  // that size and left its lower third empty.
   const cardX = rightX;
   const cardY = splitStartY;
   const cardW = rightW;
-  const cardH = 92;
-  const pad = 5;
+  const pad = cardPad;
   mgr.doc.setFillColor(...C.cream);
-  mgr.doc.roundedRect(cardX, cardY, cardW, cardH, 2, 2, "F");
+  mgr.doc.roundedRect(cardX, cardY, cardW, cardH, fxmm(32), fxmm(32), "F");
 
-  let cardCy = cardY + 7;
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(9);
-  mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text("Usage pattern", cardX + pad, cardCy);
-  cardCy += 8;
+  const cardTx = cardX + pad;
+  let cardCy = cardY + pad;
+  const cardHeading = (txt) => {
+    mgr.doc.setFont("helvetica", "medium");
+    mgr.doc.setFontSize(fxpt(44));
+    // Step down one size if a heading would not fit the card's inner width.
+    if (mgr.doc.getTextWidth(txt) > cardInnerW) mgr.doc.setFontSize(fxpt(40));
+    mgr.doc.setTextColor(0, 0, 0);
+    mgr.doc.text(txt, cardTx, cardCy, { baseline: "top" });
+    cardCy += H44;
+  };
+  cardHeading("Usage pattern");
+  cardCy += fxmm(42);
 
-  // Icon (Dynamically swaps Sun or Moon)
-  const iconX = cardX + pad + 4.5; // Increased from 2.5 to 4.5 to shift the center right
-  const iconY = cardCy + 0.5;
-  if (isDaytime) {
-    // Sun
-    mgr.doc.setFillColor(245, 166, 35);
-    mgr.doc.circle(iconX, iconY, 2.2, "F");
-    mgr.doc.setDrawColor(245, 166, 35);
-    mgr.doc.setLineWidth(0.5);
+  // Icon — the frame's green sun (asset 385:139, story 009 AC1) for daytime
+  // users, with a vector fallback in the same green if the asset is missing;
+  // the crescent for nighttime users keeps the ring chart's night-time blue.
+  const iconSize = fxmm(108);
+  const usageSun = mgr.ctx.assets?.icons?.usageSun;
+  const iconX = cardTx + iconSize / 2;
+  const iconY = cardCy + iconSize / 2;
+  if (isDaytime && usageSun) {
+    // Compressed: an uncompressed RGBA raster costs ~1MB per glyph.
+    mgr.doc.addImage(
+      usageSun,
+      "PNG",
+      cardTx,
+      cardCy,
+      iconSize,
+      iconSize,
+      undefined,
+      "MEDIUM",
+    );
+  } else if (isDaytime) {
+    mgr.doc.setDrawColor(80, 137, 8);
+    mgr.doc.setLineWidth(0.9);
+    mgr.doc.circle(iconX, iconY, iconSize * 0.22, "S");
     for (let a = 0; a < 8; a++) {
       const ang = (a / 8) * 2 * Math.PI;
       mgr.doc.line(
-        iconX + Math.cos(ang) * 3.2,
-        iconY + Math.sin(ang) * 3.2,
-        iconX + Math.cos(ang) * 4.2,
-        iconY + Math.sin(ang) * 4.2,
+        iconX + Math.cos(ang) * iconSize * 0.34,
+        iconY + Math.sin(ang) * iconSize * 0.34,
+        iconX + Math.cos(ang) * iconSize * 0.46,
+        iconY + Math.sin(ang) * iconSize * 0.46,
       );
     }
   } else {
     // Crescent Moon
+    const r = iconSize * 0.36;
     mgr.doc.setFillColor(0, 106, 198); // Blue
-    mgr.doc.circle(iconX, iconY, 2.6, "F");
+    mgr.doc.circle(iconX, iconY, r, "F");
     mgr.doc.setFillColor(...C.cream); // Cutout to make crescent shape
-    mgr.doc.circle(iconX + 1.2, iconY - 0.8, 2.2, "F");
+    mgr.doc.circle(iconX + r * 0.45, iconY - r * 0.3, r * 0.85, "F");
   }
-  cardCy += 9;
+  cardCy += iconSize + fxmm(24);
 
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(9);
-  mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text(
-    isDaytime ? "Daytime user" : "Nighttime user",
-    cardX + pad,
-    cardCy,
-  );
-  cardCy += 4.5;
+  cardHeading(isDaytime ? "Daytime user" : "Nighttime user");
+  cardCy += fxmm(24);
   mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(7.5);
-  mgr.doc.setTextColor(...C.textMuted);
-  const usageDesc = isDaytime
-    ? "You consume most electricity during daylight hours when solar produces maximum power."
-    : "You consume most electricity during evening hours when solar production is lower.";
-  const descLines = mgr.doc.splitTextToSize(usageDesc, cardW - 2 * pad);
-  descLines.forEach((ln, i) => mgr.doc.text(ln, cardX + pad, cardCy + i * 3.4));
-  cardCy += descLines.length * 3.4 + 5;
+  mgr.doc.setFontSize(fxpt(40));
+  mgr.doc.setTextColor(36, 36, 36);
+  usageDescLines.forEach((ln, i) =>
+    mgr.doc.text(ln, cardTx, cardCy + i * H40, { baseline: "top" }),
+  );
+  cardCy += usageDescLines.length * H40 + fxmm(95);
 
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(8.5);
-  mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text("Estimated monthly consumption", cardX + pad, cardCy);
-  cardCy += 7;
+  cardHeading("Estimated monthly consumption");
+  cardCy += fxmm(42);
 
-  // Donut
-  const cx = cardX + pad + 13;
-  const cyD = cardCy + 12;
-  const rOuter = 12;
-  const rInner = 8;
+  // Ring chart (Figma 385:146, 320px; its vectors are inset 2.5%, so the
+  // outer radius is 47.5% of the box).
+  const cx = cardTx + pieD / 2;
+  const cyD = cardCy + pieD / 2;
+  const rOuter = pieD * 0.475;
+  const rInner = rOuter * 0.68;
   const drawArc = (startFrac, endFrac, color) => {
     const segments = 64;
     const startAngle = -Math.PI / 2 + startFrac * 2 * Math.PI;
@@ -1548,50 +1557,53 @@ function drawStep1Page(mgr) {
   if (dayPct > 0) drawArc(0, dayPct, DAY_COLOR);
   if (dayPct < 1) drawArc(dayPct, 1, NIGHT_COLOR);
 
-  mgr.doc.setFont("helvetica", "bold");
-  mgr.doc.setFontSize(9);
-  mgr.doc.setTextColor(...C.brandGreen);
+  // Centre figure (Figma 385:149) - Inter Regular 38px, two lines, black.
+  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFontSize(fxpt(38));
+  mgr.doc.setTextColor(36, 36, 36);
   const centerNum =
     totalKwh > 0
       ? Number(totalKwh).toLocaleString("en-PH", { maximumFractionDigits: 0 })
       : "\u2014";
-  mgr.doc.text(centerNum, cx, cyD, { align: "center" });
-  mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(5);
-  mgr.doc.setTextColor(...C.textMuted);
-  mgr.doc.text("kw/mo", cx, cyD + 3, { align: "center" });
+  mgr.doc.text(centerNum, cx, cyD - fxmm(38) * 0.6, {
+    align: "center",
+    baseline: "middle",
+  });
+  mgr.doc.text("kw/mo", cx, cyD + fxmm(38) * 0.6, {
+    align: "center",
+    baseline: "middle",
+  });
 
-  // Legend to the right of the donut
-  const legX = cx + rOuter + 6;
-  let legY = cyD - 5;
+  // Legend (Figma 385:150) - one row per series: a 42x28px swatch, 16px, the
+  // 34px label, then the value; the two rows sit 42px apart, centred on the
+  // ring. The label slot is 150px rather than the frame's 176px so a
+  // negative figure ("-137 kWh (-17%)") still clears the card's padding.
+  const legX = cx + pieD / 2 + fxmm(56);
+  const legRowH = fxmm(34 * 1.21);
+  let legY = cyD - (2 * legRowH + fxmm(42)) / 2;
   const dayPctNum = Math.round(dayPct * 100);
   const nightPctNum = 100 - dayPctNum;
-  mgr.doc.setFillColor(...DAY_COLOR);
-  mgr.doc.rect(legX, legY - 2.4, 2.6, 2.6, "F");
-  mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(7.5);
-  mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text("Day time", legX + 4, legY);
-  mgr.doc.setFontSize(6.8);
-  mgr.doc.setTextColor(...C.textMuted);
-  mgr.doc.text(
+  const legendRow = (color, label, value) => {
+    mgr.doc.setFillColor(...color);
+    mgr.doc.rect(legX, legY + (legRowH - fxmm(28)) / 2, fxmm(42), fxmm(28), "F");
+    mgr.doc.setFont("helvetica", "normal");
+    mgr.doc.setFontSize(fxpt(34));
+    mgr.doc.setTextColor(36, 36, 36);
+    mgr.doc.text(label, legX + fxmm(42 + 16), legY, { baseline: "top" });
+    mgr.doc.text(value, legX + fxmm(42 + 16 + 150 + 48), legY, {
+      baseline: "top",
+    });
+    legY += legRowH + fxmm(42);
+  };
+  legendRow(
+    DAY_COLOR,
+    "Day time",
     `${Math.round(dayKwh).toLocaleString("en-PH")} kWh (${dayPctNum}%)`,
-    legX + 4,
-    legY + 3.4,
   );
-  legY += 9;
-  mgr.doc.setFillColor(...NIGHT_COLOR);
-  mgr.doc.rect(legX, legY - 2.4, 2.6, 2.6, "F");
-  mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(7.5);
-  mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text("Night time", legX + 4, legY);
-  mgr.doc.setFontSize(6.8);
-  mgr.doc.setTextColor(...C.textMuted);
-  mgr.doc.text(
+  legendRow(
+    NIGHT_COLOR,
+    "Night time",
     `${Math.round(nightKwh).toLocaleString("en-PH")} kWh (${nightPctNum}%)`,
-    legX + 4,
-    legY + 3.4,
   );
 
   const sectionBottomY = Math.max(leftY, cardY + cardH) + 5;
@@ -1771,7 +1783,8 @@ function drawStep1Page(mgr) {
   mgr.y = goalY + 52;
   drawSavingsDisclaimerBox(mgr);
 
-  // Recommended package repeat row
+  // Recommended package repeat row (Figma 385:161: 64px title, 16px, 40px
+  // Regular subtitle, 42px, then the tiles)
   mgr.y += 4;
   mgr.doc.setFont("helvetica", "semibold");
   mgr.doc.setFontSize(fxpt(64));
@@ -1779,15 +1792,15 @@ function drawStep1Page(mgr) {
   mgr.doc.text("Recommended solar system package", MARGIN, mgr.y + 4);
 
   mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(8);
-  mgr.doc.setTextColor(...C.textMuted);
+  mgr.doc.setFontSize(fxpt(40));
+  mgr.doc.setTextColor(0, 0, 0);
   mgr.doc.text(
-    "To meet your savings goal, here's what we recommend",
+    "To meet your savings goal, here’s what we recommend",
     MARGIN,
-    mgr.y + 9,
+    mgr.y + 11,
   );
 
-  mgr.y += 15;
+  mgr.y += 15.5;
   drawSystemRow(mgr, false);
 }
 
@@ -2303,7 +2316,13 @@ function drawPackageDetailPage(mgr) {
   mgr.doc.setTextColor(...C.brandGreen);
   mgr.doc.text(warrLines, rightX, proseY + 5);
 
-  mgr.y = proseY + proseH + 3;
+  // Story 011 — the amber box follows the last prose line at the frame's
+  // ~30px (385:342), not the old 6mm-plus.
+  mgr.y =
+    proseY +
+    5 +
+    (Math.max(inclLines.length, warrLines.length) - 1) * proseLineH +
+    4.5;
 
   // ── Compliance / RSD disclaimer (approved Legal copy, backlog #4 & #18) ──
   // The RSD compliance paragraph (and the declined "did not choose" copy) is
@@ -2385,17 +2404,21 @@ function drawPackageDetailPage(mgr) {
 
   const compWrapped = compParas.map(wrapCompPara);
   const compLineCount = compWrapped.reduce((n, l) => n + l.length, 0);
+  // Story 011 — ~3.7mm of visual padding top and bottom (the frame's box is
+  // tighter than the old 6mm head / 5mm foot), and an explicit hairline
+  // border rather than whatever width the table left behind.
   const compBoxH =
-    compLineCount * compLineH + (compWrapped.length - 1) * compParaGap + 8;
+    compLineCount * compLineH + (compWrapped.length - 1) * compParaGap + 6.7;
 
   pageBreakIfNeeded(mgr, compBoxH + 4);
   const noteY = mgr.y;
 
   mgr.doc.setFillColor(255, 244, 217);
   mgr.doc.setDrawColor(248, 214, 137);
+  mgr.doc.setLineWidth(0.2);
   mgr.doc.roundedRect(MARGIN, noteY, CONTENT_W, compBoxH, 2, 2, "FD");
 
-  let cty = noteY + 6;
+  let cty = noteY + 5.4;
   compWrapped.forEach((linesForPara, pi) => {
     for (const line of linesForPara) {
       let cx = MARGIN + compPadX;
@@ -2434,63 +2457,112 @@ function drawPaymentOptionsPage(mgr) {
   mgr.doc.text("Your payment options", MARGIN, mgr.y + 4);
   mgr.y += 8;
 
-  const lightHead = {
-    fillColor: [224, 224, 224],
-    textColor: [40, 40, 40],
-    fontStyle: "bold",
-    fontSize: 8,
-  };
+  // ── Tables (Figma 385:241 / 385:262 / 385:301) ────────────────────────────
+  // Story 015 — one colour treatment for every table: #D8D8D8 header row,
+  // white body, #EAF1E9 total row, #2B2B2B hairline rules, no striping.
+  // Story 014 — the % / Amount / tenor columns are centred.
+  // Story 016 — "Total payment", singular, in both tables.
+  const TBL_RULE_W = 0.1;
+  const TBL_LABEL_W = fxmm(553);
+  const tableBase = () => ({
+    margin: { left: MARGIN, right: MARGIN },
+    tableWidth: CONTENT_W,
+    theme: "plain",
+    styles: {
+      // "Inter", not "helvetica": autotable validates fontStyle against
+      // getFontList()[font] and helvetica has no "medium" (see the package
+      // table above), so the Medium cells would silently draw Regular.
+      font: "Inter",
+      fontSize: fxpt(40),
+      fontStyle: "normal",
+      textColor: [0, 0, 0],
+      minCellHeight: fxmm(90),
+      valign: "middle",
+      cellPadding: { top: 0.8, bottom: 0.8, left: fxmm(35), right: fxmm(35) },
+      lineColor: [43, 43, 43],
+      lineWidth: { top: TBL_RULE_W, bottom: TBL_RULE_W },
+    },
+    headStyles: {
+      fillColor: [216, 216, 216],
+      textColor: [0, 0, 0],
+      fontStyle: "medium",
+    },
+  });
+  // columnStyles never reach head cells in autotable 3.8 (the package table
+  // centres its head cell the same way), so alignment, the vertical rules
+  // between value columns and the total-row treatment are set per cell.
+  const styleCells =
+    ({ centred, rules, totalRow }) =>
+    (data) => {
+      const col = data.column.index;
+      const s = data.cell.styles;
+      if (centred.includes(col)) {
+        s.halign = "center";
+        if (data.section === "body") s.fontStyle = "medium";
+      }
+      if (rules && col > 0) s.lineWidth = { ...s.lineWidth, left: TBL_RULE_W };
+      if (
+        data.section === "body" &&
+        totalRow &&
+        data.row.index === totalRow.index
+      ) {
+        s.fillColor = [234, 241, 233];
+        if (col === 0) s.fontStyle = totalRow.labelStyle;
+        else if (totalRow.valueColor) s.textColor = totalRow.valueColor;
+      }
+    };
 
+  const dpPct = Math.round((state.downPaymentPct || 0) * 100);
   drawTableTitleBar(mgr, "Direct purchase");
   autoTable(mgr.doc, {
+    ...tableBase(),
     startY: mgr.y,
     head: [["Milestone", "%", "Amount"]],
     body: [
       [
         "Down payment (upon contract signing)",
-        `${Math.round((state.downPaymentPct || 0) * 100)}%`,
+        `${dpPct}%`,
         peso(terms.dpTotalCharge || 0),
       ],
       [
         "Upon installation",
-        `${Math.max(0, 100 - Math.round((state.downPaymentPct || 0) * 100))}%`,
+        `${Math.max(0, 100 - dpPct)}%`,
         peso((terms.netDirectPrice || 0) - (terms.dpTotalCharge || 0)),
       ],
-      ["Total", "100%", peso(terms.netDirectPrice || 0)],
+      ["Total payment", "100%", peso(terms.netDirectPrice || 0)],
     ],
-    margin: { left: MARGIN, right: MARGIN },
-    tableWidth: CONTENT_W,
-    styles: {
-      font: "helvetica",
-      fontSize: 8.5,
-      cellPadding: 1.4,
-      lineColor: [220, 220, 220],
-      lineWidth: 0.15,
-    },
-    headStyles: lightHead,
-    alternateRowStyles: { fillColor: [246, 246, 246] },
-    columnStyles: {
-      1: { halign: "center", cellWidth: 22 },
-      2: { halign: "right", cellWidth: 45 },
-    },
+    columnStyles: { 1: { cellWidth: 32 }, 2: { cellWidth: 64 } },
+    didParseCell: styleCells({
+      centred: [1, 2],
+      rules: false,
+      totalRow: { index: 2, labelStyle: "medium" },
+    }),
   });
-  mgr.y = mgr.doc.lastAutoTable.finalY + 5;
+  // Frame: 79px between tables.
+  mgr.y = mgr.doc.lastAutoTable.finalY + fxmm(79);
 
   const tenors = [60, 48, 36, 24, 12];
   const rowsByTenor = Object.fromEntries(popular.map((p) => [p.tenor, p]));
+  const tenorColW = (CONTENT_W - TBL_LABEL_W) / tenors.length;
+  const tenorCols = Object.fromEntries(
+    tenors.map((_, i) => [i + 1, { cellWidth: tenorColW }]),
+  );
 
   drawTableTitleBar(mgr, "Rent-to-Own");
   autoTable(mgr.doc, {
+    ...tableBase(),
     startY: mgr.y,
     head: [["Milestone", ...tenors.map((t) => `${t} months`)]],
     body: [
-      ["Down payment", ...tenors.map((t) => peso(dpConstant))],
+      ["Down payment", ...tenors.map(() => peso(dpConstant))],
       [
         "Monthly payment",
         ...tenors.map((t) => peso(rowsByTenor[t]?.monthlyPmt || 0)),
       ],
       [
-        "DST (Documentary Stamp Tax)",
+        // Same wording as the page 3 row; the old "DST (Documentary Stamp
+        // Tax)" wrapped in the frame's 553px label column.
+        "Documentary Stamp Tax",
         ...tenors.map((t) => {
           const row = rowsByTenor[t];
           if (!row) return peso(0);
@@ -2503,7 +2575,7 @@ function drawPaymentOptionsPage(mgr) {
         }),
       ],
       [
-        "Total payments",
+        "Total payment",
         ...tenors.map((t) => {
           const row = rowsByTenor[t];
           if (!row) return peso(0);
@@ -2513,27 +2585,14 @@ function drawPaymentOptionsPage(mgr) {
         }),
       ],
     ],
-    margin: { left: MARGIN, right: MARGIN },
-    tableWidth: CONTENT_W,
-    styles: {
-      font: "helvetica",
-      fontSize: 8,
-      cellPadding: 1.2,
-      lineColor: [220, 220, 220],
-      lineWidth: 0.15,
-    },
-    headStyles: lightHead,
-    alternateRowStyles: { fillColor: [246, 246, 246] },
-    columnStyles: {
-      0: { cellWidth: 48 },
-      1: { halign: "right" },
-      2: { halign: "right" },
-      3: { halign: "right" },
-      4: { halign: "right" },
-      5: { halign: "right" },
-    },
+    columnStyles: { 0: { cellWidth: TBL_LABEL_W }, ...tenorCols },
+    didParseCell: styleCells({
+      centred: [1, 2, 3, 4, 5],
+      rules: true,
+      totalRow: { index: 3, labelStyle: "normal", valueColor: [31, 82, 43] },
+    }),
   });
-  mgr.y = mgr.doc.lastAutoTable.finalY + 5;
+  mgr.y = mgr.doc.lastAutoTable.finalY + fxmm(79);
 
   // The "Selected" recap only describes a Rent-to-Own plan, so it is drawn
   // ONLY when the customer actually picked one. On a Direct Purchase (tenor 0)
@@ -2542,7 +2601,9 @@ function drawPaymentOptionsPage(mgr) {
   // tables above already state the real terms, so the recap is simply omitted.
   if (!terms.isDirectPurchase && (state.tenor || 0) > 0) {
     drawTableTitleBar(mgr, "Selected Rent-to-Own Plan");
+    const planColW = (CONTENT_W - TBL_LABEL_W) / 4;
     autoTable(mgr.doc, {
+      ...tableBase(),
       startY: mgr.y,
       head: [["Tenor", "Down payment", "DST", "Total", "Monthly charge"]],
       body: [
@@ -2554,29 +2615,21 @@ function drawPaymentOptionsPage(mgr) {
           peso(terms.customerMonthlyPmt || 0),
         ],
       ],
-      margin: { left: MARGIN, right: MARGIN },
-      tableWidth: CONTENT_W,
-      styles: {
-        font: "helvetica",
-        fontSize: 8.5,
-        cellPadding: 1.2,
-        lineColor: [220, 220, 220],
-        lineWidth: 0.15,
-      },
-      headStyles: lightHead,
       columnStyles: {
-        1: { halign: "right" },
-        2: { halign: "right" },
-        3: { halign: "right" },
-        4: { halign: "right" },
+        0: { cellWidth: TBL_LABEL_W },
+        1: { cellWidth: planColW },
+        2: { cellWidth: planColW },
+        3: { cellWidth: planColW },
+        4: { cellWidth: planColW },
       },
+      didParseCell: styleCells({ centred: [1, 2, 3, 4], rules: true }),
     });
     mgr.y = mgr.doc.lastAutoTable.finalY + 3;
   }
 
   mgr.doc.setFont("helvetica", "italic");
-  mgr.doc.setFontSize(7.5);
-  mgr.doc.setTextColor(...C.textMuted);
+  mgr.doc.setFontSize(fxpt(32));
+  mgr.doc.setTextColor(36, 36, 36);
   mgr.doc.text(
     "0% installment also available via EastWest Bank, UnionBank, Bank of Commerce, and Metrobank. Terms depend on your card issuer.",
     MARGIN,
@@ -2584,20 +2637,10 @@ function drawPaymentOptionsPage(mgr) {
   );
   mgr.y += 6;
 
-  const noteText =
-    "Note: Estimated savings assume consumption patterns remain the same after solar installation. Actual results may vary due to changes in electricity rates, system performance, weather, maintenance costs, and government policies. This estimate is for illustrative purposes only and does not constitute a guarantee of future financial performance.";
-  mgr.doc.setFont("helvetica", "normal");
-  mgr.doc.setFontSize(7);
-  const noteLines = mgr.doc.splitTextToSize(noteText, CONTENT_W - 4);
-  const noteBoxH = noteLines.length * 2.9 + 4;
-  const noteY = mgr.y;
-  mgr.doc.setFillColor(255, 244, 217);
-  mgr.doc.setDrawColor(248, 214, 137);
-  mgr.doc.roundedRect(MARGIN, noteY, CONTENT_W, noteBoxH, 2, 2, "FD");
-  mgr.doc.setTextColor(136, 106, 42);
-  noteLines.forEach((ln, i) =>
-    mgr.doc.text(ln, MARGIN + 2, noteY + 4 + i * 2.9),
-  );
+  // Story 018 — the amber "Note: Estimated savings assume..." box that used
+  // to close this page is gone (Marketing, 2026-10-11): the Caldereta frame
+  // (385:188) has no disclaimer on page 4, and the savings caveat already
+  // runs in full on page 2 (drawSavingsDisclaimerBox).
 }
 // ─── Snapshot page ──────────────────────────────────────────────────────────
 
@@ -2637,25 +2680,34 @@ function drawVisualizingPage(mgr) {
   drawTopHeaderFigma(mgr);
 
   // ── Title + subtitle ──
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
+  mgr.y += 2;
+  doc.setFont("helvetica", "semibold");
+  doc.setFontSize(fxpt(64));
   doc.setTextColor(...BLUE);
-  doc.text("Understanding your system\u2019s potential", MARGIN, mgr.y + 5);
-  mgr.y += 8.5;
+  doc.text("Understanding your system\u2019s potential", MARGIN, mgr.y + 4);
+  mgr.y += 8;
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(...C.textBody);
+  doc.setFontSize(fxpt(40));
+  doc.setTextColor(0, 0, 0);
   const subLines = doc.splitTextToSize(
     "Based on your consumption and the package you\u2019ve configured above, here\u2019s how your home\u2019s energy story plays out across a typical day.",
     CONTENT_W,
   );
-  subLines.forEach((ln, i) => doc.text(ln, MARGIN, mgr.y + 3.4 + i * 3.9));
-  mgr.y += subLines.length * 3.9 + 3;
+  subLines.forEach((ln, i) => doc.text(ln, MARGIN, mgr.y + 3.4 + i * 4.1));
+  mgr.y += subLines.length * 4.1 + 1;
 
   // ── Radiance area chart + legend ──
-  const chartX = MARGIN;
-  const chartW = 116;
-  const plotTop = mgr.y + 2;
+  // Story 018 AC2 — the plot used to start at MARGIN with its y-axis labels
+  // hanging out in the left margin; the frame (385:632) keeps the whole
+  // chart, labels included, inside the content column, ending at x=1652px,
+  // with the legend from x=1747px.
+  const chartX = MARGIN + 6;
+  const chartW = fxmm(1652) - chartX;
+  // Story 019 — the celestial arc (moon, sunrise, sun, sunset, moon, as on
+  // the live RadianceCurve) sits in a band above the plot; the frame puts the
+  // sun's top 180px above the chart.
+  const ARC_BAND = fxmm(180);
+  const plotTop = mgr.y + 2 + ARC_BAND;
   const plotH = 42;
   const plotBottom = plotTop + plotH;
 
@@ -2740,14 +2792,14 @@ function drawVisualizingPage(mgr) {
   // y-axis labels + "kW" caption
   const trimNum = (v) => String(Math.round(v * 100) / 100);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.5);
+  doc.setFontSize(fxpt(22));
   doc.setTextColor(...C.textMuted);
   ticks.forEach((t) => {
     doc.text(trimNum(yMax * t), chartX - 1.5, yAt(yMax * t) + 1, {
       align: "right",
     });
   });
-  doc.text("kW", chartX - 1.5, plotTop - 1.5, { align: "right" });
+  doc.text("kW", chartX - 1.5, plotTop - 3.5, { align: "right" });
 
   // x-axis labels every 3 hours
   const xLabels = [
@@ -2765,10 +2817,38 @@ function drawVisualizingPage(mgr) {
     doc.text(lb, xAt(k * 3), plotBottom + 3.5, { align: "center" });
   });
 
-  // legend column (right of chart)
-  const legX = chartX + chartW + 6;
+  // Celestial arc (story 019): the five symbols the live chart shows, from
+  // the frame's own assets (385:698/699 moons, 385:755 sun, 385:765/773
+  // sunrise and sunset — one glyph serves both), at the live chart's hours.
+  // Heights follow the frame: sun apex 180px above the plot, sunrise and
+  // sunset 129px, moons 55px.
+  const arcIcons = ctx.assets?.icons || {};
+  [
+    { h: 2, img: arcIcons.arcMoon, size: 54, lift: 55 },
+    { h: 7, img: arcIcons.arcSunrise, size: 101, lift: 129 },
+    { h: 12, img: arcIcons.arcSun, size: 94, lift: 180 },
+    { h: 17, img: arcIcons.arcSunrise, size: 101, lift: 129 },
+    { h: 22, img: arcIcons.arcMoon, size: 54, lift: 55 },
+  ].forEach((s) => {
+    if (!s.img) return;
+    doc.addImage(
+      s.img,
+      "PNG",
+      xAt(s.h) - fxmm(s.size) / 2,
+      plotTop - fxmm(s.lift),
+      fxmm(s.size),
+      fxmm(s.size),
+      undefined,
+      "MEDIUM",
+    );
+  });
+
+  // legend column (Figma 385:595): from x=1747px, 40px swatches, 34px Medium
+  // titles over 34px Regular descriptions 8px apart, 48px between items,
+  // starting 118px above the plot.
+  const legX = fxmm(1747);
   const legW = PAGE_W - MARGIN - legX;
-  let legY = plotTop;
+  let legY = plotTop - fxmm(118);
   const legendItems = [
     {
       fill: CL_BASE,
@@ -2790,41 +2870,47 @@ function drawVisualizingPage(mgr) {
     },
     {
       fill: CL_EXCESS,
+      border: CL_EXCESS_BD,
       tc: CL_EXCESS_TX,
       title: "Excess solar",
       desc: "Extra energy you can store in batteries (~90-98% efficiency)",
     },
   ];
+  const legLineH = fxmm(34 * 1.21);
   legendItems.forEach((it) => {
-    const sw = 3.2;
+    const sw = fxmm(40);
     doc.setFillColor(...it.fill);
     if (it.border) {
       doc.setDrawColor(...it.border);
-      doc.setLineWidth(0.3);
+      doc.setLineWidth(0.2);
       doc.rect(legX, legY, sw, sw, "FD");
     } else {
       doc.rect(legX, legY, sw, sw, "F");
     }
-    const tx = legX + 5;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
+    const tx = legX + sw + fxmm(29);
+    doc.setFont("helvetica", "medium");
+    doc.setFontSize(fxpt(34));
     doc.setTextColor(...it.tc);
-    doc.text(it.title, tx, legY + 2.7);
+    doc.text(it.title, tx, legY, { baseline: "top" });
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(...C.textBody);
-    const dl = doc.splitTextToSize(it.desc, legW - 5);
-    dl.forEach((ln, i) => doc.text(ln, tx, legY + 6.2 + i * 3));
-    legY += Math.max(6.2 + dl.length * 3, sw) + 2.6;
+    doc.setFontSize(fxpt(34));
+    doc.setTextColor(36, 36, 36);
+    const dl = doc.splitTextToSize(it.desc, legW - sw - fxmm(29));
+    dl.forEach((ln, i) =>
+      doc.text(ln, tx, legY + legLineH + fxmm(8) + i * legLineH, {
+        baseline: "top",
+      }),
+    );
+    legY += legLineH + fxmm(8) + dl.length * legLineH + fxmm(48);
   });
 
-  mgr.y = Math.max(plotBottom + 7, legY);
+  mgr.y = Math.max(plotBottom + 7, legY - fxmm(48) + 2);
 
-  // ── Green highlight sentence ──
+  // ── Green highlight sentence (Figma 385:616: 40px Medium, 32px note) ──
   const pctProd = totals.solar > 0 ? totals.solarUsed / totals.solar : 0;
   const pctUse = totals.totalLoad > 0 ? totals.solarUsed / totals.totalLoad : 0;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10.5);
+  doc.setFont("helvetica", "medium");
+  doc.setFontSize(fxpt(40));
   doc.setTextColor(...HL_GREEN);
   doc.text(
     `${Math.round(pctProd * 100)}% of solar energy capture covers ${Math.round(
@@ -2835,17 +2921,18 @@ function drawVisualizingPage(mgr) {
     { align: "center" },
   );
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
+  doc.setFontSize(fxpt(32));
   doc.setTextColor(...FOOT);
   doc.text("*Before batteries", PAGE_W / 2, mgr.y + 9, {
     align: "center",
   });
   mgr.y += 13;
 
-  // ── Stat strip (4 tiles) ──
-  const stripH = 20;
+  // ── Stat strip (Figma 385:619: 249px tall, 72px Medium figures over 32px
+  // Medium labels) ──
+  const stripH = fxmm(249);
   doc.setFillColor(...STRIP_BG);
-  doc.roundedRect(MARGIN, mgr.y, CONTENT_W, stripH, 3, 3, "F");
+  doc.roundedRect(MARGIN, mgr.y, CONTENT_W, stripH, fxmm(32), fxmm(32), "F");
   const kwh = (v) => `${Number(v || 0).toFixed(1)} kWh`;
   const statTiles = [
     { v: kwh(totals.totalLoad), l: "Daily total consumption" },
@@ -2856,39 +2943,45 @@ function drawVisualizingPage(mgr) {
   const statColW = CONTENT_W / 4;
   statTiles.forEach((t, i) => {
     const cx = MARGIN + statColW * i + statColW / 2;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
+    doc.setFont("helvetica", "medium");
+    doc.setFontSize(fxpt(72));
     doc.setTextColor(...STAT_NUM);
-    doc.text(t.v, cx, mgr.y + 9, { align: "center" });
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
+    doc.text(t.v, cx, mgr.y + 10.4, { align: "center" });
+    doc.setFont("helvetica", "medium");
+    doc.setFontSize(fxpt(32));
     doc.setTextColor(...STAT_LBL);
-    doc.text(t.l, cx, mgr.y + 14.5, { align: "center" });
+    doc.text(t.l, cx, mgr.y + 15.8, { align: "center" });
   });
   mgr.y += stripH + 6;
 
-  // ── "How much of your bill can solar cover" ──
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
+  // ── "How much of your bill can solar cover" (Figma 385:700 / 385:716) ──
+  doc.setFont("helvetica", "semibold");
+  doc.setFontSize(fxpt(64));
   doc.setTextColor(...BLUE);
   doc.text("How much of your bill can solar cover", MARGIN, mgr.y + 5);
   mgr.y += 8;
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(...C.textBody);
+  doc.setFontSize(fxpt(40));
+  doc.setTextColor(0, 0, 0);
   doc.text(
     "Each bar represents 100% of your monthly electricity bill.",
     MARGIN,
     mgr.y + 3.4,
   );
-  mgr.y += 8;
+  mgr.y += 9;
 
-  // ── Coverage bars (3) + legend ──
-  const barsX = MARGIN + 28;
-  const barsW = 118;
-  const barLegendX = barsX + barsW + 8;
-  const barH = 5;
-  const barGap = 4;
+  // ── Coverage bars (3) + axes + legend ──
+  // Frame geometry: the bars start 209px into the block, run 1433px and are
+  // 89px tall on a 106px pitch; the L-shaped axis closes 320.5px below the
+  // block's top (story 020 — the axis lines). Row labels are 24px, the
+  // percentage ticks 20px, the legend 40px swatches with 34px Medium labels.
+  const barsX = MARGIN + fxmm(209);
+  const barsW = fxmm(1433);
+  const barH = fxmm(89);
+  const barPitch = fxmm(106);
+  const axisTop = mgr.y;
+  const axisBottom = axisTop + fxmm(320.5);
+  const barLegendX = MARGIN + fxmm(1870 - 87);
   const barDefs = [
     {
       label: "No Solar",
@@ -2909,68 +3002,89 @@ function drawVisualizingPage(mgr) {
       battery: coverageBars[2]?.battery ?? 0,
     },
   ];
-  let by = mgr.y;
-  barDefs.forEach((b) => {
+  barDefs.forEach((b, i) => {
+    const by = axisTop + fxmm(5) + i * barPitch;
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
+    doc.setFontSize(fxpt(24));
     doc.setTextColor(...FOOT);
-    doc.text(b.label, barsX - 2, by + barH / 2 + 1, { align: "right" });
+    doc.text(b.label, barsX - fxmm(20.5), by + barH / 2, {
+      align: "right",
+      baseline: "middle",
+    });
+    // Each bar IS 100% of the bill (story 020 AC3): if the engine's three
+    // shares ever sum past 1 the stack is scaled back so it cannot run under
+    // the legend.
+    const sum =
+      Math.max(0, b.grid) + Math.max(0, b.solar) + Math.max(0, b.battery);
+    const k = sum > 1 ? 1 / sum : 1;
     let sx = barsX;
-    const seg = (frac, fill, border) => {
-      const w = Math.max(0, frac) * barsW;
+    const seg = (frac, fill) => {
+      const w = Math.max(0, frac) * k * barsW;
       if (w <= 0) return;
       doc.setFillColor(...fill);
-      if (border) {
-        doc.setDrawColor(...border);
-        doc.setLineWidth(0.2);
-        doc.rect(sx, by, w, barH, "FD");
-      } else {
-        doc.rect(sx, by, w, barH, "F");
-      }
+      doc.rect(sx, by, w, barH, "F");
       sx += w;
     };
-    seg(b.grid, CL_DEV, null);
-    seg(b.solar, CL_EXCESS, null);
-    seg(b.battery, CL_BASE, null);
-    by += barH + barGap;
+    seg(b.grid, CL_DEV);
+    seg(b.solar, CL_EXCESS);
+    seg(b.battery, CL_BASE);
   });
-  // axis 0-100%
+  // Axes (story 020 AC1): y along the bars' left edge, x under the last bar.
+  doc.setDrawColor(152, 162, 179);
+  doc.setLineWidth(0.25);
+  doc.line(barsX, axisTop, barsX, axisBottom);
+  doc.line(barsX, axisBottom, barsX + barsW, axisBottom);
+  // 0-100% ticks (AC2)
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.5);
+  doc.setFontSize(fxpt(20));
   doc.setTextColor(...FOOT);
   [0, 25, 50, 75, 100].forEach((p) => {
-    doc.text(`${p}%`, barsX + (p / 100) * barsW, by + 2, { align: "center" });
+    doc.text(`${p}%`, barsX + (p / 100) * barsW, axisBottom + fxmm(10), {
+      align: "center",
+      baseline: "top",
+    });
   });
   // bar legend (Grid / Solar / Battery)
   const barLegend = [
     { fill: CL_DEV, tc: CL_DEV_TX, title: "Grid" },
-    { fill: CL_EXCESS, tc: CL_EXCESS_TX, title: "Solar" },
+    { fill: CL_EXCESS, tc: CL_EXCESS_TX, title: "Solar", border: CL_EXCESS_BD },
     { fill: CL_BASE, tc: CL_BASE_TX, title: "Battery" },
   ];
-  let bly = mgr.y + 1;
+  let bly = axisTop + fxmm(43);
   barLegend.forEach((it) => {
+    const sw = fxmm(40);
     doc.setFillColor(...it.fill);
     if (it.border) {
       doc.setDrawColor(...it.border);
-      doc.setLineWidth(0.3);
-      doc.rect(barLegendX, bly, 3.2, 3.2, "FD");
+      doc.setLineWidth(0.2);
+      doc.rect(barLegendX, bly, sw, sw, "FD");
     } else {
-      doc.rect(barLegendX, bly, 3.2, 3.2, "F");
+      doc.rect(barLegendX, bly, sw, sw, "F");
     }
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
+    doc.setFont("helvetica", "medium");
+    doc.setFontSize(fxpt(34));
     doc.setTextColor(...it.tc);
-    doc.text(it.title, barLegendX + 5, bly + 2.7);
-    bly += 8;
+    doc.text(it.title, barLegendX + sw + fxmm(29), bly + sw / 2, {
+      baseline: "middle",
+    });
+    bly += sw + fxmm(48);
   });
-  mgr.y = by + 6;
+  mgr.y = axisBottom + fxmm(10) + fxmm(20 * 1.21);
 
-  // ── "How to maximize your solar savings" ──
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
+  // ── "How to maximize your solar savings" (Figma 385:732: 56px Semi Bold)
+  // The frame puts the title 123px below the chart block and the tips 110px
+  // below the title, but its content column is 2305px wide against our
+  // 2126px (15mm margins), so the tips wrap one line more per column and the
+  // last one ran into the footer's signature line. The two gaps are
+  // tightened to 70px / 90px to buy that line back.
+  mgr.y += fxmm(70);
+  doc.setFont("helvetica", "semibold");
+  doc.setFontSize(fxpt(56));
   doc.setTextColor(...BLUE);
-  doc.text("How to maximize your solar savings", MARGIN, mgr.y + 5);
-  mgr.y += 9;
+  doc.text("How to maximize your solar savings", MARGIN, mgr.y, {
+    baseline: "top",
+  });
+  mgr.y += fxmm(90);
 
   // ── Tips (two columns, 3 each) ──
   const tips = [
@@ -2999,24 +3113,31 @@ function drawVisualizingPage(mgr) {
       "Use your mobile app to track load consumption, generation, and weather. Use insights to schedule high-power activities during peak hours.",
     ],
   ];
-  const colGap = 10;
+  // Story 021 — the frame's spacing (385:734): 16px between a tip's 34px
+  // Semi Bold title and its 28px body set at 1.63 line height, 64px between
+  // tips, 146px between the columns. The column gap is 100px and the tip gap
+  // 48px here for the same width reason as above; the line height, which is
+  // what the story asked for, is the frame's.
+  const colGap = fxmm(100);
   const tipColW = (CONTENT_W - colGap) / 2;
   const leftX = MARGIN;
   const rightColX = MARGIN + tipColW + colGap;
+  const TIP_TITLE_H = fxmm(34 * 1.21);
+  const TIP_LINE_H = fxmm(28 * 1.63);
   const drawTip = (x, y, title, body) => {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "semibold");
+    doc.setFontSize(fxpt(34));
     doc.setTextColor(...TIP_GREEN);
-    doc.text(title, x, y + 3);
-    let ty = y + 6.6;
+    doc.text(title, x, y, { baseline: "top" });
+    let ty = y + TIP_TITLE_H + fxmm(16);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(fxpt(28));
+    doc.setTextColor(36, 36, 36);
     doc.splitTextToSize(body, tipColW).forEach((ln) => {
-      doc.text(ln, x, ty);
-      ty += 3.3;
+      doc.text(ln, x, ty, { baseline: "top" });
+      ty += TIP_LINE_H;
     });
-    return ty + 2.6;
+    return ty + fxmm(48);
   };
   const tipStartY = mgr.y;
   let leftY = tipStartY;
@@ -3205,7 +3326,9 @@ function drawSchedulePage(mgr) {
     },
     theme: "plain",
     styles: {
-      font: "helvetica",
+      // "Inter" so the Medium header / DP-row styles below are honoured (see
+      // the package table: autotable validates fontStyle per font family).
+      font: "Inter",
       fontSize: fxpt(32),
       cellPadding: { top: 0, right: 2, bottom: 0, left: 3 }, // Keeps your previous padding fix
       minCellHeight: fxmm(87),
@@ -3213,7 +3336,9 @@ function drawSchedulePage(mgr) {
       fillColor: [255, 255, 255], // Changed to pure white to match the image
       textColor: [52, 64, 84],
       lineColor: [210, 210, 210], // Lighter gray for the dividers
-      lineWidth: { bottom: 1.0 }, // This removes vertical lines and leaves only the bottom border
+      // Story 023 — a 0.15mm rule like the page 4 tables, not the 1.0mm band
+      // that drew every row separator as a millimetre-thick grey bar.
+      lineWidth: { bottom: 0.15 }, // bottom rule only: no vertical lines
     },
     headStyles: {
       fillColor: [31, 82, 43],
@@ -3647,6 +3772,25 @@ export async function generateProposalPdf({
   ctx.assets.logo = logoData;
   ctx.assets.logoSun = logoSunData;
   ctx.assets.proposalBackground = proposalBackgroundData;
+
+  // Figma glyphs rasterised from the PDF Proposal file (public/pdf-icons):
+  // the page 2 usage-pattern sun and "No devices listed" plug (stories 008
+  // and 009), and the page 5 celestial-arc moon, sunrise/sunset and sun
+  // (story 019). Each is optional — a missing file just leaves its glyph
+  // out (the sun falls back to a vector drawing).
+  const iconFiles = {
+    usageSun: "/pdf-icons/usage-sun.png",
+    plug: "/pdf-icons/power-plug.png",
+    arcMoon: "/pdf-icons/arc-moon.png",
+    arcSunrise: "/pdf-icons/arc-sunrise.png",
+    arcSun: "/pdf-icons/arc-sun.png",
+  };
+  const iconData = await Promise.all(
+    Object.values(iconFiles).map((p) => fetchPublicImageDataUrl(p)),
+  );
+  ctx.assets.icons = Object.fromEntries(
+    Object.keys(iconFiles).map((k, i) => [k, iconData[i]]),
+  );
 
   // Crop the banner to the hero strip before it hits jsPDF. The banner is now a
   // permanent local asset (/proposal-banner.png) exported from the Figma PDF
