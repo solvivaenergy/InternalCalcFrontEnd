@@ -128,6 +128,7 @@ const PARAM_KEY_TO_SECTION = {
   componentMargins:              'margins',   // v3-191 — per-component margin table (B–Q)
   grossMarginReference:          'returnsAssumptions',  // v3-190 — moved to FinCo; UI label renamed, key kept
   merchantDiscountRate:          'margins',
+  salesCommissionRate:           'margins',   // v3-226 — sales commission allowance (VAT-exclusive base)
   rateAnchorMax:                 'interestRates',
   rateAnchorMid:                 'interestRates',
   rateAnchorMin:                 'interestRates',
@@ -737,6 +738,18 @@ export default async (request, context) => {
                + 'At or above that, the acquirer\'s cut plus the VAT remittance exceeds the entire sale and every price in the app would be zero or negative.',
         });
       }
+    }
+    // v3-226 — the sales commission allowance: a fraction in [0, 1) alone, and
+    // jointly with the MDR the retention 1.12 × (1 − MDR) − commission − 0.12
+    // must stay positive (mirrors InternalCalcBackEnd src/parametersService.js).
+    if ('salesCommissionRate' in ap_) {
+      const v = ap_.salesCommissionRate;
+      if (!Number.isFinite(v) || v < 0 || v >= 1) {
+        return json(400, { error: 'Refusing to save: the sales commission allowance must be a fraction between 0% and (strictly) 100%.' });
+      }
+    }
+    if (!(1.12 * (1 - (Number(ap_.merchantDiscountRate) || 0)) - (Number(ap_.salesCommissionRate) || 0) - 0.12 > 0)) {
+      return json(400, { error: 'Refusing to save: the MDR allowance, the sales commission allowance and the VAT remittance together take the entire sale or more — 1.12 × (1 − MDR) − commission − 0.12 must stay above zero.' });
     }
 
     // ─── RTO rate surface (v3-79) ─────────────────────────────────────────

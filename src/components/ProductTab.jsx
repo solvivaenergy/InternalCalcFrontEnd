@@ -258,14 +258,35 @@ export default function ProductTab({
                onChange={v => updateParam('margins', 'grossMarginNoInverterTp', v)}
                canEdit={canEditSection('margins')}
                hint="Same rule for the three-phase Solar Panels line." />
+        {/* v3-226 (testing v3-210, D5 — Pat, from a screenshot): the two
+            gross-up allowances get their OWN labeled block with a hairline
+            divider, so the MDR no longer reads as part of the margin curves
+            above it. */}
+        <div style={{ borderTop: '1px solid #E5E7EB', marginTop: 18, paddingTop: 14 }}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+                        textTransform: 'uppercase', letterSpacing: '0.03em', margin: '0 0 2px' }}>
+            Price gross-up allowances
+          </div>
+        </div>
         <Param label="Allowance for Merchant Discount Rate" isPct step={0.01} min={0} max={89}
                value={params.merchantDiscountRate}
                onChange={v => updateParam('margins', 'merchantDiscountRate', v)}
                canEdit={canEditSection('margins')}
-               hint="The acquirer's cut. Taken from the VAT-inclusive amount the customer is charged, while the full output VAT is still remitted — so the effective retention is 1.12 × (1 − MDR) − 0.12, not (1 − MDR)." />
+               hint="The acquirer's cut. Taken from the VAT-inclusive amount the customer is charged, while the full output VAT is still remitted — so the retention is 1.12 × (1 − MDR) − commission − 0.12, not (1 − MDR)." />
+        {/* v3-226 — the sales commission allowance (ported from the testing
+            branch's v3-210; user-directed, Pat; D1–D3). Charged on the
+            VAT-EXCLUSIVE price, so it joins the retention without the 1.12
+            factor. Seeded at 2%: a stored blob without the key takes the
+            engine default and every COGS-derived price lifts ~2.46%. */}
+        <Param label="Allowance for Sales Commissions" isPct step={0.01} min={0} max={89}
+               value={params.salesCommissionRate}
+               onChange={v => updateParam('margins', 'salesCommissionRate', v)}
+               canEdit={canEditSection('margins')}
+               hint="Charged on the VAT-EXCLUSIVE direct purchase price — unlike the MDR — so it enters the retention without the 1.12 factor. Every COGS-derived price grosses up to fund it, protecting the set gross margin. Together with the MDR the retention 1.12 × (1 − MDR) − commission − 0.12 must stay above zero." />
         <ComponentMarginsTable componentMargins={params.componentMargins}
                                canEdit={canEditSection('margins')}
                                mdr={params.merchantDiscountRate}
+                               comm={params.salesCommissionRate}
                                onChange={next => updateParam('margins', 'componentMargins', next)} />
         <GrossMarginPreview params={params} />
         <BatteryMarginPreview params={params} />
@@ -465,7 +486,7 @@ const COMPONENT_LABELS = {
   Q: ['Roof Preparation',            'asphalt / concrete per kWp'],
 };
 
-function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr }) {
+function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr, comm }) {
   const cm = componentMargins || {};
   const setRow = (id, patch) => {
     if (!canEdit) return;
@@ -477,7 +498,7 @@ function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr }) {
                fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em',
                color: COLORS.textMuted, whiteSpace: 'nowrap' };
   const td = { padding: '7px 8px', borderBottom: `1px solid ${COLORS.divider}`, verticalAlign: 'top' };
-  const retained = (1.12 * (1 - (mdr || 0)) - 0.12);
+  const retained = (1.12 * (1 - (mdr || 0)) - (comm || 0) - 0.12);   // v3-226 — commission in the denominator
 
   return (
     <div style={{ marginTop: 18 }}>
