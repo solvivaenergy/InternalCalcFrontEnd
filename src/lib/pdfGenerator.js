@@ -28,6 +28,10 @@
 import jspdfModule from "jspdf";
 import autoTableModule from "jspdf-autotable";
 import { LUZON_REGIONS, fmtKwp } from "../config.js";
+// Vector artwork drawn as PDF paths (parseSvg / drawSvg below). Vite inlines
+// the SVG source, so the logo can never be missing the way a fetched asset can.
+import solvivaLogoSvg from "../assets/pdf/solviva-logo.svg?raw";
+import nightTimeIconSvg from "../assets/pdf/night-time-icon.svg?raw";
 
 const jsPDF = jspdfModule.jsPDF || jspdfModule.default || jspdfModule;
 const autoTable =
@@ -68,6 +72,202 @@ const NEG = "-";
 const FX_K = 210 / 2480; // px → mm  (matches 297/3508 to 4 decimals)
 const fxmm = (px) => px * FX_K;
 const fxpt = (px) => (px * FX_K) / 0.352778; // px → pt for setFontSize
+
+// ─── SVG artwork as vector paths ────────────────────────────────────────────
+// The Solviva logo and the page 2 moon are drawn as PDF path objects straight
+// from their SVG outlines (src/assets/pdf), so they stay sharp at any zoom and
+// in print. The logo used to be the app header's 672px raster
+// (public/logo-full-v2.png), which went soft at the proposal's 11.5mm, and the
+// moon was two overlapping circles that only approximated the icon.
+//
+// Covers what Figma and Illustrator exports use: <path d> in absolute or
+// relative M L H V C S Q T Z, a fill per path (attribute, or class → inline
+// <style>), fill-rule and the viewBox. Everything is reduced to moves, lines
+// and cubics, which is all jsPDF's path() takes. Arcs (A) are rejected with a
+// clear error: neither asset has one, and an editor flattens them to curves on
+// export if a future icon ever does.
+function parseSvg(svgText) {
+  const vb = /viewBox="([^"]+)"/.exec(svgText);
+  const [x, y, w, h] = (
+    vb ? vb[1].trim().split(/[\s,]+/) : ["0", "0", "1", "1"]
+  ).map(Number);
+  const classFills = {};
+  const style = /<style[^>]*>([\s\S]*?)<\/style>/.exec(svgText);
+  if (style) {
+    const rule = /\.([\w-]+)\s*\{[^}]*?fill:\s*([^;}\s]+)/g;
+    let m;
+    while ((m = rule.exec(style[1]))) classFills[m[1]] = m[2];
+  }
+  const paths = [];
+  const tag = /<path\b([^>]*)>/g;
+  let m;
+  while ((m = tag.exec(svgText))) {
+    const attrs = m[1];
+    const attr = (name) =>
+      new RegExp(`\\s${name}="([^"]*)"`).exec(attrs)?.[1];
+    const d = attr("d");
+    const cls = attr("class");
+    const fill = attr("fill") || (cls && classFills[cls]) || "#000000";
+    if (!d || fill === "none") continue;
+    paths.push({
+      legs: svgPathToLegs(d),
+      rgb: hexToRgb(fill),
+      evenOdd: attr("fill-rule") === "evenodd",
+    });
+  }
+  return { viewBox: { x, y, w, h }, paths };
+}
+
+function hexToRgb(hex) {
+  let h = String(hex).trim().replace(/^#/, "");
+  if (h.length === 3) h = h.replace(/./g, (ch) => ch + ch);
+  const n = parseInt(h.slice(0, 6), 16);
+  return Number.isNaN(n)
+    ? [0, 0, 0]
+    : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// SVG path data → jsPDF path legs ({ op: "m" | "l" | "c" | "h", c: [...] })
+// in SVG user units. Quadratics are raised to cubics.
+function svgPathToLegs(d) {
+  const tokens =
+    d.match(/[A-Za-z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?/g) || [];
+  const legs = [];
+  let i = 0;
+  let cmd = "";
+  let x = 0; // current point
+  let y = 0;
+  let sx = 0; // subpath start, where Z returns to
+  let sy = 0;
+  let cx = null; // last cubic control point, reflected by S
+  let cy = null;
+  let qx = null; // last quadratic control point, reflected by T
+  let qy = null;
+  const isCmd = (t) => /^[A-Za-z]$/.test(t);
+  const num = () => {
+    if (i >= tokens.length || isCmd(tokens[i])) {
+      throw new Error(`SVG path: missing number after "${cmd}"`);
+    }
+    return parseFloat(tokens[i++]);
+  };
+  const line = (nx, ny) => {
+    legs.push({ op: "l", c: [nx, ny] });
+    x = nx;
+    y = ny;
+    cx = cy = qx = qy = null;
+  };
+  const cubic = (x1, y1, x2, y2, nx, ny) => {
+    legs.push({ op: "c", c: [x1, y1, x2, y2, nx, ny] });
+    x = nx;
+    y = ny;
+    cx = x2;
+    cy = y2;
+    qx = qy = null;
+  };
+  const quad = (q1x, q1y, nx, ny) => {
+    cubic(
+      x + (2 / 3) * (q1x - x),
+      y + (2 / 3) * (q1y - y),
+      nx + (2 / 3) * (q1x - nx),
+      ny + (2 / 3) * (q1y - ny),
+      nx,
+      ny,
+    );
+    cx = cy = null;
+    qx = q1x;
+    qy = q1y;
+  };
+  while (i < tokens.length) {
+    if (isCmd(tokens[i])) cmd = tokens[i++];
+    else if (cmd === "M") cmd = "L"; // implicit repeats: M → L, m → l
+    else if (cmd === "m") cmd = "l";
+    else if (!cmd || cmd.toUpperCase() === "Z") {
+      throw new Error("SVG path: coordinates without a command");
+    }
+    const rel = cmd !== cmd.toUpperCase();
+    const dx = rel ? x : 0;
+    const dy = rel ? y : 0;
+    switch (cmd.toUpperCase()) {
+      case "M":
+        x = sx = num() + dx;
+        y = sy = num() + dy;
+        legs.push({ op: "m", c: [x, y] });
+        cx = cy = qx = qy = null;
+        break;
+      case "L":
+        line(num() + dx, num() + dy);
+        break;
+      case "H":
+        line(num() + dx, y);
+        break;
+      case "V":
+        line(x, num() + dy);
+        break;
+      case "C":
+        cubic(
+          num() + dx,
+          num() + dy,
+          num() + dx,
+          num() + dy,
+          num() + dx,
+          num() + dy,
+        );
+        break;
+      case "S": {
+        const x1 = cx == null ? x : 2 * x - cx;
+        const y1 = cy == null ? y : 2 * y - cy;
+        cubic(x1, y1, num() + dx, num() + dy, num() + dx, num() + dy);
+        break;
+      }
+      case "Q":
+        quad(num() + dx, num() + dy, num() + dx, num() + dy);
+        break;
+      case "T": {
+        const q1x = qx == null ? x : 2 * x - qx;
+        const q1y = qy == null ? y : 2 * y - qy;
+        quad(q1x, q1y, num() + dx, num() + dy);
+        break;
+      }
+      case "Z":
+        legs.push({ op: "h" });
+        x = sx;
+        y = sy;
+        cx = cy = qx = qy = null;
+        break;
+      default:
+        throw new Error(`SVG path: unsupported command "${cmd}"`);
+    }
+  }
+  return legs;
+}
+
+// Draws parsed SVG artwork with its viewBox scaled uniformly to `height` mm,
+// top-left corner at (x, y). Returns the drawn width in mm.
+function drawSvg(doc, svg, x, y, height) {
+  const k = height / svg.viewBox.h;
+  const X = (px) => x + (px - svg.viewBox.x) * k;
+  const Y = (py) => y + (py - svg.viewBox.y) * k;
+  svg.paths.forEach((p) => {
+    doc.setFillColor(...p.rgb);
+    doc.path(
+      p.legs.map((leg) =>
+        leg.op === "h"
+          ? leg
+          : { op: leg.op, c: leg.c.map((v, i) => (i % 2 ? Y(v) : X(v))) },
+      ),
+    );
+    if (p.evenOdd) doc.fillEvenOdd();
+    else doc.fill();
+  });
+  return svg.viewBox.w * k;
+}
+// Width the artwork would draw at a given height, for centring.
+function svgWidthAt(svg, height) {
+  return (svg.viewBox.w * height) / svg.viewBox.h;
+}
+
+const SOLVIVA_LOGO = parseSvg(solvivaLogoSvg);
+const NIGHT_TIME_ICON = parseSvg(nightTimeIconSvg);
 
 // ─── Currency / number formatters ───────────────────────────────────────────
 
@@ -387,20 +587,8 @@ function drawFooter(mgr, opts = {}) {
 
 function drawTopHeaderFigma(mgr) {
   const topY = MARGIN - 2;
-  const logoData = mgr.ctx.assets?.logo;
-  if (logoData) {
-    // Dynamically calculate width based on a fixed height of 10 to prevent stretching
-    const props = mgr.doc.getImageProperties(logoData);
-    const targetHeight = 10;
-    const targetWidth = targetHeight * (props.width / props.height);
-
-    mgr.doc.addImage(logoData, "PNG", MARGIN, topY, targetWidth, targetHeight);
-  } else {
-    mgr.doc.setFont("helvetica", "bold");
-    mgr.doc.setFontSize(12);
-    mgr.doc.setTextColor(...C.brandGreen);
-    mgr.doc.text("SOLVIVA", MARGIN, topY + 7.5);
-  }
+  // Vector logo (parseSvg) at the 10mm the flow pages have always used.
+  drawSvg(mgr.doc, SOLVIVA_LOGO, MARGIN, topY, 10);
   // Three right-aligned meta lines per the Figma frame (story 004 AC1-AC3).
   // The third line is free vertically: at the 4.2mm pitch its ink bottom lands
   // at ~26.8mm against the tightest page title's ink top at ~28.4mm
@@ -619,16 +807,9 @@ function drawCoverPage1(mgr) {
   };
 
   // ── Header: logo + reference / validity ──
-  const logoData = ctx.assets?.logo;
-  if (logoData) {
-    const props = d.getImageProperties(logoData);
-    const targetHeight = fxmm(136);
-    const targetWidth = targetHeight * (props.width / props.height);
-
-    d.addImage(logoData, "PNG", fxmm(88), fxmm(89), targetWidth, targetHeight);
-  } else {
-    T("SOLVIVA", 88, 100, 90, { c: DGREEN, style: "bold" });
-  }
+  // The frame keeps the logo 136px tall at (88, 89); solviva-logo.svg is that
+  // artwork's own export (475×136), so it lands at the design's exact size.
+  drawSvg(d, SOLVIVA_LOGO, fxmm(88), fxmm(89), fxmm(136));
   // Same three meta lines as drawTopHeaderFigma, in Figma-px coordinates.
   // 107 → 164 → 221 keeps the design's 57px pitch; the hero banner starts at
   // y=329px (27.9mm), so the third line clears it comfortably.
@@ -855,16 +1036,21 @@ function drawCoverPage1(mgr) {
     2287,
     { labelW: 728, textSize: 40, pitch: 88 },
   );
-  drawInfoColumn(
-    "",
-    [
-      ["Rent-to-Own tenor:", `${tenor} months`],
-      ["Monthly payment", `${peso(terms.customerMonthlyPmt ?? 0)}`],
-    ],
-    1383,
-    2287,
-    { labelW: 699, textSize: 40, pitch: 88 },
-  );
+  // The Rent-to-Own column only when the customer is actually financing. On a
+  // Direct Purchase (tenor 0) it printed "0 months" and a "monthly payment"
+  // that was really the post-installation balance.
+  if (!terms.isDirectPurchase && (state.tenor || 0) > 0) {
+    drawInfoColumn(
+      "",
+      [
+        ["Rent-to-Own tenor:", `${tenor} months`],
+        ["Monthly payment", `${peso(terms.customerMonthlyPmt ?? 0)}`],
+      ],
+      1383,
+      2287,
+      { labelW: 699, textSize: 40, pitch: 88 },
+    );
+  }
 
   // ── Savings and investment returns (1:273) ──
   // Shared with page 4 (drawSavingsRow) through savingsTiles().
@@ -910,19 +1096,23 @@ function systemPackageTiles(mgr) {
   // tiles, mirroring the inverter tile, so a battery-only quote never
   // implies a phantom 0kWp / 0-panel solar package.
   const hasSolar = panelCount > 0;
+  // The figure is 80px against the frame's 100px: at full size "5.04kWp" ran
+  // nearly edge to edge of its tile (2026-10-21 review). The savings tiles
+  // keep their 100px figures.
+  const FIGURE_PX = 80;
 
   return [
     [
       {
         txt: hasSolar ? `${fmtKwp(systemKwp)}kWp` : "N/A",
-        size: 100,
+        size: FIGURE_PX,
         c: DGREEN,
       },
       { txt: "Peak system", size: 38, c: BLACK },
       { txt: hasSolar ? "capacity" : "Not included", size: 38, c: BLACK },
     ],
     [
-      { txt: hasSolar ? `${panelCount}` : "N/A", size: 100, c: DGREEN },
+      { txt: hasSolar ? `${panelCount}` : "N/A", size: FIGURE_PX, c: DGREEN },
       { txt: "No. of panels", size: 38, c: BLACK },
       {
         txt: hasSolar ? `${panelWatts}W panels` : "Not included",
@@ -933,7 +1123,7 @@ function systemPackageTiles(mgr) {
     [
       {
         txt: inverters.length ? `${inverterTotalKw}kW` : "N/A",
-        size: 100,
+        size: FIGURE_PX,
         c: DGREEN,
       },
       { txt: "Inverter", size: 38, c: BLACK },
@@ -944,7 +1134,7 @@ function systemPackageTiles(mgr) {
       },
     ],
     [
-      { txt: `${batteryKwh.toFixed(0)} kWh`, size: 100, c: DGREEN },
+      { txt: `${batteryKwh.toFixed(0)} kWh`, size: FIGURE_PX, c: DGREEN },
       { txt: "Battery/s", size: 38, c: BLACK },
       {
         txt:
@@ -964,6 +1154,10 @@ function savingsTiles(mgr) {
   const { state, model } = mgr.ctx;
   const LIME = [210, 255, 30];
   const WHITE = [255, 255, 255];
+  // Escabeche UAT (TC-0009): the descriptor lines sit at 85%. This is white
+  // blended over the tile's green, which is exactly what 85% opacity resolves
+  // to on that solid fill, without adding transparency to the PDF.
+  const WHITE85 = [221, 229, 223];
   const cf = model.cashFlows || {};
   const irrYears = state.irrYears ?? 25;
   const utilityRate = Number(state.utilityRate || 0);
@@ -989,18 +1183,18 @@ function savingsTiles(mgr) {
     [
       { txt: irrBig, size: 100, c: LIME },
       { txt: `IRR (${irrYears} years)`, size: 38, c: WHITE },
-      { txt: "Annualized", size: 38, c: WHITE },
+      { txt: "Annualized", size: 38, c: WHITE85 },
     ],
     [
       { txt: lcoeBig, size: 100, c: LIME },
       { txt: "LCOE", size: 38, c: WHITE },
-      { txt: "vs. current rate of", size: 38, c: WHITE },
-      { txt: `₱${utilityRate.toFixed(2)}/kWh`, size: 38, c: WHITE },
+      { txt: "vs. current rate of", size: 38, c: WHITE85 },
+      { txt: `₱${utilityRate.toFixed(2)}/kWh`, size: 38, c: WHITE85 },
     ],
     [
       { txt: duBig, size: 100, c: LIME },
       { txt: `${irrYears}-year savings`, size: 38, c: WHITE },
-      { txt: "Cumulative", size: 38, c: WHITE },
+      { txt: "Cumulative", size: 38, c: WHITE85 },
     ],
   ];
 }
@@ -1208,13 +1402,39 @@ function drawSavingsDefinitions(mgr) {
 }
 
 // Dark grey table title bar (Figma 385:242): 100px tall #757575, a solid
-// 56px white square 35px in, Inter Medium 40px white label 123px in.
-function drawTableTitleBar(mgr, label) {
+// 56px white square 35px in, Inter Medium 40px white label 123px in. The
+// square is a checkbox: `checked` draws a tick in it, so the payment option
+// the customer chose is marked (Escabeche UAT, TC-0002).
+function drawTableTitleBar(mgr, label, checked = false) {
   const h = fxmm(100);
+  const box = fxmm(56);
+  const boxX = MARGIN + fxmm(35);
+  const boxY = mgr.y + fxmm(21);
   mgr.doc.setFillColor(117, 117, 117);
   mgr.doc.rect(MARGIN, mgr.y, CONTENT_W, h, "F");
   mgr.doc.setFillColor(255, 255, 255);
-  mgr.doc.rect(MARGIN + fxmm(35), mgr.y + fxmm(21), fxmm(56), fxmm(56), "F");
+  mgr.doc.rect(boxX, boxY, box, box, "F");
+  if (checked) {
+    // Tick in brand green: two strokes with round caps, as fractions of the
+    // box — (0.22, 0.52) → (0.42, 0.72) → (0.78, 0.30).
+    mgr.doc.setDrawColor(31, 82, 43);
+    mgr.doc.setLineWidth(fxmm(7));
+    mgr.doc.setLineCap("round");
+    mgr.doc.setLineJoin("round");
+    mgr.doc.lines(
+      [
+        [box * 0.2, box * 0.2],
+        [box * 0.36, -box * 0.42],
+      ],
+      boxX + box * 0.22,
+      boxY + box * 0.52,
+      [1, 1],
+      "S",
+      false,
+    );
+    mgr.doc.setLineCap("butt");
+    mgr.doc.setLineJoin("miter");
+  }
   mgr.doc.setFont("helvetica", "medium");
   mgr.doc.setFontSize(fxpt(40));
   mgr.doc.setTextColor(255, 255, 255);
@@ -1410,6 +1630,13 @@ function drawStep1Page(mgr) {
         1: { halign: "center", cellWidth: 18 },
         2: { halign: "center", cellWidth: 20 },
       },
+      // columnStyles reach only the body: the QTY / hrs-per-day headings sat
+      // left-aligned over centred figures.
+      didParseCell: (data) => {
+        if (data.section === "head" && data.column.index > 0) {
+          data.cell.styles.halign = "center";
+        }
+      },
     });
     leftY = mgr.doc.lastAutoTable.finalY;
   } else {
@@ -1475,7 +1702,7 @@ function drawStep1Page(mgr) {
 
   // Icon — the frame's green sun (asset 385:139, story 009 AC1) for daytime
   // users, with a vector fallback in the same green if the asset is missing;
-  // the crescent for nighttime users keeps the ring chart's night-time blue.
+  // nighttime users get the crescent from the icon set, in the same green.
   const iconSize = fxmm(108);
   const usageSun = mgr.ctx.assets?.icons?.usageSun;
   const iconX = cardTx + iconSize / 2;
@@ -1506,12 +1733,16 @@ function drawStep1Page(mgr) {
       );
     }
   } else {
-    // Crescent Moon
-    const r = iconSize * 0.36;
-    mgr.doc.setFillColor(0, 106, 198); // Blue
-    mgr.doc.circle(iconX, iconY, r, "F");
-    mgr.doc.setFillColor(...C.cream); // Cutout to make crescent shape
-    mgr.doc.circle(iconX + r * 0.45, iconY - r * 0.3, r * 0.85, "F");
+    // Crescent moon (src/assets/pdf/night-time-icon.svg) as vector paths,
+    // centred in the same 108px box the sun fills.
+    const moonW = svgWidthAt(NIGHT_TIME_ICON, iconSize);
+    drawSvg(
+      mgr.doc,
+      NIGHT_TIME_ICON,
+      cardTx + (iconSize - moonW) / 2,
+      cardCy,
+      iconSize,
+    );
   }
   cardCy += iconSize + fxmm(24);
 
@@ -1583,6 +1814,12 @@ function drawStep1Page(mgr) {
   let legY = cyD - (2 * legRowH + fxmm(42)) / 2;
   const dayPctNum = Math.round(dayPct * 100);
   const nightPctNum = 100 - dayPctNum;
+  // The kWh figure is set smaller than its label (28px against 34px): at the
+  // label's size "460 kWh (46%)" ran into the card's right padding. It sits on
+  // the label's baseline rather than its top — jsPDF's "top" baseline is
+  // size × (2 − lineHeightFactor) above the alphabetic one, so two sizes
+  // sharing a top would not share a baseline.
+  const LEGEND_VALUE_PX = 28;
   const legendRow = (color, label, value) => {
     mgr.doc.setFillColor(...color);
     mgr.doc.rect(legX, legY + (legRowH - fxmm(28)) / 2, fxmm(42), fxmm(28), "F");
@@ -1590,9 +1827,14 @@ function drawStep1Page(mgr) {
     mgr.doc.setFontSize(fxpt(34));
     mgr.doc.setTextColor(36, 36, 36);
     mgr.doc.text(label, legX + fxmm(42 + 16), legY, { baseline: "top" });
-    mgr.doc.text(value, legX + fxmm(42 + 16 + 150 + 48), legY, {
-      baseline: "top",
-    });
+    mgr.doc.setFontSize(fxpt(LEGEND_VALUE_PX));
+    const topToBaseline = 2 - mgr.doc.getLineHeightFactor();
+    mgr.doc.text(
+      value,
+      legX + fxmm(42 + 16 + 150 + 48),
+      legY + (fxmm(34) - fxmm(LEGEND_VALUE_PX)) * topToBaseline,
+      { baseline: "top" },
+    );
     legY += legRowH + fxmm(42);
   };
   legendRow(
@@ -1656,21 +1898,39 @@ function drawStep1Page(mgr) {
   const rightColX = rightX;
   const rightColW = rightW;
 
+  // The two figures share a left edge, and the two captions share a left
+  // edge that clears the WIDER figure by a fixed 6mm gap. The captions used
+  // to sit at a fixed x where "₱8,700*" came within 2mm of "Monthly savings";
+  // the floor keeps the column where it was for short figures.
+  const goalNumX = MARGIN + 6;
+  const pctStr = `${displayedPct}%`;
+  const monthlySavingsStr = peso(actualMonthlySavings);
+  mgr.doc.setFont("helvetica", "normal");
+  mgr.doc.setFontSize(24);
+  const pctW = mgr.doc.getTextWidth(pctStr);
+  mgr.doc.setFontSize(22);
+  const monthlySavingsW = mgr.doc.getTextWidth(monthlySavingsStr);
+  mgr.doc.setFontSize(11);
+  const asteriskW = mgr.doc.getTextWidth("*");
+  const goalTextX = Math.max(
+    MARGIN + 42,
+    goalNumX + Math.max(pctW, monthlySavingsW + 0.6 + asteriskW) + 6,
+  );
+
   // 1. Green Target Box
   mgr.doc.setFillColor(31, 82, 43);
   mgr.doc.roundedRect(MARGIN, goalY, leftColW, 22, 2, 2, "F");
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(24);
   mgr.doc.setTextColor(210, 255, 30);
-  // Replaced desiredPct with displayedPct
-  mgr.doc.text(`${displayedPct}%`, MARGIN + 6, goalY + 14.5);
+  mgr.doc.text(pctStr, goalNumX, goalY + 14.5);
   mgr.doc.setFont("helvetica", "bold");
   mgr.doc.setFontSize(9.5);
   mgr.doc.setTextColor(...C.white);
-  mgr.doc.text("Projected savings", MARGIN + 36, goalY + 10.5);
+  mgr.doc.text("Projected savings", goalTextX, goalY + 10.5);
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(8);
-  mgr.doc.text("from your monthly electric bill", MARGIN + 36, goalY + 15.5);
+  mgr.doc.text("from your monthly electric bill", goalTextX, goalY + 15.5);
 
   // 2. White Savings Box
   mgr.doc.setFillColor(250, 250, 250);
@@ -1681,21 +1941,18 @@ function drawStep1Page(mgr) {
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(22);
   mgr.doc.setTextColor(31, 82, 43);
-  // Render the actual calculated savings
-  const monthlySavingsStr = peso(actualMonthlySavings);
-  mgr.doc.text(monthlySavingsStr, MARGIN + 6, goalY + 39.5);
+  mgr.doc.text(monthlySavingsStr, goalNumX, goalY + 39.5);
   // Asterisk anchor linking the figure to the savings disclaimer (#4 AC1)
-  const monthlySavingsW = mgr.doc.getTextWidth(monthlySavingsStr);
   mgr.doc.setFontSize(11);
-  mgr.doc.text("*", MARGIN + 6 + monthlySavingsW + 0.6, goalY + 34);
+  mgr.doc.text("*", goalNumX + monthlySavingsW + 0.6, goalY + 34);
   mgr.doc.setFont("helvetica", "bold");
   mgr.doc.setFontSize(9.5);
   mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text("Monthly savings", MARGIN + 36, goalY + 35.5);
+  mgr.doc.text("Monthly savings", goalTextX, goalY + 35.5);
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(8);
   mgr.doc.setTextColor(...C.textMuted);
-  mgr.doc.text("estimated at current utility rate", MARGIN + 36, goalY + 40.5);
+  mgr.doc.text("estimated at current utility rate", goalTextX, goalY + 40.5);
 
   // NOTE: the savings disclaimer now renders full-width at the page foot
   // (see drawSavingsDisclaimerFooter) so it can carry the full approved copy.
@@ -2289,11 +2546,16 @@ function drawPackageDetailPage(mgr) {
     warranties.map((w) => `${w.label} (${w.duration})`).join(", "),
     colW,
   );
-  const proseLineH = 3.2;
+  // Escabeche UAT (TC-0007) asked for more air in these paragraphs: the prose
+  // was set at 1.3× (3.2mm on 7pt) and now gets the 1.58 line height the rest
+  // of the proposal uses, plus a little more room under the headings.
+  const proseLineH = 3.9;
+  const proseGap = 6; // heading baseline → first body line
   // Measured at this split and 7pt: Inclusions wraps to 4 lines and Warranty to
   // 2, so Inclusions drives the height — but take the max so the block stays
   // correct if either copy changes.
-  const proseH = 5 + Math.max(inclLines.length, warrLines.length) * proseLineH;
+  const proseH =
+    proseGap + Math.max(inclLines.length, warrLines.length) * proseLineH;
 
   // This block previously had no page-break guard at all — the only one in the
   // function was for the amber box below. Once the table itemises, mgr.y lands
@@ -2311,16 +2573,22 @@ function drawPackageDetailPage(mgr) {
 
   mgr.doc.setFont("helvetica", "normal");
   mgr.doc.setFontSize(7);
+  // jsPDF spaces a multi-line text() by lineHeightFactor × size, so set it
+  // to match proseLineH for these two blocks (it used to stay at the 1.15
+  // default while the height sum assumed 3.2mm) and restore it after.
+  const prevLineHeightFactor = mgr.doc.getLineHeightFactor();
+  mgr.doc.setLineHeightFactor(proseLineH / (7 * 0.352778));
   mgr.doc.setTextColor(...C.textBody);
-  mgr.doc.text(inclLines, leftX, proseY + 5);
+  mgr.doc.text(inclLines, leftX, proseY + proseGap);
   mgr.doc.setTextColor(...C.brandGreen);
-  mgr.doc.text(warrLines, rightX, proseY + 5);
+  mgr.doc.text(warrLines, rightX, proseY + proseGap);
+  mgr.doc.setLineHeightFactor(prevLineHeightFactor);
 
   // Story 011 — the amber box follows the last prose line at the frame's
   // ~30px (385:342), not the old 6mm-plus.
   mgr.y =
     proseY +
-    5 +
+    proseGap +
     (Math.max(inclLines.length, warrLines.length) - 1) * proseLineH +
     4.5;
 
@@ -2462,7 +2730,9 @@ function drawPaymentOptionsPage(mgr) {
   // white body, #EAF1E9 total row, #2B2B2B hairline rules, no striping.
   // Story 014 — the % / Amount / tenor columns are centred.
   // Story 016 — "Total payment", singular, in both tables.
-  const TBL_RULE_W = 0.1;
+  // 0.2mm, up from the 0.1mm hairline: Escabeche UAT viewers dropped thin
+  // rules (TC-0011), so every table gets a width they all render.
+  const TBL_RULE_W = 0.2;
   const TBL_LABEL_W = fxmm(553);
   const tableBase = () => ({
     margin: { left: MARGIN, right: MARGIN },
@@ -2476,6 +2746,9 @@ function drawPaymentOptionsPage(mgr) {
       fontSize: fxpt(40),
       fontStyle: "normal",
       textColor: [0, 0, 0],
+      // Solid white body (TC-0011): with no fill the page's sun watermark
+      // showed through the rows.
+      fillColor: [255, 255, 255],
       minCellHeight: fxmm(90),
       valign: "middle",
       cellPadding: { top: 0.8, bottom: 0.8, left: fxmm(35), right: fxmm(35) },
@@ -2513,7 +2786,10 @@ function drawPaymentOptionsPage(mgr) {
     };
 
   const dpPct = Math.round((state.downPaymentPct || 0) * 100);
-  drawTableTitleBar(mgr, "Direct purchase");
+  // The chosen option carries the tick (TC-0002): tenor 0 is a Direct
+  // Purchase, anything else is Rent-to-Own.
+  const isDirect = !!terms.isDirectPurchase || !((state.tenor || 0) > 0);
+  drawTableTitleBar(mgr, "Direct purchase", isDirect);
   autoTable(mgr.doc, {
     ...tableBase(),
     startY: mgr.y,
@@ -2548,7 +2824,7 @@ function drawPaymentOptionsPage(mgr) {
     tenors.map((_, i) => [i + 1, { cellWidth: tenorColW }]),
   );
 
-  drawTableTitleBar(mgr, "Rent-to-Own");
+  drawTableTitleBar(mgr, "Rent-to-Own", !isDirect);
   autoTable(mgr.doc, {
     ...tableBase(),
     startY: mgr.y,
@@ -2600,7 +2876,7 @@ function drawPaymentOptionsPage(mgr) {
   // row whose Total/Monthly charge were the Direct Purchase figures — the two
   // tables above already state the real terms, so the recap is simply omitted.
   if (!terms.isDirectPurchase && (state.tenor || 0) > 0) {
-    drawTableTitleBar(mgr, "Selected Rent-to-Own Plan");
+    drawTableTitleBar(mgr, "Selected Rent-to-Own Plan", true);
     const planColW = (CONTENT_W - TBL_LABEL_W) / 4;
     autoTable(mgr.doc, {
       ...tableBase(),
@@ -3185,20 +3461,7 @@ function drawSnapshotPage(mgr, pngDataUrl, opts = {}) {
 
 function drawScheduleHeaderFigma(mgr) {
   const { doc, ctx } = mgr;
-  const logoData = ctx.assets?.logo;
-  if (logoData) {
-    const props = doc.getImageProperties(logoData);
-    const targetHeight = fxmm(136);
-    const targetWidth = targetHeight * (props.width / props.height);
-    doc.addImage(
-      logoData,
-      "PNG",
-      fxmm(88),
-      fxmm(89),
-      targetWidth,
-      targetHeight,
-    );
-  }
+  drawSvg(doc, SOLVIVA_LOGO, fxmm(88), fxmm(89), fxmm(136));
   doc.setFont("helvetica", "normal");
   doc.setFontSize(fxpt(32));
   doc.setTextColor(73, 73, 73);
@@ -3333,12 +3596,16 @@ function drawSchedulePage(mgr) {
       cellPadding: { top: 0, right: 2, bottom: 0, left: 3 }, // Keeps your previous padding fix
       minCellHeight: fxmm(87),
       valign: "middle",
-      fillColor: [255, 255, 255], // Changed to pure white to match the image
+      fillColor: [255, 255, 255],
       textColor: [52, 64, 84],
-      lineColor: [210, 210, 210], // Lighter gray for the dividers
-      // Story 023 — a 0.15mm rule like the page 4 tables, not the 1.0mm band
-      // that drew every row separator as a millimetre-thick grey bar.
-      lineWidth: { bottom: 0.15 }, // bottom rule only: no vertical lines
+      lineColor: [200, 200, 200],
+      // Story 023 cut the 1.0mm band to a 0.15mm bottom rule; Escabeche UAT
+      // (TC-0011/17/18) then saw no rule at all. autotable paints each cell's
+      // fill before its borders, so a bottom-only rule had its lower half
+      // covered by the next row's white fill, leaving 0.075mm that most
+      // viewers drop. Top + bottom at 0.25mm: the lower cell's top rule is
+      // drawn after both fills, so every separator is fully visible.
+      lineWidth: { top: 0.25, bottom: 0.25 }, // no vertical lines
     },
     headStyles: {
       fillColor: [31, 82, 43],
@@ -3756,20 +4023,14 @@ export async function generateProposalPdf({
     assets: {},
   };
 
-  const [
-    logoData,
-    logoSunData,
-    proposalBackgroundData,
-    bannerData,
-    fallbackBannerData,
-  ] = await Promise.all([
-    fetchPublicImageDataUrl("/logo-full-v2.png"),
-    fetchPublicImageDataUrl("/logo-sun-v2.png"),
-    fetchPublicImageDataUrl("/proposal-background.jpg"),
-    fetchPublicImageDataUrl("/proposal-banner.png"),
-    fetchPublicImageDataUrl("/twinsun-v3.png"),
-  ]);
-  ctx.assets.logo = logoData;
+  // The logo is not fetched: it is bundled vector artwork (SOLVIVA_LOGO).
+  const [logoSunData, proposalBackgroundData, bannerData, fallbackBannerData] =
+    await Promise.all([
+      fetchPublicImageDataUrl("/logo-sun-v2.png"),
+      fetchPublicImageDataUrl("/proposal-background.jpg"),
+      fetchPublicImageDataUrl("/proposal-banner.png"),
+      fetchPublicImageDataUrl("/twinsun-v3.png"),
+    ]);
   ctx.assets.logoSun = logoSunData;
   ctx.assets.proposalBackground = proposalBackgroundData;
 
