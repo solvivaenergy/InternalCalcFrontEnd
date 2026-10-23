@@ -1036,21 +1036,27 @@ function drawCoverPage1(mgr) {
     2287,
     { labelW: 728, textSize: 40, pitch: 88 },
   );
-  // The Rent-to-Own column only when the customer is actually financing. On a
-  // Direct Purchase (tenor 0) it printed "0 months" and a "monthly payment"
-  // that was really the post-installation balance.
-  if (!terms.isDirectPurchase && (state.tenor || 0) > 0) {
-    drawInfoColumn(
-      "",
+  // On a Direct Purchase (tenor 0) the Rent-to-Own rows used to print
+  // "0 months" and a "monthly payment" that was really the post-installation
+  // balance. Marketing's UAT (TC-0002, round 2) wants the rows kept with
+  // "Not applicable" rather than dropped.
+  const isRto = !terms.isDirectPurchase && (state.tenor || 0) > 0;
+  drawInfoColumn(
+    "",
+    [
+      ["Rent-to-Own tenor:", isRto ? `${tenor} months` : "Not applicable"],
       [
-        ["Rent-to-Own tenor:", `${tenor} months`],
-        ["Monthly payment", `${peso(terms.customerMonthlyPmt ?? 0)}`],
+        "Monthly payment",
+        isRto ? `${peso(terms.customerMonthlyPmt ?? 0)}` : "Not applicable",
       ],
-      1383,
-      2287,
-      { labelW: 699, textSize: 40, pitch: 88 },
-    );
-  }
+    ],
+    1383,
+    2287,
+    // labelW 640, down from the frame's 699: the value slot it left (231px)
+    // was sized for "60 months", and "Not applicable" (~264px) ran past the
+    // row's separator. The RTO values move 5mm left with it.
+    { labelW: 640, textSize: 40, pitch: 88 },
+  );
 
   // ── Savings and investment returns (1:273) ──
   // Shared with page 4 (drawSavingsRow) through savingsTiles().
@@ -1733,15 +1739,18 @@ function drawStep1Page(mgr) {
       );
     }
   } else {
-    // Crescent moon (src/assets/pdf/night-time-icon.svg) as vector paths,
-    // centred in the same 108px box the sun fills.
-    const moonW = svgWidthAt(NIGHT_TIME_ICON, iconSize);
+    // Crescent moon (src/assets/pdf/night-time-icon.svg) as vector paths at
+    // 80% of the sun's 108px box, centred in it: at the full box the solid
+    // outline read larger than the sun's rays (UAT TC-0005, round 2). The
+    // box itself keeps its size so the card's rhythm does not change.
+    const moonH = iconSize * 0.8;
+    const moonW = svgWidthAt(NIGHT_TIME_ICON, moonH);
     drawSvg(
       mgr.doc,
       NIGHT_TIME_ICON,
       cardTx + (iconSize - moonW) / 2,
-      cardCy,
-      iconSize,
+      cardCy + (iconSize - moonH) / 2,
+      moonH,
     );
   }
   cardCy += iconSize + fxmm(24);
