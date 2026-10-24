@@ -435,6 +435,11 @@ async function cropBannerToRatio(dataUrl) {
       canvas.width = OUT_W;
       canvas.height = OUT_H;
       const ctx = canvas.getContext("2d");
+      // Opaque backdrop for the JPEG export below (a JPEG has no alpha, so any
+      // uncovered pixel would otherwise encode as black). Both banner sources
+      // are fully opaque, so this never shows.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, OUT_W, OUT_H);
 
       // Cover-fit: scale the source to fill the hero strip, center-cropping the
       // overflow so any aspect ratio frames cleanly (a pre-cut wide strip is a
@@ -454,7 +459,11 @@ async function cropBannerToRatio(dataUrl) {
       }
       ctx.drawImage(img, sx, sy, sw, sh, 0, 0, OUT_W, OUT_H);
 
-      resolve(canvas.toDataURL("image/png"));
+      // JPEG, not PNG: a canvas PNG is always RGBA, and jsPDF stored this one
+      // as ~2.9MB of raw RGB plus a ~1MB all-opaque alpha mask — 80% of every
+      // proposal attached to Odoo. The banner is a photo with no transparency;
+      // at the browser-default 0.92 it embeds at ~120KB, still 300dpi in print.
+      resolve(canvas.toDataURL("image/jpeg", 0.92));
     };
     img.onerror = () => resolve(dataUrl); // Fallback to raw data if it fails
     img.src = dataUrl;
@@ -835,9 +844,10 @@ function drawCoverPage1(mgr) {
   if (bannerData) {
     // Text-free hero background (Figma gradient + solar photo). The title is
     // drawn separately below so it stays live/vector text in the PDF.
+    // cropBannerToRatio hands back a JPEG, or the raw PNG if decoding failed.
     d.addImage(
       bannerData,
-      "PNG",
+      bannerData.startsWith("data:image/jpeg") ? "JPEG" : "PNG",
       fxmm(heroX),
       fxmm(heroY),
       fxmm(heroW),
@@ -4012,7 +4022,27 @@ export async function generateProposalPdf({
   proposalContent,
   snapshots,
 }) {
-  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+  // compress: Flate-encodes the page content streams and embedded font
+  // subsets, which were written raw (~1MB a proposal). Lossless.
+  // putOnlyUsedFonts: embeds only the Inter weights some text on the page
+  // actually uses. jsPDF's subset keeps the full glyph-name and width tables,
+  // so each registered weight cost ~35KB even when nothing was drawn in it.
+  const doc = new jsPDF({
+    unit: "mm",
+    format: "a4",
+    orientation: "portrait",
+    compress: true,
+    putOnlyUsedFonts: true,
+  });
+  // jsPDF 2.5.2's image writer drops "FlateEncode" from the document's shared
+  // filter list (so images are not Flate-encoded twice) and never restores
+  // it, so only the first build of a doc is compressed. The doc is built
+  // twice — doc.save() below, then doc.output("blob") for the Odoo
+  // attachment — so put the filter back at the start of every build.
+  const filters = doc.internal.getFilters();
+  doc.internal.events.subscribe("buildDocument", () => {
+    if (!filters.includes("FlateEncode")) filters.push("FlateEncode");
+  });
   await registerPdfFonts(doc);
 
   const ctx = {
