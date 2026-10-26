@@ -284,6 +284,21 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
         `Merchant discount rate must be below ${(MDR_CEILING * 100).toFixed(1)}% — at or above it, `
         + 'the acquirer\'s cut plus the VAT remittance exceeds the whole sale and every price would be zero.' };
     }
+    // v3-226 — the sales commission allowance: [0,1) alone, and jointly with
+    // the MDR the retention 1.12×(1−MDR) − commission − 0.12 must stay
+    // positive (mirrors the server guard).
+    {
+      const cr = params.salesCommissionRate;
+      if (!Number.isFinite(cr) || cr < 0 || cr >= 1) {
+        return { ok: false, msg: 'The sales commission allowance must be a fraction in [0%, 100%).' };
+      }
+      if (!(1.12 * (1 - mdr) - cr - 0.12 > 0)) {
+        return { ok: false, msg:
+          'Together, the MDR allowance, the sales commission allowance, and the VAT remittance would '
+          + 'take the entire sale or more — the retention 1.12 × (1 − MDR) − commission − 0.12 must stay '
+          + 'above zero, or every price in the app would be zero.' };
+      }
+    }
     // v3-199 — the Luzon free-delivery radius (mirrors the server guard).
     {
       const v = params.luzonFreeTravelKm;

@@ -293,28 +293,28 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
         )}
       </Subsection>
 
-      {/* ──── 3E · Total Amount Due Summary ────
-          v3-196 — REVERTS v3-177. The headline is the DST-inclusive
-          `terms.summaryTotalDue` again, under the label "YOUR TOTAL AMOUNT
-          DUE". v3-177 had swapped in `netDirectPrice` under a "TOTAL PRICE"
-          label on the reasoning that the financed total turns customers off;
-          user-directed here that the card must name what it shows, and the
-          engine's standing rule (calculations.js, summaryTotalDue) is that
-          everything customer-facing reading "TOTAL AMOUNT DUE" prints THIS
-          number — one label, one value. A "Total Amount Due" over
-          netDirectPrice would have disagreed with the Summary tab's own
-          Total Amount Due row on every financed quote.
+      {/* ──── 3E · Total Price Summary ────
+          v3-230 — RE-APPLIES v3-177 (user-directed, 2026-10-26): the headline
+          is the system PRICE, `terms.netDirectPrice`, under the label "YOUR
+          TOTAL PRICE". v3-196 had reverted this to the DST-inclusive
+          `summaryTotalDue` under "YOUR TOTAL AMOUNT DUE"; the business ruling
+          is back to v3-177's: the financed total (price + interest + DST)
+          turns customers off, so the card states what the system costs and
+          leaves the financing arithmetic to the sub-line.
+
+          THE FIGURE IS `terms.netDirectPrice`, NOT `pkg.totalDirect`.
+          The engine defines netDirectPrice = totalDirect + discountAmount
+          (AH7, discountAmount <= 0), so it IS the Total Price when no promo
+          code is applied and IS the discounted price when one is — one field,
+          no branch to drift. The sub-line names the discount (decision 7) so
+          the card can't be read against the Summary's pre-discount "Total
+          Price" row and look like a contradiction.
 
           On a Direct Purchase (tenor 0) dst is 0 and the balance bears no
-          interest, so summaryTotalDue === netDirectPrice and the figure is
-          unchanged from v3-177. Only Rent-to-Own quotes move.
-
-          The discount still flows through: summaryTotalDue is built from
-          netDirectPrice (= totalDirect + discountAmount, AH7), so a promo
-          code moves this figure exactly as it moved the old one. The sub-line
-          keeps naming the discount (decision 7) so the card can't be read
-          against the Summary's pre-discount "Total Price" row and look like a
-          contradiction.
+          interest, so netDirectPrice === summaryTotalDue and the figure is
+          unchanged from v3-196. Only Rent-to-Own quotes move (down).
+          The Summary tab's own TOTAL AMOUNT DUE row (behind the financing
+          gate) still prints summaryTotalDue — that label keeps its number.
 
           v3-56: hidden when terms.negativeBalance because the figure would
           read as "DP + (negative balance)" which is meaningless to a customer
@@ -325,14 +325,13 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
       {!terms.negativeBalance && (
         <div style={styles.totalDue}>
           <div>
-            <div style={styles.totalDueLabel}>YOUR TOTAL AMOUNT DUE</div>
-            {/* The sub-line carries the payment SHAPE (down payment, monthly,
-                tenor) that the single headline figure can't. Three branches,
-                mirroring the Summary's own Direct-Purchase / fully-paid
-                splits. v3-196 — the headline now reacts to 3A and 3B on its
-                own as well, since summaryTotalDue moves with the tenor; the
-                sub-line is kept because the shape still isn't derivable from
-                the total alone. */}
+            <div style={styles.totalDueLabel}>YOUR TOTAL PRICE</div>
+            {/* v3-230 / v3-177 variant B: the price alone never moves when
+                the customer changes 3A or 3B, so a card that ignored the two
+                controls above it would read as broken. The sub-line carries
+                the payment SHAPE (down payment, monthly, tenor) and reacts to
+                both. Three branches, mirroring the Summary's own
+                Direct-Purchase / fully-paid splits. */}
             <div style={styles.totalDueSub}>
               VAT inclusive
               {terms.promo && Math.abs(terms.discountAmount) >= 0.5 && (
@@ -350,7 +349,7 @@ export default function Step3PaymentTerms({ state, updateState, model, adminPara
             </div>
           </div>
           <div style={styles.totalDueAmount}>
-            {fmt.peso(terms.summaryTotalDue)}
+            {fmt.peso(terms.netDirectPrice)}
           </div>
         </div>
       )}

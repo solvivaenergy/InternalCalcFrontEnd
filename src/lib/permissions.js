@@ -198,6 +198,7 @@ export const PARAM_KEY_TO_SECTION = {
   componentMargins: "margins", // v3-191 — per-component margin table (B–Q)
   grossMarginReference: "returnsAssumptions", // v3-190 — moved to FinCo; UI label renamed, key kept
   merchantDiscountRate: "margins",
+  salesCommissionRate: "margins", // v3-226 — sales commission allowance (VAT-exclusive base)
   rateAnchorMax: "interestRates",
   rateAnchorMid: "interestRates",
   rateAnchorMin: "interestRates",

@@ -2146,10 +2146,11 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   );
 }
 
-// v3-196 — REVERTS v3-177: the bar's first cell is TOTAL AMOUNT DUE again,
-// printing the DST-inclusive summaryTotalDue. Everything below about
-// placement, visibility and the other four cells still holds; only the
-// leading figure and its label changed back.
+// v3-230 — RE-APPLIES v3-177: the bar's first cell is TOTAL PRICE again
+// (terms.netDirectPrice), matching the Step 3E card. v3-196 had put the
+// DST-inclusive Total Amount Due back. Everything below about placement,
+// visibility and the other four cells still holds; only the leading figure
+// and its label changed.
 // v3-123 — live Total Amount Due bar (user-approved mockup + decisions A-D):
 // pinned to the BOTTOM viewport edge on the Calculator tab in BOTH modes;
 // shows the DST-inclusive summaryTotalDue ALONE (no monthly subtext); tap
@@ -2171,14 +2172,14 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
   // rate): Total Amount Due · Payback Period · System Cost/kWh vs the
   // customer's OWN utility rate (1B, not hardcoded) · Savings over the
   // Step-4 horizon. 2×2 on narrow viewports via .live-total-grid CSS.
-  // v3-196 — back to the DST-inclusive `terms.summaryTotalDue`, for the same
-  // reason the Step 3E card reverted: the engine's standing rule is that
-  // everything customer-facing labelled "TOTAL AMOUNT DUE" prints THIS number,
-  // so the bar and the Summary tab can never disagree. The discount still
-  // flows through (summaryTotalDue is built from netDirectPrice = totalDirect
-  // + discountAmount), so the number still moves when a promo code is entered
-  // — which is the correct behaviour with no sub-line here to name it.
-  const total = terms.summaryTotalDue;
+  // v3-230 — the first cell is the TOTAL PRICE, `terms.netDirectPrice`, for
+  // the same reason the Step 3E card is: the price excludes interest and DST.
+  // netDirectPrice === totalDirect when no promo code is applied and IS the
+  // discounted figure when one is, so no branch is needed. There is no
+  // sub-line here to name a discount — the number simply moves when a code is
+  // entered, which is the correct behaviour. The label says "Total Price", so
+  // the bar never contradicts the Summary tab's gated TOTAL AMOUNT DUE row.
+  const total = terms.netDirectPrice;
   if (!(total > 0)) return null;
   const pm = cashFlows?.paybackMonths;
   const payback = Number.isFinite(pm)
@@ -2204,7 +2205,7 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
       style={styles.liveTotalBar}
     >
       <span className="live-total-cell" style={styles.liveTotalCell}>
-        <span style={styles.liveTotalLabel}>Your Total<br />Amount Due</span>
+        <span style={styles.liveTotalLabel}>Your Total<br />Price</span>
         <span style={styles.liveTotalValue}>{fmt.peso(total)}</span>
       </span>
       <span className="live-total-cell" style={styles.liveTotalCell}>
