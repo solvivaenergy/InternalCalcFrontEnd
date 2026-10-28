@@ -139,9 +139,12 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   lime figure; the Summary's Total Package Price row and the mobile price
   hero / monthly card follow the same tokens. A StatTile with an `aside`
   (Step 2A battery panel) stays light in both regions. Every explicit
-  `color={COLORS.brandGreen}` on a StatTile became `COLORS.tileFg`. Rule of
-  thumb from here: controls = `primary`/`onPrimary`, read-only figures =
-  `tile*`, the one hero card = `hero*`.
+  `color={COLORS.brandGreen}` on a StatTile became `COLORS.tileFg`; an
+  emphasised word inside a tile label (Step 4 "SAVINGS") uses
+  `COLORS.tileStrong` (body black on Manila, white on Cebu) — never
+  `textBody`, which vanished on the dark tile. Rule of thumb from here:
+  controls = `primary`/`onPrimary`, read-only figures = `tile*`, the one hero
+  card = `hero*`.
 
 ## Files touched
 

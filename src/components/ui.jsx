@@ -34,6 +34,7 @@ export const COLORS = {
   tileFg:       'var(--sv-tile-fg)',
   tileLabel:    'var(--sv-tile-label)',
   tileSub:      'var(--sv-tile-sub)',
+  tileStrong:   'var(--sv-tile-strong)', // an emphasised word inside a tile label
   // The hero price card (Step 3E): dark green in both regions; white figure
   // on Manila, lime on Cebu.
   heroBg:       'var(--sv-hero-bg)',

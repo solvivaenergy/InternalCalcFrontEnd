@@ -160,7 +160,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
               <span style={{
                 fontSize: 13,
                 fontWeight: 700,
-                color: COLORS.textBody,
+                color: COLORS.tileStrong,
                 letterSpacing: 1,
               }}>
                 SAVINGS
