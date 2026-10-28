@@ -88,6 +88,16 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   is dropped only when the account no longer holds that region. Engine
   parity: 46/46 scenarios identical on the staging and production payloads.
 
+- **Brand palette across the calculator** (so Manila's green and Cebu's lime
+  sit on one brand system): token swap of the pre-kit palette to the Solviva
+  kit — dark green `#1f512a` (was `#25543A` / `#1f522b`), mid green `#50890a`
+  (was `#3B7B5A`), body `#212121`, secondary `#475467`, muted `#667085`,
+  borders `#e4e7ec`, page `#fcfcfc` (cream tints → neutral `#f2f4f7`), the
+  legacy Solviva orange `#E87722` → brand blue `#006ac6`, and the mobile
+  flow's own green scale onto the same values (`index.html` theme/body/focus
+  colours too). Functional colours (amber rep pill, warnings, errors,
+  success, input tint), the charts and the Figma-based PDF are unchanged.
+
 ## Files touched
 
 New: `src/lib/region.js`, `src/data/locations.js`, `src/lib/locationCopy.js`,
