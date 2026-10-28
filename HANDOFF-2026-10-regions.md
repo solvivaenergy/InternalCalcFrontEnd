@@ -25,12 +25,14 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   for EVERY account; `<RegionSwitch/>` — a labelled segmented control
   ("Quoting in  Manila | Cebu", active segment filled) — only for both-region
   accounts. Per-region `theme` in `region.js`: Manila keeps the calculator's
-  green; Cebu uses the Solviva **brand blue `#006ac6`** (the brand kit's
-  blue, already the proposal's heading colour) for a 4px band along the top
-  of the header, a light wash of the same blue on the header, the active
-  quote-tab indicator, the live total bar and the pills in tables/admin. The
-  header's actions block wraps right-aligned so the quote/agent column keeps
-  its width beside the switch. Logo: `public/logo-full-v3.png` from the
+  green; Cebu uses the Solviva **lime accent `#d2ff1e`** (the brand kit's
+  light green) for a 4px band along the top of the header, a light wash of
+  the same lime on the header, the stamp and active switch segment (dark
+  green text on lime, per the brand rule — never white on lime), the active
+  quote-tab underline (dark green text), a lime top edge on the dark green
+  live total bar, and the pills in tables/admin. The header's actions block
+  wraps right-aligned so the quote/agent column keeps its width beside the
+  switch. Logo: `public/logo-full-v3.png` from the
   brand kit's cropped transparent `logo-horizontal-green.png` (583×168),
   used by the header, login, reset-password, maintenance gate and mobile flow.
 - **A quote belongs to one region.** Switching starts a NEW quote in the other
