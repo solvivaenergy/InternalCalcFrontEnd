@@ -130,6 +130,19 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   stays dark green with the chartreuse logo. Dark green aligned to the design
   system's `#1F522B`.
 
+- **Numbers you read, on Cebu** (fourth pass): a second token pair,
+  `--sv-tile-*` (StatTile background/border/figure/label/sub) and
+  `--sv-hero-*` (the Step 3E price card), in `index.html` /
+  `COLORS.tile* / hero*`. Manila: light tiles, dark-green figures, dark-green
+  hero card with a white figure (unchanged look). Cebu: dark-green tiles with
+  lime figures and light labels; the hero card keeps its dark green with a
+  lime figure; the Summary's Total Package Price row and the mobile price
+  hero / monthly card follow the same tokens. A StatTile with an `aside`
+  (Step 2A battery panel) stays light in both regions. Every explicit
+  `color={COLORS.brandGreen}` on a StatTile became `COLORS.tileFg`. Rule of
+  thumb from here: controls = `primary`/`onPrimary`, read-only figures =
+  `tile*`, the one hero card = `hero*`.
+
 ## Files touched
 
 New: `src/lib/region.js`, `src/data/locations.js`, `src/lib/locationCopy.js`,
