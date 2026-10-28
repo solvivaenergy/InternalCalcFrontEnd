@@ -46,6 +46,7 @@ import { LUZON_FREE_TRAVEL_KM, fmtKwp } from '../config.js';
 // reads the region's hub from the live parameters (shared with Step 2E).
 import { regionsFor, resolveLocation, pickerShape } from '../data/locations.js';
 import { deliveryHint } from '../lib/locationCopy.js';
+import { RegionStamp } from './RegionControls.jsx';   // v3-231 — names the calculator in the header
 import { formatHour12, optimizeSystem } from '../lib/schedule.js';
 import {
   allowedDpOptions, resolveMinDpPct, DP_EPS,
@@ -765,7 +766,7 @@ function WelcomeScreen({ onStart }) {
   const rotor = useRotator(TAGLINES, true);
   return (
     <div className="mfl-screen mfl-welcome">
-      <img className="mfl-biglogo" src="/logo-full-transparent-v1.png"
+      <img className="mfl-biglogo" src="/logo-full-v3.png"
            alt="Solviva — An AboitizPower Company" />
       <img className="mfl-heroimg" src="/mobile-hero-v1.jpg"
            alt="Rooftop solar installation" />
@@ -1633,7 +1634,8 @@ export default function MobileFlow({
       {screen > 0 && (
         <>
           <div className="mfl-header">
-            <img src="/logo-full-transparent-v1.png" alt="Solviva" />
+            <img src="/logo-full-v3.png" alt="Solviva" />
+            <RegionStamp region={region} compact />
           </div>
           <div className="mfl-progress">
             {Array.from({ length: 6 }, (_, i) => (

@@ -12,8 +12,9 @@ import { DEFAULTS, BRAND, AGENT, AUTH,
 // regions come from Supabase app_metadata (src/lib/region.js); the location
 // tables and the cascade helpers live in src/data/locations.js.
 import { regionsFor, resolveLocation, defaultLocationState, pickerShape } from '../data/locations.js';
-import { DEFAULT_REGION, isRegionId, regionMeta, regionsOf,
-         getActiveRegion, setActiveRegion, regionPillStyle } from '../lib/region.js';
+import { DEFAULT_REGION, isRegionId, regionMeta, regionTheme, regionsOf,
+         getActiveRegion, setActiveRegion } from '../lib/region.js';
+import { RegionStamp, RegionSwitch } from './RegionControls.jsx';
 // The sizing/pricing pipeline is computeProposal() in @solviva/calc-engine (proposal.js)
 // (this file's model memo, lifted out 2026-09-27). Only the PDF path still
 // reaches into the engine directly, to rebuild the annex on the issue date.
@@ -1423,6 +1424,10 @@ function CalculatorApp({ role, repIdentity, onSignOut,
   // dropping adminAccess in memory.
   const handleAdminLogout = () => { onSignOut(); };
 
+  // v3-231 — the active region's page accent (header band, tab indicator,
+  // live total bar). Manila's is the calculator's green, so nothing moves.
+  const theme = regionTheme(region);
+
   // Show a brief loading screen while parameters fetch on first load.
   // Without this, customers might see stale defaults for a flash before
   // server overrides take effect — confusing if a price has been changed.
@@ -1526,7 +1531,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
                           retrying={paramsRetrying} region={region} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
-            adminAccess={adminAccess}
+            adminAccess={adminAccess} accent={theme.accent}
             negativeBalance={model.terms.negativeBalance}
             onGeneratePdf={handleGeneratePdf} pdfGenerating={pdfGenerating} />
       {/* v3-223 — the Odoo hand-off banner sits UNDER the tab bar (user
@@ -1602,7 +1607,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
         )}
       </main>
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
-            adminAccess={adminAccess}
+            adminAccess={adminAccess} accent={theme.accent}
             negativeBalance={model.terms.negativeBalance}
             position="bottom" />
       {/* v3-123 — spacer keeps the tab strip + page end visible above the
@@ -1623,6 +1628,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
             cashFlows={model.cashFlows}
             irrYears={state.irrYears}
             utilityRate={state.utilityRate}
+            accent={theme.accentDark}
             onJumpToPricing={() => {
               const jump = () => {
                 const el = document.getElementById('step3-pricing');
@@ -1666,36 +1672,9 @@ function CalculatorApp({ role, repIdentity, onSignOut,
   );
 }
 
-// v3-231 — the region control in the header. An account with BOTH regions
-// gets a two-segment toggle (Manila | Cebu); an account with one region gets a
-// fixed badge and no control, so there is nothing to tap by accident. Cebu's
-// colour is distinct on purpose: the prices themselves do not reveal which
-// region produced them, so the badge must.
-function RegionSwitch({ regions, active, onSwitch }) {
-  const multi = regions.length > 1;
-  return (
-    <div style={styles.regionSwitch} data-no-print="true"
-         role={multi ? 'group' : undefined} aria-label="Quoting region">
-      {regions.map(id => {
-        const m = regionMeta(id);
-        const on = id === active;
-        return multi ? (
-          <button key={id} type="button" aria-pressed={on}
-                  title={on ? `Quoting in ${m.label}` : `Switch to the ${m.label} calculator`}
-                  onClick={() => { if (!on && onSwitch) onSwitch(id); }}
-                  style={{ ...styles.regionSeg, ...(on ? regionPillStyle(m) : styles.regionSegOff) }}>
-            {m.label}
-          </button>
-        ) : (
-          <span key={id} title="Your quoting region"
-                style={{ ...styles.regionBadge, ...regionPillStyle(m) }}>
-            {m.label}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
+// v3-231 — the region controls live in RegionControls.jsx: <RegionStamp/>
+// under the logo names the calculator for every account; <RegionSwitch/>
+// (both-region accounts only) is the segmented "Quoting in" control.
 
 function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
                   generatedDate, validUntil, quoteExpired,
@@ -1705,12 +1684,23 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
+  // v3-231 — the header carries the region: a 4px band in the region's accent
+  // along the top and, on Cebu, a light wash of the same blue (Manila stays
+  // white). The logo gets the stamp underneath it.
+  const theme = regionTheme(region);
+  const headerStyle = { ...styles.header, backgroundColor: theme.headerBg, borderTop: `4px solid ${theme.band}` };
+  const logoBlock = (
+    <div style={styles.logoCol}>
+      <img src="/logo-full-v3.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
+      <RegionStamp region={region} />
+    </div>
+  );
 
   if (editing) {
     return (
-      <header style={styles.header}>
+      <header style={headerStyle}>
         <div className="header-inner" style={{ ...styles.headerInner, alignItems: 'flex-start' }}>
-          <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
+          {logoBlock}
           <div style={{ flex: 1 }}>
             <ContactEditForm
               contact={contact} setContact={setContact}
@@ -1728,9 +1718,9 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
   }
 
   return (
-    <header style={styles.header}>
+    <header style={headerStyle}>
       <div className="header-inner" style={styles.headerInner}>
-        <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
+        {logoBlock}
         <div className="header-meta" style={styles.headerMeta}>
           <div style={styles.metaRow}>
             <strong>Quote for:</strong> {contact.name || '—'}
@@ -2362,7 +2352,8 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
 // cashFlows.totalDuSavings, the same Schedule!Z46-parity cumulative figure
 // Step 4 displays, over the same customer-adjustable horizon. Both reprice
 // on every input change.
-function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing }) {
+// v3-231 — `accent` recolours the bar for the active region (Cebu: brand blue).
+function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing, accent }) {
   // v3-161 — FIVE live figures: IRR added between Payback and Cost/kWh,
   // mirroring Step 4's Payback → IRR → LCOE ordering (user-directed).
   // v3-129 — FOUR live figures (user-approved mockup incl. the bold utility
@@ -2399,7 +2390,7 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
       onClick={onJumpToPricing}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onJumpToPricing(); }}
       title="Jump to Step 3 · Pricing"
-      style={styles.liveTotalBar}
+      style={{ ...styles.liveTotalBar, ...(accent ? { backgroundColor: accent } : {}) }}
     >
       <span className="live-total-cell" style={styles.liveTotalCell}>
         <span style={styles.liveTotalLabel}>Your Total<br />Price</span>
@@ -2434,7 +2425,7 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
 }
 
 function Tabs({ activeTab, setActiveTab, mode, position = 'top',
-                adminAccess = 'none',
+                adminAccess = 'none', accent,
                 negativeBalance, onGeneratePdf, pdfGenerating }) {
   // Summary AND Schedule tabs are rep-only — in customer mode the formal
   // line-item quote (Summary) AND the year-by-year payment schedule are both
@@ -2477,7 +2468,16 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
   const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;
-  const tabActiveStyle = position === 'bottom' ? styles.tabActiveBottom : styles.tabActive;
+  // v3-231 — the quote tabs' active indicator takes the region's accent
+  // (`accent`; Manila's is the green these styles already hold).
+  const tabActiveStyle = {
+    ...(position === 'bottom' ? styles.tabActiveBottom : styles.tabActive),
+    ...(accent
+      ? (position === 'bottom'
+          ? { color: accent, borderTop: `3px solid ${accent}` }
+          : { color: accent, borderBottom: `3px solid ${accent}` })
+      : {}),
+  };
   const tabAdminActiveStyle = position === 'bottom'
     ? styles.tabAdminActiveBottom : styles.tabAdminActive;
   // Generate PDF button is rep-only and rendered only on the TOP tab bar
@@ -2757,23 +2757,8 @@ const styles = {
     alignItems: 'center',
     flexShrink: 0,
   },
-  // v3-231 — region toggle / badge (RegionSwitch). Segments clone the repPillBtn
-  // shape; the active one takes the region's own colours (regionPillStyle),
-  // the inactive one is neutral grey.
-  regionSwitch: { display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 },
-  regionSeg: {
-    display: 'inline-flex', alignItems: 'center',
-    padding: '5px 12px', fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
-    borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
-  },
-  regionSegOff: {
-    color: '#6B7280', backgroundColor: '#FFFFFF', border: '1px solid #D1D5DB',
-  },
-  regionBadge: {
-    display: 'inline-flex', alignItems: 'center',
-    padding: '5px 12px', fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
-    borderRadius: 999, flexShrink: 0, cursor: 'default',
-  },
+  // v3-231 — the logo column: logo with the region stamp underneath.
+  logoCol: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 7, flexShrink: 0 },
   editBtn: {
     background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
     padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',

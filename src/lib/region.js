@@ -19,21 +19,28 @@
 //     sessionStorage carries its own region and wins on restore (App.jsx).
 // =============================================================================
 
+// `colour` is the soft pill used in tables and the admin badge; `theme` is
+// the page accent applied while that region is active — the header band and
+// wash, the active tab indicator, the live total bar and the region stamp.
+// Manila's theme is the calculator's green, so Manila looks exactly as before.
+// Cebu takes the BRAND BLUE (#006ac6 — the Solviva palette's blue, already the
+// proposal's heading colour) so a rep can tell at a glance, from any corner of
+// the screen, which calculator they are in (the prices do not say). The light
+// wash is that blue at ~8% on white; nothing here is outside the brand kit.
 export const REGIONS = Object.freeze([
   {
     id: 'luzon',
     label: 'Manila',
     shortLabel: 'MNL',
-    // The existing rep-pill amber (App.jsx repPillBtn) — Manila is "home".
     colour: { fg: '#854F0B', bg: '#FAEEDA', border: '#FAC775' },
+    theme: { accent: '#25543A', accentDark: '#25543A', headerBg: '#FFFFFF', band: '#25543A' },
   },
   {
     id: 'cebu',
     label: 'Cebu',
     shortLabel: 'CEB',
-    // Distinct teal (product decision): the prices themselves do not reveal
-    // which region produced them, so the badge must.
-    colour: { fg: '#0B4F6C', bg: '#E0F2F8', border: '#7CC4DC' },
+    colour: { fg: '#006ac6', bg: '#E6F2FC', border: '#9CCBF0' },
+    theme: { accent: '#006ac6', accentDark: '#006ac6', headerBg: '#EDF5FC', band: '#006ac6' },
   },
 ]);
 export const DEFAULT_REGION = 'luzon';
@@ -44,6 +51,7 @@ const STORAGE_KEY = 'solviva_region_v1';
 export const isRegionId = (x) => REGION_IDS.includes(x);
 export const regionMeta = (id) => REGIONS.find(r => r.id === id) || REGIONS[0];
 export const regionLabel = (id) => regionMeta(id).label;
+export const regionTheme = (id) => regionMeta(id).theme;
 
 // Supabase auth app_metadata.regions → canonical, deduplicated, non-empty.
 export function regionsOf(session) {
