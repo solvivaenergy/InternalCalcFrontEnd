@@ -2751,11 +2751,19 @@ const styles = {
   metaSep: { opacity: 0.4 },
   metaMuted: { color: '#6B7280' },
   metaExpired: { color: '#B91C1C', fontWeight: 600, letterSpacing: 0.5 },
+  // v3-231 — wraps: with the "Quoting in" switch in the row, a both-region
+  // account's controls no longer fit beside the quote/agent column at 1200px,
+  // and squeezing that column made its lines break. The block now caps its
+  // width and wraps right-aligned — the switch takes the first row, the
+  // account buttons the second — so the meta column keeps its room.
   headerActions: {
     display: 'flex',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
     gap: 8,
     alignItems: 'center',
     flexShrink: 0,
+    maxWidth: 580,
   },
   // v3-231 — the logo column: logo with the region stamp underneath.
   logoCol: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 7, flexShrink: 0 },
