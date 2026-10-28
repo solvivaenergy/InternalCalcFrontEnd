@@ -111,6 +111,25 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   banners fade up (`.sv-fade-up`), buttons and tabs get colour transitions;
   all off under `prefers-reduced-motion`.
 
+- **Cebu in lime, app-wide** (third design pass, from the user's design
+  system): the calculator's PRIMARY fill is the CSS variable `--sv-primary`
+  (+ `--sv-on-primary`, `--sv-on-primary-muted/-soft`) set in `index.html`
+  from `data-region` on `<html>` (App.jsx writes it when the region resolves
+  or switches). Manila = dark green `#1F522B` + white text; Cebu = lime
+  `#D2FF1E` + dark-green text. Every filled button, the phase toggle, table
+  header rows, the live total bar, Generate PDF, the recommendation pill,
+  underlines, the focus ring and the mobile flow's fills follow it
+  (`COLORS.primary` / `COLORS.onPrimary` in ui.jsx; literal fills were
+  rewritten to the variable). Dark-green TEXT on light grounds stays dark
+  green in both regions (lime text on white is unreadable). Cebu's header is a
+  dark-green surface with the chartreuse logo, white meta text and
+  light-bordered buttons (the design system's dark-green ⇄ chartreuse
+  pairing); it goes light while the contact form is open. Logos are the
+  design system's master SVGs trimmed to the artwork
+  (`public/logo-horizontal-{dark-green,chartreuse,white}.svg`); the footer
+  stays dark green with the chartreuse logo. Dark green aligned to the design
+  system's `#1F522B`.
+
 ## Files touched
 
 New: `src/lib/region.js`, `src/data/locations.js`, `src/lib/locationCopy.js`,
