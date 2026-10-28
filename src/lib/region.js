@@ -21,26 +21,40 @@
 
 // `colour` is the soft pill used in tables and the admin badge; `theme` is
 // the page accent applied while that region is active — the header band and
-// wash, the active tab indicator, the live total bar and the region stamp.
-// Manila's theme is the calculator's green, so Manila looks exactly as before.
-// Cebu takes the BRAND BLUE (#006ac6 — the Solviva palette's blue, already the
-// proposal's heading colour) so a rep can tell at a glance, from any corner of
-// the screen, which calculator they are in (the prices do not say). The light
-// wash is that blue at ~8% on white; nothing here is outside the brand kit.
+// wash, the stamp, the active switch segment, the active tab indicator and
+// the live total bar. Manila's theme is the calculator's green, so Manila
+// looks exactly as before. Cebu takes the Solviva LIME ACCENT (#d2ff1e, the
+// brand kit's light green) so a rep can tell at a glance, from any corner of
+// the screen, which calculator they are in (the prices do not say). Brand
+// rule: lime is a BACKGROUND colour with dark green text on it — never white
+// text on lime, never lime text on white — hence `onAccent` / `tabText`, and
+// the live total bar keeps a dark green fill with a lime edge instead of a
+// lime fill. The wash is lime at ~15% on white; nothing is outside the kit.
+//   accent    fill of the band, stamp and active segment; the tab underline
+//   onAccent  text colour on that fill
+//   tabText   active quote-tab text (must read on white)
+//   headerBg  header background while the region is active
+//   barBg / barEdge   live total bar fill and (optional) top edge
 export const REGIONS = Object.freeze([
   {
     id: 'luzon',
     label: 'Manila',
     shortLabel: 'MNL',
     colour: { fg: '#854F0B', bg: '#FAEEDA', border: '#FAC775' },
-    theme: { accent: '#25543A', accentDark: '#25543A', headerBg: '#FFFFFF', band: '#25543A' },
+    theme: {
+      accent: '#25543A', onAccent: '#FFFFFF', tabText: '#25543A',
+      headerBg: '#FFFFFF', barBg: '#25543A', barEdge: null,
+    },
   },
   {
     id: 'cebu',
     label: 'Cebu',
     shortLabel: 'CEB',
-    colour: { fg: '#006ac6', bg: '#E6F2FC', border: '#9CCBF0' },
-    theme: { accent: '#006ac6', accentDark: '#006ac6', headerBg: '#EDF5FC', band: '#006ac6' },
+    colour: { fg: '#1f512a', bg: '#F1FFB8', border: '#d2ff1e' },
+    theme: {
+      accent: '#d2ff1e', onAccent: '#1f512a', tabText: '#1f512a',
+      headerBg: '#FAFFE6', barBg: '#1f512a', barEdge: '#d2ff1e',
+    },
   },
 ]);
 export const DEFAULT_REGION = 'luzon';

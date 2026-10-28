@@ -33,7 +33,8 @@ export function RegionStamp({ region, compact = false }) {
   const m = regionMeta(region);
   return (
     <span aria-label="Quoting region" title={`You are in the ${m.label} calculator`}
-          style={{ ...styles.stamp, ...(compact ? styles.stampCompact : {}), backgroundColor: m.theme.accent }}>
+          style={{ ...styles.stamp, ...(compact ? styles.stampCompact : {}),
+                   backgroundColor: m.theme.accent, color: m.theme.onAccent }}>
       <PinIcon size={compact ? 10 : 11} />
       <span style={styles.stampRegion}>{m.label}</span>
       {!compact && <span style={styles.stampWord}>calculator</span>}
@@ -54,7 +55,7 @@ export function RegionSwitch({ regions, active, onSwitch }) {
             <button key={id} type="button" aria-pressed={on}
                     title={on ? `You are quoting in ${m.label}` : `Switch to the ${m.label} calculator`}
                     onClick={() => { if (!on && onSwitch) onSwitch(id); }}
-                    style={{ ...styles.segment, ...(on ? { backgroundColor: m.theme.accent, color: '#FFFFFF', boxShadow: '0 1px 2px rgba(0,0,0,0.15)' } : {}) }}>
+                    style={{ ...styles.segment, ...(on ? { backgroundColor: m.theme.accent, color: m.theme.onAccent, boxShadow: '0 1px 2px rgba(0,0,0,0.15)' } : {}) }}>
               <PinIcon size={11} />
               {m.label}
             </button>
@@ -69,7 +70,7 @@ const styles = {
   stamp: {
     display: 'inline-flex', alignItems: 'center', gap: 6,
     padding: '4px 10px 4px 8px', borderRadius: 6,
-    color: '#FFFFFF', fontSize: 10.5, fontWeight: 700,
+    fontSize: 10.5, fontWeight: 700,
     letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.2,
     whiteSpace: 'nowrap', flexShrink: 0,
   },

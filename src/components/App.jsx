@@ -1531,7 +1531,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
                           retrying={paramsRetrying} region={region} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
-            adminAccess={adminAccess} accent={theme.accent}
+            adminAccess={adminAccess} theme={theme}
             negativeBalance={model.terms.negativeBalance}
             onGeneratePdf={handleGeneratePdf} pdfGenerating={pdfGenerating} />
       {/* v3-223 — the Odoo hand-off banner sits UNDER the tab bar (user
@@ -1607,7 +1607,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
         )}
       </main>
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
-            adminAccess={adminAccess} accent={theme.accent}
+            adminAccess={adminAccess} theme={theme}
             negativeBalance={model.terms.negativeBalance}
             position="bottom" />
       {/* v3-123 — spacer keeps the tab strip + page end visible above the
@@ -1628,7 +1628,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
             cashFlows={model.cashFlows}
             irrYears={state.irrYears}
             utilityRate={state.utilityRate}
-            accent={theme.accentDark}
+            theme={theme}
             onJumpToPricing={() => {
               const jump = () => {
                 const el = document.getElementById('step3-pricing');
@@ -1688,7 +1688,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
   // along the top and, on Cebu, a light wash of the same blue (Manila stays
   // white). The logo gets the stamp underneath it.
   const theme = regionTheme(region);
-  const headerStyle = { ...styles.header, backgroundColor: theme.headerBg, borderTop: `4px solid ${theme.band}` };
+  const headerStyle = { ...styles.header, backgroundColor: theme.headerBg, borderTop: `4px solid ${theme.accent}` };
   const logoBlock = (
     <div style={styles.logoCol}>
       <img src="/logo-full-v3.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
@@ -2352,8 +2352,10 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
 // cashFlows.totalDuSavings, the same Schedule!Z46-parity cumulative figure
 // Step 4 displays, over the same customer-adjustable horizon. Both reprice
 // on every input change.
-// v3-231 — `accent` recolours the bar for the active region (Cebu: brand blue).
-function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing, accent }) {
+// v3-231 — `theme` recolours the bar for the active region: `barBg` fill and
+// an optional `barEdge` top edge (Cebu: dark green with the lime edge — lime
+// cannot be the fill because the figures are white).
+function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing, theme }) {
   // v3-161 — FIVE live figures: IRR added between Payback and Cost/kWh,
   // mirroring Step 4's Payback → IRR → LCOE ordering (user-directed).
   // v3-129 — FOUR live figures (user-approved mockup incl. the bold utility
@@ -2390,7 +2392,11 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
       onClick={onJumpToPricing}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onJumpToPricing(); }}
       title="Jump to Step 3 · Pricing"
-      style={{ ...styles.liveTotalBar, ...(accent ? { backgroundColor: accent } : {}) }}
+      style={{
+        ...styles.liveTotalBar,
+        ...(theme?.barBg ? { backgroundColor: theme.barBg } : {}),
+        ...(theme?.barEdge ? { borderTop: `3px solid ${theme.barEdge}` } : {}),
+      }}
     >
       <span className="live-total-cell" style={styles.liveTotalCell}>
         <span style={styles.liveTotalLabel}>Your Total<br />Price</span>
@@ -2425,7 +2431,7 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
 }
 
 function Tabs({ activeTab, setActiveTab, mode, position = 'top',
-                adminAccess = 'none', accent,
+                adminAccess = 'none', theme,
                 negativeBalance, onGeneratePdf, pdfGenerating }) {
   // Summary AND Schedule tabs are rep-only — in customer mode the formal
   // line-item quote (Summary) AND the year-by-year payment schedule are both
@@ -2468,14 +2474,16 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
   const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;
-  // v3-231 — the quote tabs' active indicator takes the region's accent
-  // (`accent`; Manila's is the green these styles already hold).
+  // v3-231 — the quote tabs' active indicator takes the region's accent and
+  // the text its `tabText` (Manila: the green these styles already hold;
+  // Cebu: dark green text under a lime line — lime text on white is a brand
+  // no).
   const tabActiveStyle = {
     ...(position === 'bottom' ? styles.tabActiveBottom : styles.tabActive),
-    ...(accent
+    ...(theme
       ? (position === 'bottom'
-          ? { color: accent, borderTop: `3px solid ${accent}` }
-          : { color: accent, borderBottom: `3px solid ${accent}` })
+          ? { color: theme.tabText, borderTop: `3px solid ${theme.accent}` }
+          : { color: theme.tabText, borderBottom: `3px solid ${theme.accent}` })
       : {}),
   };
   const tabAdminActiveStyle = position === 'bottom'
