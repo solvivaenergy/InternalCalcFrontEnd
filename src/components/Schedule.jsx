@@ -55,7 +55,7 @@ export default function Schedule({ model, state, contact, generatedDate }) {
             ? 'Post-Installation Direct Purchase Balance'
             : 'Post-Installation Monthly Payment'}
           value={fmt.peso(terms.customerMonthlyPmt)}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
         />
         <SummaryCard
           label="Post-Installation Payment Tenor"

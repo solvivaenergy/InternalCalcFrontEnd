@@ -288,13 +288,13 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                 })}
                 <tr style={styles.totalRow}>
                   <td style={{ ...styles.td, fontWeight: 700 }}>
-                    Total Package Price <span style={styles.muted}>(VAT Inclusive)</span>
+                    Total Package Price <span style={{ ...styles.muted, color: COLORS.tileSub }}>(VAT Inclusive)</span>
                   </td>
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.cogs)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>{fmt.peso(tot.cogs)}</td>
                   )}
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>
                       {fmt.peso(tot.gm)}
                       {netRevTot > 0 && (
                         <span style={{ fontSize: 11, color: '#9CA3AF' }}>
@@ -304,13 +304,13 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                     </td>
                   )}
                   {pricesShown && commOn && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.commAmt)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>{fmt.peso(tot.commAmt)}</td>
                   )}
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.mdrAmt)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>{fmt.peso(tot.mdrAmt)}</td>
                   )}
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.vat)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>{fmt.peso(tot.vat)}</td>
                   )}
                   <td style={{ ...styles.td, ...styles.tdNum, fontWeight: 700 }}>
                     {fmt.peso(pricesShown ? tot.dp : pkg.totalDirect)}
@@ -932,8 +932,11 @@ const styles = {
   subtotalRow: {
     backgroundColor: COLORS.brandCream,
   },
+  // v3-231 — the total row is a "number you read": light with a dark-green
+  // figure on Manila, dark green with a lime figure on Cebu (COLORS.tile*).
   totalRow: {
-    backgroundColor: '#f2f4f7',
+    backgroundColor: COLORS.tileBg,
+    color: COLORS.tileFg,
     borderTop: `2px solid ${COLORS.brandGreen}`,
   },
 

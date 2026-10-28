@@ -434,9 +434,11 @@ const styles = {
     gap: 10,
     marginTop: 14,
   },
+  // v3-231 — the hero price card: dark green in both regions, white figure on
+  // Manila, lime on Cebu (a number you read, not a control — see index.html).
   totalDue: {
-    backgroundColor: COLORS.primary,
-    color: COLORS.onPrimary,
+    backgroundColor: COLORS.heroBg,
+    color: COLORS.heroFg,
     padding: '20px 24px',
     borderRadius: 10,
     marginTop: 24,

@@ -203,6 +203,15 @@ const CSS = `
 .mfl-monthly .v{font-size:38px;font-weight:900;color:var(--sv-on-primary)}
 .mfl-monthly .l{font-size:12px;font-weight:800;letter-spacing:.1em;
   text-transform:uppercase;color:var(--sv-on-primary-muted);margin-top:2px}
+/* v3-231 — Cebu: numbers you read sit on dark-green tiles with lime figures
+   (design-system chartreuse-on-dark-green). Manila keeps the light hero and
+   the lime monthly card above. */
+[data-region="cebu"] .mfl-pricehero{background:var(--sv-tile-bg);border-radius:22px;padding:16px 12px 12px;margin:6px 0 10px}
+[data-region="cebu"] .mfl-pricehero .p{color:var(--sv-tile-fg)}
+[data-region="cebu"] .mfl-pricehero .l{color:var(--sv-tile-label)}
+[data-region="cebu"] .mfl-monthly{background:var(--sv-hero-bg)}
+[data-region="cebu"] .mfl-monthly .v{color:var(--sv-hero-fg)}
+[data-region="cebu"] .mfl-monthly .l{color:var(--sv-hero-muted)}
 .mfl-exrow{padding:10px 0;border-bottom:1px solid #ECEEE2}
 .mfl-exrow:last-child{border-bottom:none}
 .mfl-exhead{display:flex;align-items:baseline;gap:10px;margin-bottom:5px;flex-wrap:wrap}

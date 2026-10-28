@@ -273,6 +273,29 @@
       --sv-on-primary-muted: rgba(31, 82, 43, 0.72);
       --sv-on-primary-soft: rgba(31, 82, 43, 0.8);
     }
+    /* Numbers you READ (stat tiles, the Step 3E total card, the Summary total
+       row, the mobile price hero): Manila keeps light tiles with dark-green
+       figures; Cebu flips them to DARK GREEN tiles with LIME figures — the
+       design system's chartreuse-on-dark-green pairing (7.8:1), the only way
+       lime text stays readable. Controls keep the --sv-primary rule above. */
+    :root {
+      --sv-tile-bg: #f2f4f7;
+      --sv-tile-border: #e4e7ec;
+      --sv-tile-fg: #1F522B;
+      --sv-tile-label: #667085;
+      --sv-tile-sub: #667085;
+      --sv-hero-bg: #1F522B;
+      --sv-hero-fg: #FFFFFF;
+      --sv-hero-muted: rgba(255, 255, 255, 0.82);
+    }
+    :root[data-region="cebu"] {
+      --sv-tile-bg: #1F522B;
+      --sv-tile-border: #1F522B;
+      --sv-tile-fg: #D2FF1E;
+      --sv-tile-label: rgba(255, 255, 255, 0.78);
+      --sv-tile-sub: rgba(255, 255, 255, 0.78);
+      --sv-hero-fg: #D2FF1E;
+    }
 
     /* v3-231 — motion. Short, one-directional, easing out: content fades up
        as a tab pane or banner appears, dialogs pop in, the app fades in after

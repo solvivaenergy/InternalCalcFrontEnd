@@ -27,6 +27,18 @@ export const COLORS = {
   primary:      'var(--sv-primary)',
   onPrimary:    'var(--sv-on-primary)',
   onPrimaryMuted: 'var(--sv-on-primary-muted)',
+  // Stat tiles — numbers you read. Manila: light tile, dark-green figure;
+  // Cebu: dark-green tile, lime figure (index.html --sv-tile-*).
+  tileBg:       'var(--sv-tile-bg)',
+  tileBorder:   'var(--sv-tile-border)',
+  tileFg:       'var(--sv-tile-fg)',
+  tileLabel:    'var(--sv-tile-label)',
+  tileSub:      'var(--sv-tile-sub)',
+  // The hero price card (Step 3E): dark green in both regions; white figure
+  // on Manila, lime on Cebu.
+  heroBg:       'var(--sv-hero-bg)',
+  heroFg:       'var(--sv-hero-fg)',
+  heroMuted:    'var(--sv-hero-muted)',
   brandCream:   '#f2f4f7',
   inputTint:    '#DBEAFE',  // Excel-style user-input blue
   inputBorder:  '#9DB7DD',
@@ -568,8 +580,14 @@ export function Checkbox({ checked, onChange, label, info }) {
 //     Step 4 when the side-by-side Step3+Step4 layout (≥1024px) compresses
 //     Step 4's grid into a narrower right column; vertical stacking of
 //     thin rows reads better than a 2x2 of cards there.
+// v3-231 — the tile follows the region (COLORS.tile*): Manila keeps the light
+// tile with a dark-green figure, Cebu gets a dark-green tile with a lime
+// figure. A tile that hosts an `aside` (Step 2A's battery package panel)
+// stays LIGHT in both regions — its inner controls are built for a light
+// surface — and a value passed as the region token falls back to dark green
+// there. A caller passing any other colour (the error red, say) keeps it.
 export function StatTile({
-  label, value, sub, color = COLORS.brandGreen, large, xl,
+  label, value, sub, color = COLORS.tileFg, large, xl,
   badge, note, tooltip, stacked,
   // v3-63: optional right-hand column rendered INSIDE the tile, beside the
   // value/sub block. Used by Step 2A's Recommended Battery tile to host the
@@ -578,6 +596,11 @@ export function StatTile({
   aside,
 }) {
   const valueFontSize = xl ? 40 : (large ? (stacked ? 24 : 32) : 22);
+  const light = !!aside;
+  const valueColor = light && color === COLORS.tileFg ? COLORS.brandGreen : color;
+  const labelStyle = light ? statStyles.labelLight : statStyles.label;
+  const subStyle = light ? statStyles.subLight : statStyles.sub;
+  const noteStyle = light ? statStyles.noteLight : statStyles.note;
   if (stacked) {
     // Horizontal layout: label + optional ⓘ on the left, value on the right
     // aligned along a shared baseline. Sub (e.g. LCOE's "Compare to your
@@ -594,7 +617,7 @@ export function StatTile({
         </div>
         <div className="stat-tile-value" style={{
           ...statStyles.value,
-          color,
+          color: valueColor,
           fontSize: valueFontSize,
           textAlign: 'right',
         }}>
@@ -604,13 +627,13 @@ export function StatTile({
     );
   }
   return (
-    <div style={statStyles.tile}>
+    <div style={light ? statStyles.tileLight : statStyles.tile}>
       <div style={aside ? statStyles.splitRow : undefined}>
         <div style={aside ? statStyles.splitLeftCol : undefined}>
           {/* Header row: label on the left, optional override badge on the right */}
           <div style={statStyles.headerRow}>
             <div style={statStyles.labelWithTip}>
-              <span style={statStyles.label}>{label}</span>
+              <span style={labelStyle}>{label}</span>
               {tooltip && <InfoTooltip content={tooltip}
                                        ariaLabel={typeof label === 'string' ? `More info about ${label}` : 'More info'} />}
             </div>
@@ -618,13 +641,13 @@ export function StatTile({
           </div>
           <div className="stat-tile-value" style={{
             ...statStyles.value,
-            color,
+            color: valueColor,
             fontSize: valueFontSize,
           }}>
             {value}
           </div>
-          {sub && <div style={statStyles.sub}>{sub}</div>}
-          {note && <div style={statStyles.note}>{note}</div>}
+          {sub && <div style={subStyle}>{sub}</div>}
+          {note && <div style={noteStyle}>{note}</div>}
         </div>
         {aside && <div style={statStyles.splitAsideCol}>{aside}</div>}
       </div>
@@ -1763,6 +1786,13 @@ const inputStyles = {
 
 const statStyles = {
   tile: {
+    backgroundColor: COLORS.tileBg,
+    borderRadius: 8,
+    padding: '14px 16px',
+    border: `1px solid ${COLORS.tileBorder}`,
+  },
+  // The light tile a region never recolours (tiles that host controls).
+  tileLight: {
     backgroundColor: COLORS.brandCream,
     borderRadius: 8,
     padding: '14px 16px',
@@ -1807,6 +1837,13 @@ const statStyles = {
   label: {
     fontSize: 11,
     fontWeight: 600,
+    color: COLORS.tileLabel,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  labelLight: {
+    fontSize: 11,
+    fontWeight: 600,
     color: COLORS.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -1835,6 +1872,11 @@ const statStyles = {
   },
   sub: {
     fontSize: 11,
+    color: COLORS.tileSub,
+    marginTop: 4,
+  },
+  subLight: {
+    fontSize: 11,
     color: COLORS.textMuted,
     marginTop: 4,
   },
@@ -1842,6 +1884,13 @@ const statStyles = {
   // overridden value next to the recommendation, or to clarify what the
   // tile's number is computed from (e.g., "Based on 7 panels selected.").
   note: {
+    fontSize: 11,
+    fontStyle: 'italic',
+    color: COLORS.tileSub,
+    marginTop: 6,
+    lineHeight: 1.4,
+  },
+  noteLight: {
     fontSize: 11,
     fontStyle: 'italic',
     color: COLORS.textMuted,
@@ -1853,10 +1902,10 @@ const statStyles = {
   // left, value on the right. Vertical-stack of these reads like a clean
   // list of stats; uses about half the height of the default card grid.
   tileStacked: {
-    backgroundColor: COLORS.brandCream,
+    backgroundColor: COLORS.tileBg,
     borderRadius: 8,
     padding: '12px 16px',
-    border: `1px solid ${COLORS.divider}`,
+    border: `1px solid ${COLORS.tileBorder}`,
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1872,7 +1921,7 @@ const statStyles = {
   },
   subStacked: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: COLORS.tileSub,
     fontStyle: 'italic',
     lineHeight: 1.4,
   },

@@ -134,7 +134,7 @@ export default function Step1Consumption({ state, updateState, model, onReset })
               label="Baseload"
               value={fmt.num(Math.round(Math.max(0, recommended.baseloadKwh)))}
               sub="kWh / month"
-              color={recommended.baseloadKwh < 0 ? COLORS.error : COLORS.brandGreen}
+              color={recommended.baseloadKwh < 0 ? COLORS.error : COLORS.tileFg}
             />
             {/* The "Recommended panels" tile previously lived here, but moved
                 to Section 2A where the "Desired savings %" selector drives it.

@@ -488,7 +488,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                   label="System Size"
                   value={fmt.num(recPanelCount * recommended.panelWatts / 1000, 2)}
                   sub="kWp"
-                  color={COLORS.brandGreen}
+                  color={COLORS.tileFg}
                   xl
                 />
                 <StatTile
@@ -500,7 +500,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                      showed 5.04 kWp beside 7 panels (7 × 630 ≠ 5.04). */
                   value={fmt.num(recPanelCount)}
                   sub={`× ${recommended.panelWatts}W panels`}
-                  color={COLORS.brandGreen}
+                  color={COLORS.tileFg}
                   xl
                 />
                 <StatTile
@@ -512,7 +512,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                   sub={recBatteryKwh > 0 ? 'kWh storage'
                     : anyBatteryInStock ? 'Not needed at this savings level'
                     : 'Temporarily out of stock'}
-                  color={COLORS.brandGreen}
+                  color={COLORS.tileFg}
                   xl
                   /* v3-71: tooltip reworded — the sizing-economics comparison
                      the v3-64 copy asked the user to make is now done FOR

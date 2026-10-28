@@ -121,14 +121,14 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
         <StatTile
           label="Simple Payback Period"
           value={cashFlows.paybackLabel}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={paybackTip}
         />
         <StatTile
           label={`Internal Rate of Return (${state.irrYears}-yr)`}
           value={cashFlows.irr !== null ? fmt.pct(cashFlows.irr, 1) : '—'}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={irrTip}
         />
@@ -136,7 +136,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
           label="Levelized Cost of Energy"
           value={`${fmt.pesoCents(cashFlows.lcoe)}/kWh`}
           sub={`Compare to your current ${fmt.pesoCents(state.utilityRate)}/kWh`}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={lcoeTip}
         />
@@ -149,7 +149,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
           label="Estimated Savings per Month"
           value={fmt.peso(cashFlows.monthlyDuSavings)}
           sub="At today's DU rate, before any assumed annual increase."
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={monthlyTip}
         />
@@ -169,7 +169,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
             </>
           }
           value={fmt.peso(cashFlows.totalDuSavings)}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={duTip}
         />
