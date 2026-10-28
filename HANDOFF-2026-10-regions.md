@@ -98,6 +98,19 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   colours too). Functional colours (amber rep pill, warnings, errors,
   success, input tint), the charts and the Figma-based PDF are unchanged.
 
+- **Logo variants, width, motion** (second design pass): the header keeps
+  the kit's green logo on its light background; the footer is a brand
+  dark-green band with the kit's LIME logo (`public/logo-full-lime-v3.png`);
+  the loading splashes use the sunburst mark alone (`public/logo-mark-v3.png`).
+  Content cap raised 1200 → 1440 px (header, tabs, main, footer, banners).
+  Motion in `index.html`: the app fades in after sign-in or a region switch
+  (`.app-root`), tab content fades up on a tab change (`.tab-pane`, keyed so
+  the four parameter tabs share one key and `AdminShell` keeps its unsaved
+  drafts — it animates its own inner pane), the confirm dialog pops in over
+  a fading overlay (`.sv-overlay` / `.sv-dialog`), the parameter and Odoo
+  banners fade up (`.sv-fade-up`), buttons and tabs get colour transitions;
+  all off under `prefers-reduced-motion`.
+
 ## Files touched
 
 New: `src/lib/region.js`, `src/data/locations.js`, `src/lib/locationCopy.js`,
