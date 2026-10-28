@@ -204,7 +204,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
       <div style={{ marginTop: 16 }}>
         <CalloutBox kind="info">
           <strong>Disclaimer.</strong> {disclaimers.irrDisclaimerBefore}
-          <strong style={{ color: '#E87722' }}>
+          <strong style={{ color: '#006ac6' }}>
             {disclaimers.irrDisclaimerHighlight}
           </strong>
           {disclaimers.irrDisclaimerAfter}
@@ -388,7 +388,7 @@ const styles = {
   // visible than a small footnote.
   duStepLabel: {
     fontSize: 12.5, fontWeight: 600, letterSpacing: 0.4,
-    color: '#4B5563', textTransform: 'uppercase',
+    color: '#475467', textTransform: 'uppercase',
   },
   duStepSub: {
     fontSize: 11.5, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 2,

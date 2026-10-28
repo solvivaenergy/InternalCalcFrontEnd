@@ -553,7 +553,7 @@ function BootSplash() {
       }}>
         <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
              style={{ opacity: 0.7 }} />
-        <div style={{ fontSize: 13, color: '#6B7280' }}>Loading…</div>
+        <div style={{ fontSize: 13, color: '#667085' }}>Loading…</div>
       </div>
     </div>
   );
@@ -1440,7 +1440,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
         }}>
           <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
                style={{ opacity: 0.7 }} />
-          <div style={{ fontSize: 13, color: '#6B7280' }}>Loading…</div>
+          <div style={{ fontSize: 13, color: '#667085' }}>Loading…</div>
         </div>
       </div>
     );
@@ -1994,7 +1994,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   };
 
   const labelStyle = {
-    fontSize: 11, fontWeight: 600, color: '#6B7280',
+    fontSize: 11, fontWeight: 600, color: '#667085',
     textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4,
   };
   const inputStyle = {
@@ -2010,7 +2010,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     ? <span style={{ fontSize: 10.5, color: '#DC2626', marginTop: 3, display: 'block' }}>{text}</span>
     : null;
   const groupTitle = {
-    fontSize: 12, fontWeight: 700, color: '#25543A', textTransform: 'uppercase',
+    fontSize: 12, fontWeight: 700, color: '#1f512a', textTransform: 'uppercase',
     letterSpacing: 0.7, margin: '0 0 8px',
   };
 
@@ -2036,7 +2036,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           <div style={{ marginTop: 14 }}>
             <button onClick={onDone}
                     style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
-                             background: '#25543A', border: 'none', borderRadius: 6,
+                             background: '#1f512a', border: 'none', borderRadius: 6,
                              color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}>
               Done
             </button>
@@ -2050,9 +2050,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     <div>
     {isLeadFlow && (
       <div style={{
-        background: '#F7F4ED', borderLeft: '3px solid #25543A',
+        background: '#f2f4f7', borderLeft: '3px solid #1f512a',
         borderRadius: '4px 8px 8px 4px', padding: '12px 16px', marginBottom: 16,
-        fontSize: 13, color: '#25543A', lineHeight: 1.6,
+        fontSize: 13, color: '#1f512a', lineHeight: 1.6,
       }}>
         Talk to a Solviva representative — complete your contact details and proposed
         installation address below. The calculator settings you've chosen (panels, battery,
@@ -2099,8 +2099,8 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                         disabled={lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)}
                         style={{
                           fontSize: 12.5, fontWeight: 600, padding: '7px 14px',
-                          borderRadius: 6, border: '1px solid #25543A',
-                          background: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? '#9CA3AF' : '#25543A',
+                          borderRadius: 6, border: '1px solid #1f512a',
+                          background: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? '#9CA3AF' : '#1f512a',
                           color: '#fff', cursor: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? 'default' : 'pointer',
                           fontFamily: 'inherit', whiteSpace: 'nowrap',
                         }}>
@@ -2124,7 +2124,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                   Odoo quotation. Unlink covers the wrong-lead case; a fresh
                   search re-links. */}
               {draftCustomer.leadId ? (
-                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#4B5563' }}>
+                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#475467' }}>
                   Linked to Odoo lead {draftCustomer.leadId} — each generated proposal is saved to
                   this opportunity as a new quotation.{' '}
                   <button type="button"
@@ -2136,7 +2136,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                   </button>
                 </span>
               ) : (
-                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#6B7280' }}>
+                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#667085' }}>
                   Not linked to an Odoo lead — the proposal will not be saved to Odoo.
                 </span>
               )}
@@ -2269,7 +2269,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
         {/* v3-224 — say where the values came from: the lead's assigned
             salesperson in Odoo, or the session defaults. */}
         {!requireAll && (
-          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 6, fontStyle: 'italic' }}>
+          <div style={{ fontSize: 11, color: '#667085', marginTop: 6, fontStyle: 'italic' }}>
             {draftAgent.source === 'odoo-lead'
               ? "Filled from Odoo — the lead's assigned salesperson. Changes here last for this browser session; loading another lead replaces them."
               : "If left blank, customers will see Solviva Customer Support's contact info instead. Cleared when this browser session ends."}
@@ -2281,10 +2281,10 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       {isLeadFlow && (
         <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
           <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start',
-                          fontSize: 12.5, color: '#374151', lineHeight: 1.5, cursor: 'pointer' }}>
+                          fontSize: 12.5, color: '#475467', lineHeight: 1.5, cursor: 'pointer' }}>
             <input type="checkbox" checked={consentGiven}
                    onChange={e => setConsentGiven(e.target.checked)}
-                   style={{ marginTop: 2, width: 16, height: 16, accentColor: '#25543A',
+                   style={{ marginTop: 2, width: 16, height: 16, accentColor: '#1f512a',
                             cursor: 'pointer', flexShrink: 0 }} />
             <span>{LEAD_CONSENT_TEXT}</span>
           </label>
@@ -2307,7 +2307,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
         <button onClick={onDone}
                 style={{ padding: '8px 16px', fontSize: 13, background: 'transparent',
-                         border: '1px solid #D1D5DB', borderRadius: 6, color: '#374151',
+                         border: '1px solid #D1D5DB', borderRadius: 6, color: '#475467',
                          cursor: 'pointer', fontFamily: 'inherit' }}>
           Cancel
         </button>
@@ -2320,7 +2320,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           return (
             <button onClick={save} disabled={disabled}
                     style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
-                             background: disabled ? '#9CA3AF' : '#25543A', border: 'none',
+                             background: disabled ? '#9CA3AF' : '#1f512a', border: 'none',
                              borderRadius: 6, color: 'white', cursor: disabled ? 'not-allowed' : 'pointer',
                              fontFamily: 'inherit' }}>
               {label}
@@ -2660,12 +2660,12 @@ const confirmStyles = {
   title: {
     fontSize: 18,
     fontWeight: 700,
-    color: '#25543A',           // brandGreen
+    color: '#1f512a',           // brandGreen
     margin: '0 0 8px',
   },
   message: {
     fontSize: 14,
-    color: '#374151',
+    color: '#475467',
     margin: '0 0 20px',
     lineHeight: 1.55,
   },
@@ -2679,7 +2679,7 @@ const confirmStyles = {
     fontSize: 14,
     fontWeight: 500,
     backgroundColor: 'transparent',
-    color: '#6B7280',
+    color: '#667085',
     border: '1px solid #D1D5DB',
     borderRadius: 8,
     cursor: 'pointer',
@@ -2689,7 +2689,7 @@ const confirmStyles = {
     padding: '10px 20px',
     fontSize: 14,
     fontWeight: 600,
-    backgroundColor: '#25543A',  // brandGreen
+    backgroundColor: '#1f512a',  // brandGreen
     color: '#FFFFFF',
     border: 'none',
     borderRadius: 8,
@@ -2746,9 +2746,9 @@ function FooterFixed({ onSignOut }) {
 const styles = {
   app: {
     fontFamily: '"Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',
-    backgroundColor: '#F7F4ED', minHeight: '100vh', color: '#1F2937',
+    backgroundColor: '#fcfcfc', minHeight: '100vh', color: '#212121',
   },
-  header: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #E5E1D6', padding: '20px 0' },
+  header: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #e4e7ec', padding: '20px 0' },
   headerInner: {
     maxWidth: 1200, margin: '0 auto', padding: '0 24px',
     display: 'flex', alignItems: 'center', gap: 32,
@@ -2757,7 +2757,7 @@ const styles = {
   headerMeta: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 },
   metaRow: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
   metaSep: { opacity: 0.4 },
-  metaMuted: { color: '#6B7280' },
+  metaMuted: { color: '#667085' },
   metaExpired: { color: '#B91C1C', fontWeight: 600, letterSpacing: 0.5 },
   // v3-231 — wraps: with the "Quoting in" switch in the row, a both-region
   // account's controls no longer fit beside the quote/agent column at 1200px,
@@ -2777,7 +2777,7 @@ const styles = {
   logoCol: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 7, flexShrink: 0 },
   editBtn: {
     background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
-    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',
+    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#667085',
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     flexShrink: 0,
   },
@@ -2834,7 +2834,7 @@ const styles = {
   // replacement for the upstream staff-key glyph. Same discreet treatment.
   signOutBtn: {
     background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
-    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',
+    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#667085',
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     flexShrink: 0,
   },
@@ -2851,12 +2851,12 @@ const styles = {
     padding: '5px 10px',
     fontSize: 11,
     fontWeight: 500,
-    color: '#6B7280',
+    color: '#667085',
     cursor: 'pointer',
     fontFamily: 'inherit',
     letterSpacing: 0.3,
   },
-  tabs: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #E5E1D6' },
+  tabs: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #e4e7ec' },
   // Bottom-of-page tab variant. Active indicator moves to the top edge so the
   // green line visually anchors the active tab to the content above it
   // (where the user just was) rather than to whatever lies further down.
@@ -2868,7 +2868,7 @@ const styles = {
     left: 0, right: 0, bottom: 0,
     zIndex: 40,
     padding: '8px 14px',
-    backgroundColor: '#25543A',
+    backgroundColor: '#1f512a',
     color: '#FFFFFF',
     cursor: 'pointer',
     boxShadow: '0 -2px 8px rgba(0,0,0,0.12)',
@@ -2907,7 +2907,7 @@ const styles = {
   },
   tabsBottom: {
     backgroundColor: '#FFFFFF',
-    borderTop: '1px solid #E5E1D6',
+    borderTop: '1px solid #e4e7ec',
     marginTop: 32,
   },
   // v3-203 — flexWrap added: seven tabs + the Generate PDF pill can exceed
@@ -2917,17 +2917,17 @@ const styles = {
                display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'stretch' },
   tab: {
     background: 'transparent', border: 'none', padding: '14px 22px',
-    fontSize: 14, fontWeight: 500, color: '#6B7280', cursor: 'pointer',
+    fontSize: 14, fontWeight: 500, color: '#667085', cursor: 'pointer',
     borderBottom: '3px solid transparent', transition: 'all 150ms',
   },
-  tabActive: { color: '#25543A', borderBottom: '3px solid #25543A', fontWeight: 600 },
+  tabActive: { color: '#1f512a', borderBottom: '3px solid #1f512a', fontWeight: 600 },
   // Bottom-tab variants — same typography, indicator on top edge instead.
   tabBottom: {
     background: 'transparent', border: 'none', padding: '14px 22px',
-    fontSize: 14, fontWeight: 500, color: '#6B7280', cursor: 'pointer',
+    fontSize: 14, fontWeight: 500, color: '#667085', cursor: 'pointer',
     borderTop: '3px solid transparent', transition: 'all 150ms',
   },
-  tabActiveBottom: { color: '#25543A', borderTop: '3px solid #25543A', fontWeight: 600 },
+  tabActiveBottom: { color: '#1f512a', borderTop: '3px solid #1f512a', fontWeight: 600 },
   // v3-203 — admin tab variants (D2): brand-gold label so the settings group
   // reads apart from the green-accented quote tabs. Active state deepens the
   // gold and moves the same 3px indicator into gold. Slightly tighter
@@ -2939,7 +2939,7 @@ const styles = {
   // the flex row; 1px divider color matches the strip borders.
   tabGroupDivider: {
     width: 1, alignSelf: 'stretch', margin: '8px 8px',
-    backgroundColor: '#E5E1D6', flexShrink: 0,
+    backgroundColor: '#e4e7ec', flexShrink: 0,
   },
   // Generate PDF pill button — rep-only, sits at the right edge of the top
   // tab bar (marginLeft: auto pushes it past the left-aligned tab buttons).
@@ -2949,7 +2949,7 @@ const styles = {
   generatePdfBtn: {
     marginLeft: 'auto',
     alignSelf: 'center',
-    background: '#25543A',
+    background: '#1f512a',
     border: 'none',
     color: '#FFFFFF',
     fontSize: 12,
@@ -2965,11 +2965,11 @@ const styles = {
     flexShrink: 0,
   },
   generatePdfBtnBusy: {
-    background: '#6B7280',
+    background: '#667085',
     cursor: 'wait',
   },
   main: { maxWidth: 1200, margin: '0 auto', padding: '32px 24px' },
-  footer: { borderTop: '1px solid #E5E1D6', backgroundColor: '#FFFFFF', marginTop: 40 },
+  footer: { borderTop: '1px solid #e4e7ec', backgroundColor: '#FFFFFF', marginTop: 40 },
   footerInner: {
     maxWidth: 1200, margin: '0 auto', padding: '20px 24px',
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',

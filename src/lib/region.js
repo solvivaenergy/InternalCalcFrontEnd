@@ -42,8 +42,8 @@ export const REGIONS = Object.freeze([
     shortLabel: 'MNL',
     colour: { fg: '#854F0B', bg: '#FAEEDA', border: '#FAC775' },
     theme: {
-      accent: '#25543A', onAccent: '#FFFFFF', tabText: '#25543A',
-      headerBg: '#FFFFFF', barBg: '#25543A', barEdge: null,
+      accent: '#1f512a', onAccent: '#FFFFFF', tabText: '#1f512a',
+      headerBg: '#FFFFFF', barBg: '#1f512a', barEdge: null,
     },
   },
   {

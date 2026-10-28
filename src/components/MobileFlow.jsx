@@ -74,8 +74,8 @@ const ROTATE_MS = 3000;
 const FADE_MS = 300;
 
 const CSS = `
-.mfl{--g9:#1F522B;--g6:#467147;--g3:#AAC78D;--neon:#D2FF1E;--sky:#B9D8EB;
-  --cream:#F6F5ED;--ink:#173D20;--muted:#5C7561;--line:#E3E6D8;
+.mfl{--g9:#1f512a;--g6:#50890a;--g3:#AAC78D;--neon:#D2FF1E;--sky:#B9D8EB;
+  --cream:#fcfcfc;--ink:#1f512a;--muted:#667085;--line:#e4e7ec;
   font-family:'Mulish',system-ui,sans-serif;background:var(--cream);
   color:var(--ink);min-height:100vh;display:flex;flex-direction:column;
   max-width:480px;margin:0 auto;position:relative}
@@ -272,11 +272,11 @@ const CSS = `
 .mfl-dusctl{display:flex;align-items:center;border:1px solid #AAC78D;
   border-radius:10px;overflow:hidden;background:#fff;flex-shrink:0}
 .mfl-dusctl button{width:46px;height:46px;border:none;background:#EAF3E1;
-  color:#1F522B;font-size:22px;font-weight:800;line-height:1;cursor:pointer;
+  color:#1f512a;font-size:22px;font-weight:800;line-height:1;cursor:pointer;
   font-family:inherit}
 .mfl-dusctl button:disabled{opacity:.35;cursor:not-allowed}
 .mfl-dusval{min-width:82px;text-align:center;font-size:17px;font-weight:800;
-  color:#1F522B;font-variant-numeric:tabular-nums}
+  color:#1f512a;font-variant-numeric:tabular-nums}
 .mfl-detail{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:2px 0 14px}
 .mfl-rt{background:rgba(255,255,255,.07);border-radius:16px;padding:12px}
 .mfl-rt .v{font-weight:900;font-size:22px;color:var(--neon)}
@@ -302,10 +302,10 @@ const CSS = `
 .mfl-payoff .f{font-size:11px;color:#6F8A6C;line-height:1.5;margin-top:8px;font-style:italic}
 .mfl-payoff .k{display:flex;gap:12px;flex-wrap:wrap;font-size:10.5px;color:#5A7358;margin-top:8px}
 .mfl-payoff .k i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;
-  vertical-align:-1px;background:#3B7B5A}
+  vertical-align:-1px;background:#50890a}
 .mfl-payoff .k i.ln{border-radius:0;height:0;border-top:2px dashed #C9862B;width:13px}
 /* v3-193 — the payment caption lives here, NOT over the bars. #8A5C1C on white
-   clears WCAG AA at 11px; the old in-plot label was #9A6B1F over #3B7B5A. */
+   clears WCAG AA at 11px; the old in-plot label was #9A6B1F over #50890a. */
 .mfl-payoff .mfl-paycap{font-size:11px;font-weight:700;color:#8A5C1C;margin-top:6px}
 .mfl-m6{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
 .mfl-m6 .t{background:var(--cream);border:1px solid var(--line);border-radius:14px;
@@ -391,7 +391,7 @@ function Info({ title, children }) {
           <circle cx="9" cy="9" r="9" fill="#FFAB40" />
           <text x="9" y="12.8" textAnchor="middle" fontFamily="Georgia, serif"
                 fontStyle="italic" fontWeight="800" fontSize="11.5"
-                fill="#1F522B">i</text>
+                fill="#1f512a">i</text>
         </svg>
       </button>
       {open && (
@@ -532,7 +532,7 @@ function MobilePayoff({ state, model, adminParams }) {
     const x = X0 + y * slot + (slot - bw) / 2;
     const hs = h(v);
     return <rect key={y} x={x.toFixed(1)} y={(YB - hs).toFixed(1)}
-                 width={bw.toFixed(1)} height={hs.toFixed(1)} rx="1.5" fill="#3B7B5A" />;
+                 width={bw.toFixed(1)} height={hs.toFixed(1)} rx="1.5" fill="#50890a" />;
   });
 
   let paymentLine = null;

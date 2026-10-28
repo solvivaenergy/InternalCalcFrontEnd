@@ -199,7 +199,7 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
           };
           const numTh = { ...styles.th, textAlign: 'right' };
           const numTd = { ...styles.td, ...styles.tdNum };
-          const mutedTd = { ...numTd, color: '#6B7280' };
+          const mutedTd = { ...numTd, color: '#667085' };
           return (
             <table style={styles.table}>
               <thead>
@@ -782,7 +782,7 @@ function fmtDate(d) {
 
 const styles = {
   // v3-80 — tenor comparison table.
-  tenorCaption: { fontSize: 12, color: '#6B7280', margin: '0 0 10px' },
+  tenorCaption: { fontSize: 12, color: '#667085', margin: '0 0 10px' },
   tenorFoot:    { fontSize: 11, color: '#9CA3AF', fontStyle: 'italic', marginTop: 8 },
   tenorSelRow:  { backgroundColor: '#FEF9EF' },
   tenorSelCell: { fontWeight: 700, color: '#854F0B' },
@@ -840,7 +840,7 @@ const styles = {
     padding: '3px 10px',
     background: 'transparent',
     color: '#9CA3AF',
-    border: '1px solid #E5E7EB',
+    border: '1px solid #e4e7ec',
     borderRadius: 999,
     cursor: 'pointer',
   },

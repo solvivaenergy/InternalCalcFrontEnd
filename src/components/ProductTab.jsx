@@ -152,7 +152,7 @@ export default function ProductTab({
             Confirm the entity is registered and counsel has cleared the terms before quoting.
           </div>
         ) : (
-          <div style={{ marginBottom: 14, fontSize: 12, color: '#6B7280', lineHeight: 1.6 }}>
+          <div style={{ marginBottom: 14, fontSize: 12, color: '#667085', lineHeight: 1.6 }}>
             Financing is currently extended by <strong>{params.financingEntityName}</strong> &mdash; the
             seller finances its own installment sales. If financing is ever outsourced or moved to a
             separate company, update the financing entity so the Terms &amp; Conditions and the PDF
@@ -168,7 +168,7 @@ export default function ProductTab({
             v3-208 — the battery package now rides its OWN curve over total
             battery kWh (production-main rule), independent of the solar
             array's size — see the Battery package curve section below. */}
-        <div style={{ marginBottom: 12, fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
+        <div style={{ marginBottom: 12, fontSize: 12, color: '#475467', lineHeight: 1.6 }}>
           Each phase has its own gross-margin curve over rated capacity (kWp), fitted through its
           Min / Med / Max anchors. A curve applies <strong>only to the Solar Panels line, and only
           when the panels are purchased with at least one inverter</strong>. A panels-only order —
@@ -180,7 +180,7 @@ export default function ProductTab({
           is the exception</strong> — it ignores the panels curves and the component table
           entirely and prices off its own curve below, at the order&rsquo;s total battery kWh.
         </div>
-        <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+        <div style={{ fontWeight: 700, fontSize: 12, color: '#475467',
                       textTransform: 'uppercase', letterSpacing: '0.03em', margin: '14px 0 2px' }}>
           Single-phase panels curve
         </div>
@@ -199,7 +199,7 @@ export default function ProductTab({
                marginValue={params.grossMarginMax} onMargin={v => updateParam('margins', 'grossMarginMax', v)}
                kwpValue={params.grossMarginMaxKwp} onKwp={v => updateParam('margins', 'grossMarginMaxKwp', v)}
                canEdit={canEditSection('margins')} />
-        <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+        <div style={{ fontWeight: 700, fontSize: 12, color: '#475467',
                       textTransform: 'uppercase', letterSpacing: '0.03em', margin: '14px 0 2px' }}>
           Three-phase panels curve
         </div>
@@ -218,11 +218,11 @@ export default function ProductTab({
                marginValue={params.grossMarginMaxTp} onMargin={v => updateParam('margins', 'grossMarginMaxTp', v)}
                kwpValue={params.grossMarginMaxKwpTp} onKwp={v => updateParam('margins', 'grossMarginMaxKwpTp', v)}
                canEdit={canEditSection('margins')} />
-        <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+        <div style={{ fontWeight: 700, fontSize: 12, color: '#475467',
                       textTransform: 'uppercase', letterSpacing: '0.03em', margin: '14px 0 2px' }}>
           Battery package curve
         </div>
-        <div style={{ marginBottom: 4, fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
+        <div style={{ marginBottom: 4, fontSize: 12, color: '#475467', lineHeight: 1.6 }}>
           The battery package rides its <strong>own</strong> curve over the order&rsquo;s
           <strong> total battery kWh</strong> — not the solar array&rsquo;s kWp — so a panel-light,
           battery-heavy order still gets the right battery margin. It applies to all six battery
@@ -262,8 +262,8 @@ export default function ProductTab({
             gross-up allowances get their OWN labeled block with a hairline
             divider, so the MDR no longer reads as part of the margin curves
             above it. */}
-        <div style={{ borderTop: '1px solid #E5E7EB', marginTop: 18, paddingTop: 14 }}>
-          <div style={{ fontWeight: 700, fontSize: 12, color: '#374151',
+        <div style={{ borderTop: '1px solid #e4e7ec', marginTop: 18, paddingTop: 14 }}>
+          <div style={{ fontWeight: 700, fontSize: 12, color: '#475467',
                         textTransform: 'uppercase', letterSpacing: '0.03em', margin: '0 0 2px' }}>
             Price gross-up allowances
           </div>
@@ -502,10 +502,10 @@ function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr, comm 
 
   return (
     <div style={{ marginTop: 18 }}>
-      <div style={{ fontWeight: 700, fontSize: 13, color: '#111827', marginBottom: 4 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, color: '#212121', marginBottom: 4 }}>
         Component gross margins
       </div>
-      <div style={{ fontSize: 12, color: '#4B5563', lineHeight: 1.6, marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: '#475467', lineHeight: 1.6, marginBottom: 10 }}>
         <strong>Full system</strong> — the order includes both solar panels and at least one
         inverter — is the only case where Follow / Fixed applies; &ldquo;Follow&rdquo; rides the
         curve of the order&rsquo;s phase. <strong>Otherwise</strong> applies whenever either leg
@@ -535,7 +535,7 @@ function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr, comm 
                 <tr key={id}>
                   <td style={{ ...td, fontWeight: 700, color: COLORS.textMuted }}>{id}</td>
                   <td style={td}>
-                    <div style={{ fontWeight: 600, color: '#111827' }}>{label}</div>
+                    <div style={{ fontWeight: 600, color: '#212121' }}>{label}</div>
                     <div style={{ fontSize: 11, color: COLORS.textMuted, lineHeight: 1.5 }}>{hint}</div>
                   </td>
                   {single ? (
@@ -562,7 +562,7 @@ function ComponentMarginsTable({ componentMargins, canEdit, onChange, mdr, comm 
                           <NumberInput value={pct(r.fixed)} onChange={v => v != null && setRow(id, { fixed: clampPct(v) })}
                                        step={0.5} min={0} max={99} suffix="%" width={92} />
                         ) : (
-                          <span style={{ color: isFixed ? '#111827' : '#C4C8CF' }}>
+                          <span style={{ color: isFixed ? '#212121' : '#C4C8CF' }}>
                             {pct(r.fixed).toFixed(1)}%
                           </span>
                         )}
@@ -696,7 +696,7 @@ function FullSystemPerKwpChart({ params, phase }) {
         the mounting floor crossover.`}
       </div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12,
-                      color: stockedOut ? '#9CA3AF' : '#374151', marginBottom: 8,
+                      color: stockedOut ? '#9CA3AF' : '#475467', marginBottom: 8,
                       cursor: stockedOut ? 'not-allowed' : 'pointer', userSelect: 'none' }}>
         <input type="checkbox"
                checked={inclInverters && !stockedOut}
@@ -706,7 +706,7 @@ function FullSystemPerKwpChart({ params, phase }) {
       </label>
       {panelsOnly && !stockedOut && (
         <div style={{ padding: '8px 12px', borderRadius: 8, backgroundColor: '#F3F4F6',
-                      border: '1px solid #E5E7EB', fontSize: 12, color: '#4B5563',
+                      border: '1px solid #e4e7ec', fontSize: 12, color: '#475467',
                       lineHeight: 1.55, marginBottom: 8 }}>
           Inverters excluded — the chart prices every point as a
           {' '}<strong>panels-without-inverter</strong> order, the only inverter-less shape the

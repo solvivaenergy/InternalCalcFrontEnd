@@ -239,7 +239,7 @@ const weightSliderStyles = {
   },
   dpNum: { fontSize: 17, fontWeight: 700, color: COLORS.brandGreen,
            fontVariantNumeric: 'tabular-nums' },
-  tenorNum: { fontSize: 17, fontWeight: 700, color: '#E87722',
+  tenorNum: { fontSize: 17, fontWeight: 700, color: '#006ac6',
               fontVariantNumeric: 'tabular-nums' },
   sideLbl: { fontSize: 12, color: COLORS.textMuted },
   range: { width: '100%', accentColor: COLORS.brandGreen, cursor: 'pointer' },
@@ -1452,7 +1452,7 @@ export const adminStyles = {
   saveStatusOk:   { fontSize: 13, color: '#065F46', fontWeight: 600 },
   saveStatusErr:  { fontSize: 13, color: '#991B1B', fontWeight: 600 },
   saveBtn: {
-    background: '#25543A', border: '1px solid #25543A', color: '#FFFFFF',
+    background: '#1f512a', border: '1px solid #1f512a', color: '#FFFFFF',
     fontSize: 13, fontWeight: 700, padding: '10px 20px', borderRadius: 6,
     cursor: 'pointer', fontFamily: 'inherit', letterSpacing: 0.3,
   },

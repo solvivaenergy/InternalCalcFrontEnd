@@ -202,7 +202,7 @@ export const BRAND = {
   // copyright notice (Footer + ContactGate) and in the proposal PDF
   // (T&C pages, Conforme, page footers, signature block label).
   legalEntity: 'Solviva Energy Corporation',
-  primaryColor: '#E87722',  // Solviva orange (matches Excel disclaimer headers)
+  primaryColor: '#006ac6',  // Solviva orange (matches Excel disclaimer headers)
   accentBlue: '#3B82C4',    // for solar/day
   accentDark: '#1F3A5F',    // for night
   inputTint: '#DBEAFE',     // light blue used in Excel for user-input cells

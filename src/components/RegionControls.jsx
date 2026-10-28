@@ -80,7 +80,7 @@ const styles = {
   switchWrap: { display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 },
   switchCaption: {
     fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
-    color: '#6B7280', whiteSpace: 'nowrap',
+    color: '#667085', whiteSpace: 'nowrap',
   },
   segmented: {
     display: 'inline-flex', alignItems: 'center', gap: 2,
@@ -90,7 +90,7 @@ const styles = {
   segment: {
     display: 'inline-flex', alignItems: 'center', gap: 6,
     padding: '6px 14px', borderRadius: 999, border: 'none',
-    backgroundColor: 'transparent', color: '#4B5563',
+    backgroundColor: 'transparent', color: '#475467',
     fontSize: 12, fontWeight: 600, letterSpacing: 0.2, lineHeight: 1.2,
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     transition: 'background-color 150ms, color 150ms',

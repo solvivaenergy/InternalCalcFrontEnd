@@ -152,7 +152,7 @@ export default function MaintenanceGate({ onUnlock, agent, brand }) {
 const styles = {
   page: {
     minHeight: '100vh',
-    backgroundColor: '#F7F4ED',
+    backgroundColor: '#fcfcfc',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -164,7 +164,7 @@ const styles = {
   copyrightLine: {
     fontSize: 12,
     opacity: 0.7,
-    color: '#5F5E5A',
+    color: '#475467',
     textAlign: 'center',
   },
   card: {
@@ -186,14 +186,14 @@ const styles = {
   heroHeadline: {
     fontSize: 28,
     fontWeight: 700,
-    color: '#25543A',
+    color: '#1f512a',
     margin: '0 0 8px',
     letterSpacing: -0.5,
     lineHeight: 1.2,
   },
   subtitle: {
     fontSize: 14,
-    color: '#6B7280',
+    color: '#667085',
     lineHeight: 1.6,
     margin: '0 0 32px',
   },
@@ -211,7 +211,7 @@ const styles = {
   fieldLabel: {
     fontSize: 12,
     fontWeight: 600,
-    color: '#374151',
+    color: '#475467',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -222,7 +222,7 @@ const styles = {
     borderRadius: 8,
     backgroundColor: '#DBEAFE',
     fontFamily: 'inherit',
-    color: '#1F2937',
+    color: '#212121',
     outline: 'none',
     transition: 'border-color 150ms',
   },
@@ -240,7 +240,7 @@ const styles = {
     padding: '14px 20px',
     fontSize: 15,
     fontWeight: 600,
-    backgroundColor: '#25543A',
+    backgroundColor: '#1f512a',
     color: '#FFFFFF',
     border: 'none',
     borderRadius: 8,
@@ -265,23 +265,23 @@ const styles = {
   agentBlock: {
     marginTop: 24,
     paddingTop: 20,
-    borderTop: '1px solid #E5E7EB',
+    borderTop: '1px solid #e4e7ec',
     fontSize: 13,
   },
   agentLabel: {
     fontSize: 11,
     fontWeight: 600,
-    color: '#6B7280',
+    color: '#667085',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 4,
   },
   agentName: {
     fontWeight: 600,
-    color: '#1F2937',
+    color: '#212121',
     marginBottom: 2,
   },
   agentContact: {
-    color: '#6B7280',
+    color: '#667085',
   },
 };
