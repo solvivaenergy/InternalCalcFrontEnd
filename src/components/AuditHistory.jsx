@@ -165,7 +165,7 @@ const styles = {
   count: { marginLeft: "auto", color: "#777", fontSize: 13 },
   muted: { color: "#777", fontSize: 14 },
   list: { display: "grid", gap: 8 },
-  event: { border: "1px solid #e1e1da", background: "#fafaf7" },
+  event: { border: "1px solid #e4e7ec", background: "#fafaf7" },
   summary: {
     display: "grid",
     gridTemplateColumns: "minmax(170px, 1.2fr) minmax(150px, 1fr) auto minmax(110px, .7fr) auto",
@@ -184,7 +184,7 @@ const styles = {
   },
   area: { color: COLORS.darkGreen || "#1f512a", fontWeight: 600 },
   changeCount: { color: "#777", textAlign: "right" },
-  details: { padding: "0 14px 14px 34px", borderTop: "1px solid #e1e1da" },
+  details: { padding: "0 14px 14px 34px", borderTop: "1px solid #e4e7ec" },
   meta: { padding: "11px 0", color: "#777", fontSize: 12 },
   changeList: { display: "grid", gap: 7 },
   change: { padding: "9px 10px", background: "#fff", border: "1px solid #ecece6" },

@@ -408,8 +408,8 @@ const styles = {
   // metric tiles above so the adjuster reads as the last row of that stack;
   // the reference sits inset beneath a divider rather than in its own card.
   duBlock: {
-    marginTop: 9, borderRadius: 9, backgroundColor: '#F5F2EA',
-    border: '1px solid #E8E2D3', overflow: 'hidden',
+    marginTop: 9, borderRadius: 9, backgroundColor: '#f2f4f7',
+    border: '1px solid #e4e7ec', overflow: 'hidden',
   },
   duBlockTop: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',

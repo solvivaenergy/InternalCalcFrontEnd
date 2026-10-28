@@ -84,7 +84,7 @@ const CSS = `
   display:flex;align-items:center;justify-content:space-between}
 .mfl-header img{height:24px;display:block}
 .mfl-progress{display:flex;gap:5px;padding:4px 20px 12px}
-.mfl-progress i{flex:1;height:4px;border-radius:4px;background:#DDE0D2;transition:background .3s}
+.mfl-progress i{flex:1;height:4px;border-radius:4px;background:#e4e7ec;transition:background .3s}
 .mfl-progress i.done{background:var(--g9)}
 .mfl-progress i.now{background:var(--neon);outline:1px solid var(--g9)}
 .mfl-screen{flex:1;padding:6px 20px 150px}

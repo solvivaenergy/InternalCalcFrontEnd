@@ -933,7 +933,7 @@ const styles = {
     backgroundColor: COLORS.brandCream,
   },
   totalRow: {
-    backgroundColor: '#F5F1E8',
+    backgroundColor: '#f2f4f7',
     borderTop: `2px solid ${COLORS.brandGreen}`,
   },
 
