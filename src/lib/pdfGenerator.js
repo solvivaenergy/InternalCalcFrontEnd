@@ -27,7 +27,8 @@
 
 import jspdfModule from "jspdf";
 import autoTableModule from "jspdf-autotable";
-import { LUZON_REGIONS, fmtKwp } from "../config.js";
+import { fmtKwp } from "../config.js";
+import { regionsFor } from "../data/locations.js"; // v3-231 — per-region location table
 // Vector artwork drawn as PDF paths (parseSvg / drawSvg below). Vite inlines
 // the SVG source, so the logo can never be missing the way a fetched asset can.
 import solvivaLogoSvg from "../assets/pdf/solviva-logo.svg?raw";
@@ -313,15 +314,21 @@ function fmtDate(d) {
 // province", so that adding another province-less region later is an explicit
 // decision by whoever adds it rather than a silent behaviour change here.
 //
-// A non-Luzon order (Cebu / Siargao / Other) has no cascade at all, so it keeps
-// just the typed address — appending a region there would be fiction.
+// An "Other" order has no cascade at all, so it keeps just the typed address —
+// appending a region there would be fiction.
+//
+// v3-231 — the cascade is the active REGION's table (`region`: Manila/Luzon or
+// Cebu). The 'luzon' location id is every region's structural "home mainland"
+// slot, so a Cebu quote reads "…, Cebu City, Cebu" through the same branch
+// with no special case: its entries carry province 'Cebu' and its region code
+// is not NCR.
 //
 // No de-duplication is attempted on purpose. A rep who still types "Taytay,
 // Rizal" into the street field will see it twice, which is untidy but harmless;
 // suppressing a segment because the street appears to contain it would drop a
 // real province from addresses like "12 Rizal Avenue" and make them WRONG.
 // The address placeholder now asks only for unit/street/barangay to steer this.
-function formatInstallSite(contact, state) {
+function formatInstallSite(contact, state, region = "luzon") {
   const parts = [];
   const street = (contact?.installAddress || "").trim();
   if (street) parts.push(street);
@@ -329,9 +336,9 @@ function formatInstallSite(contact, state) {
     if (state.locationCity) parts.push(state.locationCity);
     if (state.locationProvince) parts.push(state.locationProvince); // absent for NCR
     if (state.locationRegion === "NCR") {
-      const region = LUZON_REGIONS.find((r) => r.code === "NCR");
+      const ncr = regionsFor(region).find((r) => r.code === "NCR");
       // "NCR — Metro Manila" → "NCR".
-      if (region) parts.push(region.label.split("—")[0].trim());
+      if (ncr) parts.push(ncr.label.split("—")[0].trim());
     }
   }
   return parts.length ? parts.join(", ") : "-";
@@ -966,7 +973,7 @@ function drawCoverPage1(mgr) {
       ["Client/Company:", contact?.name || "-"],
       ["Contact number:", contact?.mobile || "-"],
       ["Email address:", contact?.email || "-"],
-      ["Installation site:", formatInstallSite(contact, state)],
+      ["Installation site:", formatInstallSite(contact, state, ctx.region)],
     ],
     88,
     845,
@@ -3702,8 +3709,15 @@ function drawTermsAndConditions(mgr) {
   const leftX = MARGIN;
   const rightX = MARGIN + colW + 8;
 
-  // 1. Parse dynamic content from adminParams.js instead of hardcoding
-  const rawBlocks = ctx.proposalContent?.termsAndConditions || [];
+  // 1. Parse dynamic content from adminParams.js instead of hardcoding.
+  // v3-231 / engine 1.3.0 — blocks flagged `requiresHub` (the Logistics
+  // Add-On heading + clause) are DROPPED for a region with no dispatch hub:
+  // its deliveries price at ₱0 at any distance, so a per-km clause would be
+  // wrong legal copy.
+  const hubEnabled = ctx.adminParams?.deliveryHubEnabled !== false;
+  const rawBlocks = (ctx.proposalContent?.termsAndConditions || []).filter(
+    (item) => !(item.requiresHub && !hubEnabled),
+  );
   const parsedBlocks = [];
   let currentBlock = null;
 
@@ -3724,6 +3738,12 @@ function drawTermsAndConditions(mgr) {
         .replace(
           /{{LUZON_FREE_KM}}/g,
           ctx.adminParams?.luzonFreeTravelKm || 30, // Pulls the '30' from the admin params
+        )
+        // engine 1.3.0 — the dispatch hub the Logistics clause measures from
+        // (deliveryHubLabel; "Parañaque hub" for Manila).
+        .replace(
+          /{{DELIVERY_HUB}}/g,
+          ctx.adminParams?.deliveryHubLabel || "Parañaque hub",
         );
 
       // Track if this specific paragraph needs to be bold
@@ -4021,6 +4041,7 @@ export async function generateProposalPdf({
   disclaimers,
   proposalContent,
   snapshots,
+  region = "luzon", // v3-231 — which region's location table the quote used
 }) {
   // compress: Flate-encodes the page content streams and embedded font
   // subsets, which were written raw (~1MB a proposal). Lossless.
@@ -4054,6 +4075,7 @@ export async function generateProposalPdf({
     generatedDate,
     validUntil,
     quoteRef: makeQuoteRef(generatedDate, contact),
+    region,
     adminParams,
     proposalContent,
     disclaimers: disclaimers || adminParams, // accept disclaimers explicitly OR fallback to adminParams

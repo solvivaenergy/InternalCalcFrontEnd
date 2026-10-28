@@ -6,8 +6,14 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT,
          availableDeliveryLocations } from '../data/adminParams.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
-         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_REGIONS, resolveLocation } from '../config.js';
+         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS } from '../config.js';
+// v3-231 — regions. One calculator serves Manila (`luzon`) and Cebu (`cebu`);
+// each has its own parameter payload and its own location table. The account's
+// regions come from Supabase app_metadata (src/lib/region.js); the location
+// tables and the cascade helpers live in src/data/locations.js.
+import { regionsFor, resolveLocation, defaultLocationState, pickerShape } from '../data/locations.js';
+import { DEFAULT_REGION, isRegionId, regionMeta, regionsOf,
+         getActiveRegion, setActiveRegion, regionPillStyle } from '../lib/region.js';
 // The sizing/pricing pipeline is computeProposal() in @solviva/calc-engine (proposal.js)
 // (this file's model memo, lifted out 2026-09-27). Only the PDF path still
 // reaches into the engine directly, to rebuild the annex on the issue date.
@@ -73,7 +79,10 @@ const BUNDLED_DEFAULT_DP   = ADMIN_PARAMS.defaultDownPaymentPct;  // v3-159
 const BUNDLED_DEFAULT_IRR_YEARS = ADMIN_PARAMS.irrYearsDefault;        // v3-188
 const BUNDLED_DEFAULT_DU_INFL   = ADMIN_PARAMS.duRateInflationDefault; // v3-188
 
-export function makeInitialState(kind = 'all') {
+// v3-231 — `region` picks the location defaults (src/data/locations.js); every
+// other default is read LIVE off ADMIN_PARAMS, which holds the active region's
+// payload once paramsService.load({ region }) has run.
+export function makeInitialState(kind = 'all', region = DEFAULT_REGION) {
   const step1 = {
     phase: 1,
     utilityRate: ADMIN_PARAMS.defaultUtilityRate,
@@ -147,27 +156,21 @@ export function makeInitialState(kind = 'all') {
     roofMaterial: 'metal',
     // Location (v3 — Excel CALCULATOR M37 + Y39):
     //   'luzon'   → free if locationKm ≤ adminParams.luzonFreeTravelKm (v3-199), else fixed + per-km — DEFAULT
-    //   'cebu'    → fixed + per-panel
-    //   'siargao' → fixed + per-panel
-    location: 'luzon',
-    // v3-109 (cascade lineage, merged v3-114) — Luzon location is chosen via a
-    // Region → City cascade (src/config.js LUZON_REGIONS) instead of a
-    // free-typed km. The selected city's stored road-km from OUR PARAÑAQUE
-    // LOGISTICS HUB (v3-114 origin rebase; was Km-0/Rizal Park) drives
-    // locationKm, which still feeds the identical charge formula in
-    // calculations.js (parity with workbook AA38). Defaults to NCR / Manila
-    // (18 km — inside the 30 km free zone), so the default quote total is
-    // unchanged (a ₱0 location line, exactly as before).
-    locationRegion: 'NCR',
-    // v3-210 — third level of the location cascade. null for NCR, which has no
-    // provinces; required elsewhere because city names are bare and "Rosario"
-    // exists in both Cavite and Batangas.
-    locationProvince: null,
-    locationCity: 'Manila',
-    // Distance from the Parañaque hub (Luzon only). Derived from the selected
-    // city above; held in state so calculations.js and workbook AA38 parity
-    // are untouched.
-    locationKm: 18,
+    //   dynamic deliveryLocations row → fixed + per-panel (v3-116; switched off since v3-213)
+    //   'other'   → ₱0 here; the rep prices it as a 2F line
+    // v3-109 (cascade lineage, merged v3-114) — the home-mainland location is
+    // chosen via a Region → Province → City cascade instead of a free-typed
+    // km. The selected city's stored road-km from the region's dispatch hub
+    // (v3-114 origin rebase; was Km-0/Rizal Park) drives locationKm, which
+    // still feeds the identical charge formula in calculations.js (parity
+    // with workbook AA38).
+    // v3-231 — the five fields come from defaultLocationState(region)
+    // (src/data/locations.js). Manila keeps NCR / Manila / 18 km (inside the
+    // free zone, so the default quote total is unchanged — a ₱0 location
+    // line, exactly as before); Cebu starts at Cebu City with km 0 (no hub
+    // yet). The structural id stays 'luzon' for BOTH regions: to the engine
+    // (calc-engine 1.3.0) it means "the region's home mainland".
+    ...defaultLocationState(region),
     // v3-138 — rows gained `catalogId`: a pick from Anjon's Step 2F catalog,
     // or the 'other' sentinel for a free-form line (the old behavior). A row
     // restored from a pre-v3-138 session has no catalogId at all, which reads
@@ -343,7 +346,11 @@ const CONTACT_RECORD_VERSION = 2;   // v3-61: added installAddress
 // restored WITHOUT the wipe would show returns computed at one rate beside a
 // note describing another. Bumping now costs one reset; not bumping costs a
 // silent contradiction on a customer's screen later.
-const STATE_RECORD_VERSION   = 13;  // v3-213: off-Luzon delivery locations retired; km rebased to fastest route
+// v3-231 — 13 → 14: the record gains `region` (which office's parameters priced
+// the quote). ADDITIVE, so unlike every bump above a v13 record is MIGRATED,
+// not wiped: every v13 quote was by construction a Manila quote (there was no
+// other region), so migrateStateRecord() stamps it 'luzon' and keeps it.
+const STATE_RECORD_VERSION   = 14;  // v3-231: `region` stamp (v13 migrates); v3-213: off-Luzon rows retired, km rebased
 // v3-209 — the bump is REQUIRED, not cosmetic. 29 locations (Regions I/II/CAR/V
 // and the non-Bulacan/Pampanga part of III) were removed from LUZON_REGIONS, and
 // many retained cities got new km. A restored session holding e.g.
@@ -352,6 +359,38 @@ const STATE_RECORD_VERSION   = 13;  // v3-213: off-Luzon delivery locations reti
 // `|| LUZON_REGIONS[0]`) but KEEP its stale locationKm of 460 until the rep
 // happened to touch the control — quoting a delivery charge for a destination
 // the calculator no longer offers. Wiping those sessions is the fix.
+
+// v3-231 — the stored quote record, versioned. Returns the record in the
+// current shape (with `region`), or null when it must be dropped.
+function migrateStateRecord(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (parsed._v === STATE_RECORD_VERSION) return isRegionId(parsed.region) ? parsed : null;
+  if (parsed._v === 13) return { ...parsed, _v: STATE_RECORD_VERSION, region: DEFAULT_REGION };
+  return null;   // older shapes: wipe, as before
+}
+// The region of the quote in sessionStorage, if a restorable one exists. App()
+// reads it BEFORE mounting the calculator: a quote in progress pulls the app
+// to its own region (a quote belongs to one region), provided the account
+// still holds that region.
+function peekStoredQuoteRegion() {
+  try {
+    return migrateStateRecord(JSON.parse(sessionStorage.getItem(STATE_STORAGE_KEY) || 'null'))?.region ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+// Forget the quote in progress: Steps 1–4, the issue date AND the customer
+// contact (incl. the Odoo lead id) — the installation address and the lead are
+// bound to a place, so they do not follow a region switch. (Reset & lock keeps
+// the contact; that difference is deliberate.) The rep's mode and agent
+// identity are not touched: the rep is still the rep.
+function dropStoredQuote() {
+  try {
+    sessionStorage.removeItem(STATE_STORAGE_KEY);
+    sessionStorage.removeItem(GENERATED_DATE_KEY);
+    sessionStorage.removeItem(CONTACT_STORAGE_KEY);
+  } catch (_) { /* ignore */ }
+}
 
 // ─── PDF proposal requirements (v3-61) ───────────────────────────────────────
 // The PDF proposal is rep-mode-only and prints both parties' details plus an
@@ -432,6 +471,38 @@ export default function App() {
     return () => { mounted = false; };
   }, [session?.user?.id]);
 
+  // v3-231 — the ACTIVE REGION lives here, above CalculatorApp, because a
+  // switch REMOUNTS the whole calculator (key below): the shared engine
+  // objects hold one region's values at a time, so the new region's payload is
+  // loaded behind the boot spinner into a fresh component tree. Resolution:
+  //   1. the regions on the account (app_metadata.regions; missing ⇒ Manila);
+  //   2. this device's last-used region, if still allowed, else Manila;
+  //   3. a quote in progress overrides both — it pulls the app to ITS region
+  //      when the account holds it, and is dropped when it does not.
+  // Re-runs when the account's regions change (a token refresh after an admin
+  // edit): shrunk access falls back to an allowed region and drops a foreign
+  // quote. `region` is null until resolved; the splash covers that.
+  const [region, setRegion] = useState(null);
+  const regions = session ? regionsOf(session) : [DEFAULT_REGION];
+  const regionsKey = regions.join(',');
+  useEffect(() => {
+    if (!session?.user?.id) { setRegion(null); return; }
+    const allowed = regionsKey.split(',');
+    let next = getActiveRegion(allowed);
+    const stored = peekStoredQuoteRegion();
+    if (stored) {
+      if (allowed.includes(stored)) next = stored;
+      else dropStoredQuote();
+    }
+    setActiveRegion(next);
+    setRegion(next);
+  }, [session?.user?.id, regionsKey]);
+  const handleSwitchRegion = (next) => {
+    if (!isRegionId(next) || !regions.includes(next)) return;
+    setActiveRegion(next);
+    setRegion(next);
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     // onAuthStateChange clears session → Login renders.
@@ -446,7 +517,7 @@ export default function App() {
       }} />
     );
   }
-  if (session === undefined || (session && roleLoading) || (session && !role)) {
+  if (session === undefined || (session && roleLoading) || (session && !role) || (session && !region)) {
     return <BootSplash />;
   }
   if (!session) {
@@ -461,7 +532,13 @@ export default function App() {
     email: session.user.email || '',
     phone: session.user.user_metadata?.mobile || '',
   } : null;
-  return <CalculatorApp key={role} role={role} repIdentity={repIdentity} onSignOut={handleSignOut} />;
+  // key includes the region: a switch remounts the calculator so every piece
+  // of per-quote state is re-seeded from the new region's payload.
+  return (
+    <CalculatorApp key={`${role}:${region}`} role={role} repIdentity={repIdentity}
+                   region={region} regions={regions} onSwitchRegion={handleSwitchRegion}
+                   onSignOut={handleSignOut} />
+  );
 }
 
 // Minimal centered splash used while the session/role resolve, matching the
@@ -481,7 +558,8 @@ function BootSplash() {
   );
 }
 
-function CalculatorApp({ role, repIdentity, onSignOut }) {
+function CalculatorApp({ role, repIdentity, onSignOut,
+                         region = DEFAULT_REGION, regions = [DEFAULT_REGION], onSwitchRegion }) {
   // Role → access routing. ADMIN_ROLE_TO_ACCESS maps the DB role ('admin',
   // 'engineering', 'product', 'inventory', 'finco') onto the calculator's
   // internal access levels; 'rep' opens the full sales-rep calculator and
@@ -638,7 +716,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   const [paramsRev, setParamsRev] = useState(0);   // bumps on each save to force re-render
   useEffect(() => {
     let mounted = true;
-    paramsService.load().then(() => {
+    paramsService.load({ region }).then(() => {
       if (!mounted) return;
       // Loaded-from-server and status BEFORE the loading flag flips, so the
       // first post-spinner render already sees them (the maintenance gate
@@ -646,6 +724,17 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       setParamsLoadedFromServer(paramsService.isLoadedFromServer());
       setParamsStatus(paramsService.getLoadStatus());
       setParamsLoading(false);
+      // v3-231 — a FRESH quote (nothing restored) is re-seeded whole from the
+      // region's live defaults. The state initialiser ran before this load, on
+      // whatever the shared objects held at the time — the bundled defaults
+      // on first boot, or the PREVIOUS region's values right after a region
+      // switch — and the field-by-field snap below only moves fields still at
+      // the BUNDLED value, so it could not catch the second case. The UI was
+      // behind the spinner, so nothing typed is lost.
+      if (!restoredRef.current) {
+        setState(makeInitialState('all', region));
+        return;
+      }
       // v3-70: boot-race snap for the Product-settable Step 1 defaults.
       // First render ran before this fetch resolved, so a brand-new session
       // booted on the BUNDLED defaults. If a field still equals the bundled
@@ -698,7 +787,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     if (paramsRetrying) return;
     setParamsRetrying(true);
     try {
-      await paramsService.load();
+      await paramsService.load({ region });
       setParamsLoadedFromServer(paramsService.isLoadedFromServer());
       setParamsStatus(paramsService.getLoadStatus());
     } finally {
@@ -711,17 +800,24 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // We merge any saved record on top of fresh defaults so newly-added fields
   // (e.g. v3.7 added roofMaterial / location) fall back gracefully on records
   // saved by an older build of the app.
+  // v3-231 — whether this mount restored a quote (the load effect above
+  // re-seeds a fresh one from the region's live defaults; a restored one gets
+  // only the field-by-field snap). A record from another region is dropped:
+  // App() already steered the active region to a restorable record's region,
+  // so reaching here with a mismatch means the account lost that region.
+  const restoredRef = useRef(false);
   const [state, setState] = useState(() => {
-    const defaults = makeInitialState('all');
+    const defaults = makeInitialState('all', region);
     try {
       const raw = sessionStorage.getItem(STATE_STORAGE_KEY);
       if (!raw) return defaults;
-      const parsed = JSON.parse(raw);
-      if (parsed._v !== STATE_RECORD_VERSION) {
+      const migrated = migrateStateRecord(JSON.parse(raw));
+      if (!migrated || migrated.region !== region) {
         sessionStorage.removeItem(STATE_STORAGE_KEY);
         return defaults;
       }
-      const { _v, ...rest } = parsed;
+      const { _v, region: _storedRegion, ...rest } = migrated;
+      restoredRef.current = true;
       return { ...defaults, ...rest };
     } catch (_) {
       return defaults;
@@ -739,13 +835,15 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // — basically anything that mutates `state`. The cost is negligible (one
   // JSON.stringify + one localStorage write per keystroke) and the win is
   // that a customer who reloads mid-form returns to exactly where they were.
+  // v3-231 — stamped with the region whose parameters priced it; `region` is a
+  // prop, never a state field, so it cannot leak into computeProposal's inputs.
   useEffect(() => {
     try {
       sessionStorage.setItem(STATE_STORAGE_KEY, JSON.stringify({
-        ...state, _v: STATE_RECORD_VERSION,
+        ...state, region, _v: STATE_RECORD_VERSION,
       }));
     } catch (_) { /* ignore */ }
-  }, [state]);
+  }, [state, region]);
 
   // generatedDate is held in sessionStorage too so that "Valid until" stays
   // anchored to the original quote-creation moment across reloads. Without
@@ -854,7 +952,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     if (!pending) return undefined;
     let cancelled = false;
     (async () => {
-      const res = await fetchCrmContact(String(pending));
+      const res = await fetchCrmContact(String(pending), region);
       if (cancelled) return;
       if (!res.ok) {
         setOdooSync({
@@ -949,7 +1047,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     };
   }, []);
   const handleLockConfirm = () => {
-    setState(makeInitialState('all'));   // wipe Steps 1-4 to defaults
+    setState(makeInitialState('all', region));   // wipe Steps 1-4 to defaults
     updateMode('customer');               // flip mode (clears solviva_mode in storage)
     setAdminAccess('none');               // v3-203 — locking drops admin access too
     // Story 004 AC4 — the issue date is per-QUOTE, so it must not survive the
@@ -959,6 +1057,35 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     try { sessionStorage.setItem(GENERATED_DATE_KEY, fresh.toISOString()); } catch (_) { /* ignore */ }
     setGeneratedDate(fresh);
     setLockConfirmOpen(false);
+  };
+
+  // ─── v3-231 — region switch ────────────────────────────────────────────────
+  // A quote belongs to one region: switching starts a NEW quote in the other
+  // region (the parent remounts this component and loads that region's
+  // payload). Work in progress is confirmed away first, through the same
+  // dialog idiom as "Reset & lock". `solviva_mode` and `solviva_agent` survive
+  // the switch — the rep is still the rep.
+  const [pendingRegion, setPendingRegion] = useState(null);
+  const quoteInProgress = () => {
+    try {
+      const fresh = makeInitialState('all', region);
+      const touched = JSON.stringify(state) !== JSON.stringify(fresh);
+      const hasContact = !!(contact.name || contact.email || contact.mobile
+                            || contact.installAddress || contact.leadId);
+      return touched || hasContact;
+    } catch (_) {
+      return true;   // when in doubt, ask
+    }
+  };
+  const commitRegionSwitch = (next) => {
+    dropStoredQuote();
+    setPendingRegion(null);
+    if (onSwitchRegion) onSwitchRegion(next);
+  };
+  const requestRegionSwitch = (next) => {
+    if (!next || next === region) return;
+    if (quoteInProgress()) setPendingRegion(next);
+    else commitRegionSwitch(next);
   };
 
   // ─── PDF generation (rep-mode only) ────────────────────────────────────────
@@ -1104,6 +1231,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         brand: BRAND, adminParams: ADMIN_PARAMS, disclaimers: DISCLAIMERS,
         proposalContent: PROPOSAL_CONTENT,
         snapshots: { visualizing: visualizingPng, summary: summaryPng },
+        region,   // v3-231 — the installation-site address uses this region's table
       });
 
       // ─── 064C/J/K — push the proposal to Odoo as a quotation ─────────────
@@ -1117,6 +1245,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             state, model: issuedModel, contact, agent,
             issuedAt, validUntil: issuedValidUntil,
             quoteRef: pdfResult?.quoteRef || '',
+            region,   // v3-231 — named in the quotation's chatter note; lead↔region warning
           });
           const push = await pushProposalToOdoo(payload);
           if (push.ok) {
@@ -1267,9 +1396,11 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     }
   }, [activeTab, model.terms.negativeBalance, adminAccess]);
 
-  const resetStep1 = () => setState(s => ({ ...s, ...makeInitialState('step1') }));
-  const resetStep2 = () => setState(s => ({ ...s, ...makeInitialState('step2') }));
-  const resetStep3 = () => setState(s => ({ ...s, ...makeInitialState('step3') }));
+  // v3-231 — `region` so a Step 2 reset lands on THIS region's default site,
+  // not Manila's.
+  const resetStep1 = () => setState(s => ({ ...s, ...makeInitialState('step1', region) }));
+  const resetStep2 = () => setState(s => ({ ...s, ...makeInitialState('step2', region) }));
+  const resetStep3 = () => setState(s => ({ ...s, ...makeInitialState('step3', region) }));
   const updateState = (patch) => setState(s => ({ ...s, ...patch }));
 
   const today = new Date();
@@ -1364,12 +1495,13 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     return (
       <>
         <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
-                            retrying={paramsRetrying} compact />
+                            retrying={paramsRetrying} compact region={region} />
         <MobileFlow
           state={state}
           updateState={updateState}
           model={model}
           adminParams={ADMIN_PARAMS}
+          region={region}
           contact={contact}
           setContact={setContact}
         />
@@ -1388,9 +1520,10 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               mode={mode} onLockMode={() => setLockConfirmOpen(true)}
               adminAccess={adminAccess}
               onSignOut={onSignOut}
+              region={region} regions={regions} onSwitchRegion={requestRegionSwitch}
               leadState={state} leadModel={model} updateState={updateState} />
       <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
-                          retrying={paramsRetrying} />
+                          retrying={paramsRetrying} region={region} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             adminAccess={adminAccess}
@@ -1404,7 +1537,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         {activeTab === 'calculator' && (
           <Calculator state={state} updateState={updateState} model={model}
                       adminParams={ADMIN_PARAMS} disclaimers={DISCLAIMERS}
-                      mode={mode}
+                      mode={mode} region={region}
                       resetStep1={resetStep1} resetStep2={resetStep2} resetStep3={resetStep3}
                       onContactRep={() => {
                         // v3-98 — the contact form renders inside the header at
@@ -1440,7 +1573,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         {adminAccess !== 'none' && ADMIN_TAB_IDS.includes(activeTab) && (
           <>
             {activeTab === 'audit-history' ? (
-              <AuditHistory accessLevel={adminAccess} />
+              <AuditHistory accessLevel={adminAccess} region={region} regions={regions} />
             ) : activeTab === 'users' ? (
               <UserManagement accessLevel={adminAccess} />
             ) : (
@@ -1448,10 +1581,17 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
                 <MaintenanceModeBlock
                   accessLevel={adminAccess}
                   savingDisabled={!paramsLoadedFromServer}
+                  region={region}
                 />
+                {/* v3-231 — key={region}: the editor seeds its drafts from the
+                    shared objects once, so a region switch must remount it
+                    (the parent already remounts the whole calculator; the key
+                    is belt-and-braces). */}
                 <AdminShell
+                  key={region}
                   tab={activeTab}
                   accessLevel={adminAccess}
+                  region={region}
                   onLogout={handleAdminLogout}
                   savingDisabled={!paramsLoadedFromServer}
                   calcPanelCount={model.panelCount}
@@ -1511,6 +1651,48 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           onCancel={() => setLockConfirmOpen(false)}
         />
       )}
+      {/* v3-231 — confirm before a region switch discards a quote in progress. */}
+      {pendingRegion && (
+        <ConfirmDialog
+          title={`Switch to ${regionMeta(pendingRegion).label}?`}
+          message={`A quote belongs to one region. Switching starts a new quote in ${regionMeta(pendingRegion).label} — the current Steps 1–4, the customer contact and the issue date are discarded. Saved parameters are not affected.`}
+          confirmLabel={`Start a new quote in ${regionMeta(pendingRegion).label}`}
+          cancelLabel={`Stay in ${regionMeta(region).label}`}
+          onConfirm={() => commitRegionSwitch(pendingRegion)}
+          onCancel={() => setPendingRegion(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// v3-231 — the region control in the header. An account with BOTH regions
+// gets a two-segment toggle (Manila | Cebu); an account with one region gets a
+// fixed badge and no control, so there is nothing to tap by accident. Cebu's
+// colour is distinct on purpose: the prices themselves do not reveal which
+// region produced them, so the badge must.
+function RegionSwitch({ regions, active, onSwitch }) {
+  const multi = regions.length > 1;
+  return (
+    <div style={styles.regionSwitch} data-no-print="true"
+         role={multi ? 'group' : undefined} aria-label="Quoting region">
+      {regions.map(id => {
+        const m = regionMeta(id);
+        const on = id === active;
+        return multi ? (
+          <button key={id} type="button" aria-pressed={on}
+                  title={on ? `Quoting in ${m.label}` : `Switch to the ${m.label} calculator`}
+                  onClick={() => { if (!on && onSwitch) onSwitch(id); }}
+                  style={{ ...styles.regionSeg, ...(on ? regionPillStyle(m) : styles.regionSegOff) }}>
+            {m.label}
+          </button>
+        ) : (
+          <span key={id} title="Your quoting region"
+                style={{ ...styles.regionBadge, ...regionPillStyle(m) }}>
+            {m.label}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -1518,7 +1700,8 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
 function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
                   generatedDate, validUntil, quoteExpired,
                   editing, setEditing, requireForPdf,
-                  mode, onLockMode, onSignOut, leadState, leadModel, updateState }) {
+                  mode, onLockMode, onSignOut, leadState, leadModel, updateState,
+                  region = DEFAULT_REGION, regions = [DEFAULT_REGION], onSwitchRegion }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
@@ -1535,6 +1718,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
               mode={mode} requireAll={requireForPdf}
               leadState={leadState} leadModel={leadModel}
               updateState={updateState}
+              region={region}
               onDone={() => setEditing(false)}
             />
           </div>
@@ -1584,6 +1768,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
           </div>
         </div>
         <div className="header-actions" style={styles.headerActions} data-no-print="true">
+          <RegionSwitch regions={regions} active={region} onSwitch={onSwitchRegion} />
           {mode === 'rep' && onLockMode && (
             <button onClick={onLockMode}
                     style={styles.repPillBtn}
@@ -1656,7 +1841,8 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
 // the customer-facing render already handles agent.name === '' by
 // falling back to "Solviva Customer Support" automatically.
 function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requireAll = false,
-                           leadState, leadModel, updateState, onDone }) {
+                           leadState, leadModel, updateState, onDone,
+                           region = DEFAULT_REGION }) {
   const [draftCustomer, setDraftCustomer] = useState(contact);
   const [draftAgent, setDraftAgent] = useState(agent);
   // When the form is opened by the PDF gate (requireAll), surface validation
@@ -1681,18 +1867,23 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   // Consequence to be aware of: unlike Name/Email/Mobile, a location change is
   // live the moment it is made, so Cancel does NOT revert it. That is the price
   // of one visible source of truth, and it matches how 2E already behaves.
+  // v3-231 — the active REGION's table (Manila/Luzon or Cebu); defaults from
+  // defaultLocationState(region) so a half-empty state resolves inside the
+  // right region.
+  const regionDefaults = defaultLocationState(region);
   const locState = {
     location: leadState?.location ?? 'luzon',
-    locationRegion: leadState?.locationRegion ?? 'NCR',
-    locationProvince: leadState?.locationProvince ?? null,
+    locationRegion: leadState?.locationRegion ?? regionDefaults.locationRegion,
+    locationProvince: leadState?.locationProvince ?? regionDefaults.locationProvince,
     locationCity: leadState?.locationCity ?? '',
   };
   const loc = resolveLocation(
-    locState.locationRegion, locState.locationProvince, locState.locationCity,
+    region, locState.locationRegion, locState.locationProvince, locState.locationCity,
   );
-  // Only the Luzon cascade is a km lookup; the dynamic off-island rows and
-  // "Other" price by their own rules (2F for Other), so the three selects are
-  // meaningless unless Luzon is picked.
+  const shape = pickerShape(region, ADMIN_PARAMS);
+  // Only the home-mainland cascade is a km lookup; the dynamic off-island rows
+  // and "Other" price by their own rules (2F for Other), so the selects are
+  // meaningless unless the home mainland is picked.
   const showCascade = locState.location === 'luzon';
   // Guarded: ContactEditForm is only mounted by Header, which always supplies
   // updateState — the check keeps the controls inert rather than throwing if
@@ -1711,7 +1902,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     if (!PROJECT_NUMBER_RE.test(projectNo)) return;
     setLookup('loading');
     setLookupMsg('');
-    const res = await fetchCrmContact(projectNo);
+    const res = await fetchCrmContact(projectNo, region);
     if (!res.ok) {
       setLookup('error');
       setLookupMsg(res.error);
@@ -1796,6 +1987,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           state: leadState,
           model: leadModel,
           contact: draftCustomer,
+          region,   // v3-231
           submittedAt: now.toISOString(),
           reference: makeLeadRef(now, draftCustomer),
           adminParams: ADMIN_PARAMS,   // v3-125 — dynamic-location labels
@@ -1996,7 +2188,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
             <span style={labelStyle}>Installation location</span>
             <select style={inputStyle} value={locState.location}
                     onChange={e => applyLoc({ location: e.target.value })}>
-              <option value="luzon">Luzon main island</option>
+              {/* v3-231 — 'luzon' is every region's "home mainland" slot; the
+                  label is the region's own (engine 1.3.0). */}
+              <option value="luzon">{ADMIN_PARAMS.deliveryRegionLabel || 'Luzon'} main island</option>
               {availableDeliveryLocations(ADMIN_PARAMS).map(l => (
                 <option key={l.id} value={l.id}>{l.label}</option>
               ))}
@@ -2005,26 +2199,29 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           </div>
           {showCascade && (
             <>
-              <div>
-                <span style={labelStyle}>Region</span>
-                <select style={inputStyle} value={loc.region.code}
-                        onChange={e => {
-                          // Re-resolve so region, province and city land on a
-                          // valid triple together.
-                          const n = resolveLocation(e.target.value, null, null);
-                          applyLoc({ locationRegion: n.region.code, locationProvince: n.province,
-                                     locationCity: n.city.name, locationKm: n.city.km });
-                        }}>
-                  {LUZON_REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
-                </select>
-              </div>
+              {/* Hidden when the region's table has one entry (Cebu). */}
+              {shape.showRegionSelect && (
+                <div>
+                  <span style={labelStyle}>Region</span>
+                  <select style={inputStyle} value={loc.region.code}
+                          onChange={e => {
+                            // Re-resolve so region, province and city land on a
+                            // valid triple together.
+                            const n = resolveLocation(region, e.target.value, null, null);
+                            applyLoc({ locationRegion: n.region.code, locationProvince: n.province,
+                                       locationCity: n.city.name, locationKm: n.city.km });
+                          }}>
+                    {regionsFor(region).map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+                  </select>
+                </div>
+              )}
               {/* NCR has no provinces — hidden rather than a one-item control. */}
               {loc.provinces.length > 0 && (
                 <div>
                   <span style={labelStyle}>Province</span>
                   <select style={inputStyle} value={loc.province || ''}
                           onChange={e => {
-                            const n = resolveLocation(loc.region.code, e.target.value, null);
+                            const n = resolveLocation(region, loc.region.code, e.target.value, null);
                             applyLoc({ locationProvince: n.province,
                                        locationCity: n.city.name, locationKm: n.city.km });
                           }}>
@@ -2559,6 +2756,23 @@ const styles = {
     gap: 8,
     alignItems: 'center',
     flexShrink: 0,
+  },
+  // v3-231 — region toggle / badge (RegionSwitch). Segments clone the repPillBtn
+  // shape; the active one takes the region's own colours (regionPillStyle),
+  // the inactive one is neutral grey.
+  regionSwitch: { display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 },
+  regionSeg: {
+    display: 'inline-flex', alignItems: 'center',
+    padding: '5px 12px', fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
+    borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
+  },
+  regionSegOff: {
+    color: '#6B7280', backgroundColor: '#FFFFFF', border: '1px solid #D1D5DB',
+  },
+  regionBadge: {
+    display: 'inline-flex', alignItems: 'center',
+    padding: '5px 12px', fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
+    borderRadius: 999, flexShrink: 0, cursor: 'default',
   },
   editBtn: {
     background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,

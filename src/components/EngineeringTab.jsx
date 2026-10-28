@@ -17,7 +17,7 @@
 
 import React from 'react';
 import { COLORS, fmt } from './ui.jsx';
-import { Section, Param, DeliveryLocationsTable, MiscCatalogTable,
+import { Section, Param, TextParam, BoolParam, DeliveryLocationsTable, MiscCatalogTable,
          adminStyles } from './AdminShared.jsx';
 import {
   canEditAdminSection, canEditInventory, hasAnyEditAccess,
@@ -149,24 +149,50 @@ export default function EngineeringTab({
       <Section title="Location / Delivery Charges"
                canEdit={canEditSection('location')}
                anyEditRole={anyEdit}>
+        {/* v3-231 — REGION-AWARE (engine 1.3.0). These three describe the
+            region whose parameters are being edited: its name on the delivery
+            line, picker and proposal; whether it has a dispatch hub yet; and
+            that hub's name. With the hub OFF the engine prices every delivery
+            at ₱0 at any distance, the pickers show no km, the proposal drops
+            the Logistics clause, and the radius / fee fields below are inert
+            (kept so the values are ready the day the hub opens). */}
+        <TextParam label="Service region label"
+                   value={params.deliveryRegionLabel}
+                   onChange={v => updateParam('location', 'deliveryRegionLabel', v)}
+                   canEdit={canEditSection('location')}
+                   placeholder="Luzon"
+                   hint="Names the region on the Summary's Location / Delivery line, in the location picker and on the proposal — e.g. Luzon, Cebu." />
+        <BoolParam label="Delivery hub in service"
+                   value={params.deliveryHubEnabled !== false}
+                   onChange={v => updateParam('location', 'deliveryHubEnabled', v)}
+                   canEdit={canEditSection('location')}
+                   onLabel="Yes — distance pricing applies"
+                   offLabel="No hub yet — every delivery is ₱0"
+                   hint="Off while the region has no dispatch hub: every serviceable city prices ₱0 delivery, no distance is shown to the customer, the proposal omits the Logistics Add-On clause, and the three fields below do not apply until this is switched on." />
+        <TextParam label="Logistics hub name"
+                   value={params.deliveryHubLabel}
+                   onChange={v => updateParam('location', 'deliveryHubLabel', v)}
+                   canEdit={canEditSection('location') && params.deliveryHubEnabled !== false}
+                   placeholder="Parañaque hub"
+                   hint="Printed as 'N km from <hub>' on the delivery line and in the proposal's Logistics Add-On clause. Required while the hub is in service." />
         {/* v3-116 — the four Cebu/Siargao scalars became the dynamic
-            deliveryLocations table below the Luzon pair. Luzon main island
-            stays structural (per-km excess formula, AA38). */}
-        <Param label="Luzon Free-Delivery Radius" suffix="km" step={5} min={1} max={500}
+            deliveryLocations table below the home-mainland pair. The home
+            mainland stays structural (per-km excess formula, AA38). */}
+        <Param label="Free-Delivery Radius" suffix="km" step={5} min={1} max={500}
                value={params.luzonFreeTravelKm}
                onChange={v => updateParam('location', 'luzonFreeTravelKm', v)}
-               canEdit={canEditSection('location')}
-               hint="Distance from the Parañaque logistics hub within which Luzon delivery is free. Beyond it, the fixed fee below is charged once plus the per-km rate on the excess distance only. The customer sentences and the proposal's Logistics Add-On clause quote this value." />
-        <Param label="Luzon Beyond-Radius — Fixed Fee" isPeso step={500}
+               canEdit={canEditSection('location') && params.deliveryHubEnabled !== false}
+               hint={`Distance from the ${params.deliveryHubLabel || 'logistics hub'} within which delivery is free. Beyond it, the fixed fee below is charged once plus the per-km rate on the excess distance only. The customer sentences and the proposal's Logistics Add-On clause quote this value.`} />
+        <Param label="Beyond-Radius — Fixed Fee" isPeso step={500}
                value={params.luzonOver30FixedFeeCogs}
                cogs
                onChange={v => updateParam('location', 'luzonOver30FixedFeeCogs', v)}
-               canEdit={canEditSection('location')} />
-        <Param label="Luzon Beyond-Radius — Per Km" isPeso step={10}
+               canEdit={canEditSection('location') && params.deliveryHubEnabled !== false} />
+        <Param label="Beyond-Radius — Per Km" isPeso step={10}
                value={params.luzonOver30PerKmCogs}
                cogs
                onChange={v => updateParam('location', 'luzonOver30PerKmCogs', v)}
-               canEdit={canEditSection('location')} />
+               canEdit={canEditSection('location') && params.deliveryHubEnabled !== false} />
         <div style={{ marginTop: 14 }}>
           <DeliveryLocationsTable
             locations={params.deliveryLocations}

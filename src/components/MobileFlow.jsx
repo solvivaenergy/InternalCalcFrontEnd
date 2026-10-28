@@ -41,7 +41,11 @@ import { DEVICES } from '../data/devices.js';
 import { useMemo } from 'react';
 import { availableDeliveryLocations, availableBatteryPackages, optimizeBatteryPackage,
          DISCLAIMERS } from '../data/adminParams.js';
-import { LUZON_REGIONS, LUZON_FREE_TRAVEL_KM, resolveLocation, fmtKwp } from '../config.js';
+import { LUZON_FREE_TRAVEL_KM, fmtKwp } from '../config.js';
+// v3-231 — the location table is per REGION; the sentence under the picker
+// reads the region's hub from the live parameters (shared with Step 2E).
+import { regionsFor, resolveLocation, pickerShape } from '../data/locations.js';
+import { deliveryHint } from '../lib/locationCopy.js';
 import { formatHour12, optimizeSystem } from '../lib/schedule.js';
 import {
   allowedDpOptions, resolveMinDpPct, DP_EPS,
@@ -1098,7 +1102,7 @@ function RecommendationScreen({ state, model, adminParams, go }) {
   );
 }
 
-function YourHomeScreen({ state, updateState, model, adminParams, go }) {
+function YourHomeScreen({ state, updateState, model, adminParams, go, region = 'luzon' }) {
   const roofs = [
     { id: 'metal', icon: '\uD83C\uDFE0', t: 'Metal / GI sheet',
       d: 'The most common roof in the Philippines. No prep work \u2014 no additional charge.' },
@@ -1110,17 +1114,21 @@ function YourHomeScreen({ state, updateState, model, adminParams, go }) {
       d: 'Requires the most prep work, included in your package price.' },
   ];
   const dynamicLocs = availableDeliveryLocations(adminParams);
+  // 'luzon' is the structural "home mainland" id for EVERY region (v3-231).
   const isLuzon = state.location === 'luzon';
   // Region -> Province -> City. The province is load-bearing, not cosmetic:
   // city names are bare, so "Rosario" is ambiguous without it (Cavite 28km vs
   // Batangas 84km). resolveLocation owns the stale-value fallback.
-  const { region, province, provinces, cities, city } =
-    resolveLocation(state.locationRegion, state.locationProvince, state.locationCity);
+  // v3-231 — the active REGION's table; Cebu has one region entry so its
+  // Region select is hidden, and with no dispatch hub yet no km is shown.
+  const { region: regionRow, province, provinces, cities, city } =
+    resolveLocation(region, state.locationRegion, state.locationProvince, state.locationCity);
+  const shape = pickerShape(region, adminParams);
   const km = city ? city.km : 0;
   // v3-199 — the free radius is the luzonFreeTravelKm param (config constant
   // is the fallback only).
   const freeKm = adminParams.luzonFreeTravelKm ?? LUZON_FREE_TRAVEL_KM;
-  const beyondFreeKm = km > freeKm;   // v3-171 — wording only; no price shown
+  const hint = deliveryHint({ adminParams, city: city ? city.name : null, km, freeKm });
   const dynRow = (!isLuzon && state.location !== 'other')
     ? (adminParams.deliveryLocations || []).find(l => l.id === state.location)
     : null;
@@ -1147,31 +1155,35 @@ function YourHomeScreen({ state, updateState, model, adminParams, go }) {
         <label className="mfl-field">Installation location</label>
         <select className="mfl-select" value={state.location}
                 onChange={e => updateState({ location: e.target.value })}>
-          <option value="luzon">Luzon main island</option>
+          <option value="luzon">{adminParams.deliveryRegionLabel || 'Luzon'} main island</option>
           {dynamicLocs.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
           <option value="other">Other</option>
         </select>
         {isLuzon && (
           <>
-            <label className="mfl-field" style={{ marginTop: 14 }}>Region</label>
-            <select className="mfl-select" value={region.code}
-                    onChange={e => {
-                      // Re-resolve so region, province and city land on a valid
-                      // triple together.
-                      const next = resolveLocation(e.target.value, null, null);
-                      updateState({ locationRegion: next.region.code,
-                                    locationProvince: next.province,
-                                    locationCity: next.city.name,
-                                    locationKm: next.city.km });
-                    }}>
-              {LUZON_REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
-            </select>
+            {shape.showRegionSelect && (
+              <>
+                <label className="mfl-field" style={{ marginTop: 14 }}>Region</label>
+                <select className="mfl-select" value={regionRow.code}
+                        onChange={e => {
+                          // Re-resolve so region, province and city land on a valid
+                          // triple together.
+                          const next = resolveLocation(region, e.target.value, null, null);
+                          updateState({ locationRegion: next.region.code,
+                                        locationProvince: next.province,
+                                        locationCity: next.city.name,
+                                        locationKm: next.city.km });
+                        }}>
+                  {regionsFor(region).map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+                </select>
+              </>
+            )}
             {provinces.length > 0 && (
               <>
                 <label className="mfl-field" style={{ marginTop: 14 }}>Province</label>
                 <select className="mfl-select" value={province || ''}
                         onChange={e => {
-                          const next = resolveLocation(region.code, e.target.value, null);
+                          const next = resolveLocation(region, regionRow.code, e.target.value, null);
                           updateState({ locationProvince: next.province,
                                         locationCity: next.city.name,
                                         locationKm: next.city.km });
@@ -1188,16 +1200,17 @@ function YourHomeScreen({ state, updateState, model, adminParams, go }) {
                     }}>
               {cities.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
-            {!beyondFreeKm ? (
+            {/* v3-171 \u2014 wording only; no price shown. v3-231 \u2014 one sentence
+                source with Step 2E (deliveryHint): no hub \u21D2 "included", within
+                the radius \u21D2 delivery included, beyond \u21D2 the km sentence. */}
+            {hint.kind === 'beyond' ? (
+              <p className="mfl-hint" style={{ marginTop: 12 }}>
+                {hint.before}<b>{hint.strong}</b>{hint.after}
+              </p>
+            ) : (
               <div className="mfl-derived" style={{ marginTop: 14 }}>
                 {'\uD83D\uDE9A'} {city ? city.name : '\u2014'} &mdash; delivery included
               </div>
-            ) : (
-              <p className="mfl-hint" style={{ marginTop: 12 }}>
-                {city.name} &mdash; approx. {km} km from our Para&ntilde;aque logistics hub.
-                A delivery charge for the distance beyond {freeKm} km is
-                already <b>included in your price</b>.
-              </p>
             )}
           </>
         )}
@@ -1450,7 +1463,7 @@ function InvestmentScreen({ state, updateState, model, adminParams, go, onPropos
   );
 }
 
-function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent }) {
+function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent, region = 'luzon' }) {
   const [draft, setDraft] = useState({
     name: contact.name || '', email: contact.email || '',
     mobile: contact.mobile || '', installAddress: contact.installAddress || '',
@@ -1475,7 +1488,7 @@ function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent
       const reference = makeLeadRef(now, draft);
       const payload = buildLeadPayload({
         state, model, contact: draft,
-        submittedAt: now.toISOString(), reference, adminParams,
+        submittedAt: now.toISOString(), reference, adminParams, region,
       });
       await submitLead(payload);
       setRef(reference);
@@ -1555,6 +1568,7 @@ function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent
 // viewport; the welcome invitation already points humans at tablet/desktop.
 export default function MobileFlow({
   state, updateState, model, adminParams, contact, setContact,
+  region = 'luzon',   // v3-231 — picks the Your Home location table; rides on the lead
 }) {
   const [screen, setScreen] = useState(0);
   // v3-164 — direction of the last navigation, driving the slide-in
@@ -1639,9 +1653,9 @@ export default function MobileFlow({
       {screen === 2 && <AppliancesScreen state={state} updateState={updateState} go={go} />}
       {screen === 3 && <GoalScreen state={state} updateState={updateState} model={model} adminParams={adminParams} go={go} />}
       {screen === 4 && <RecommendationScreen state={state} model={model} adminParams={adminParams} go={go} />}
-      {screen === 5 && <YourHomeScreen state={state} updateState={updateState} model={model} adminParams={adminParams} go={go} />}
+      {screen === 5 && <YourHomeScreen state={state} updateState={updateState} model={model} adminParams={adminParams} go={go} region={region} />}
       {screen === 6 && <InvestmentScreen state={state} updateState={updateState} model={model} adminParams={adminParams} go={go} onProposal={() => go(7)} />}
-      {screen === 7 && <LeadScreen state={state} model={model} adminParams={adminParams} contact={contact} setContact={setContact} go={go} onSent={() => setLeadSent(true)} />}
+      {screen === 7 && <LeadScreen state={state} model={model} adminParams={adminParams} contact={contact} setContact={setContact} go={go} onSent={() => setLeadSent(true)} region={region} />}
       </div>
       {/* v3-165 — investment returns appear starting on Step 3 (the savings
           target screen), not before (user decision). */}

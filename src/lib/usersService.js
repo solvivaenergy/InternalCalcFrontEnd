@@ -13,6 +13,7 @@
 
 import { getAccessToken, ADMIN_ROLE_TO_ACCESS } from "./supabaseClient.js";
 import { roleLabel } from "./permissions.js";
+import { REGION_IDS, DEFAULT_REGION, isRegionId } from "./region.js";
 
 // Same base resolution as paramsService.js / crmContact.js, including the
 // trailing-slash trim and the deliberate absence of a relative-path fallback
@@ -120,9 +121,20 @@ export async function listUsers() {
   };
 }
 
+// v3-231 — the regions an account may quote in, as the backend stores them in
+// app_metadata.regions. Canonical order, deduplicated; missing/garbage ⇒
+// Manila only (the backend applies the same default for every account that
+// predates regions).
+export function normaliseRegions(list) {
+  const raw = Array.isArray(list) ? list.filter(isRegionId) : [];
+  const ordered = REGION_IDS.filter((id) => raw.includes(id));
+  return ordered.length ? ordered : [DEFAULT_REGION];
+}
+
 /**
- * Create an account. `input` is { email, role, displayName?, mobile?,
- * password? | ssoOnly? }. Resolves to { ok: true, user } or { ok: false, error }.
+ * Create an account. `input` is { email, role, regions?: ('luzon'|'cebu')[],
+ * displayName?, mobile?, password? | ssoOnly? }. Resolves to { ok: true, user }
+ * or { ok: false, error }.
  */
 export async function createUser(input) {
   const r = await request("/api/users", { method: "POST", body: input }, "Could not create the user.");
@@ -131,7 +143,8 @@ export async function createUser(input) {
 
 /**
  * Edit an account. `patch` holds only the fields to change out of
- * { role, displayName, mobile }; send null (or "") to clear name/mobile.
+ * { role, regions, displayName, mobile }; send null (or "") to clear
+ * name/mobile; `regions` replaces the list whole and may not be empty.
  * Resolves to { ok: true, user } or { ok: false, error }.
  */
 export async function updateUser(id, patch) {

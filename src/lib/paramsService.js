@@ -1,10 +1,17 @@
 // =============================================================================
-// PARAMS SERVICE — fetches global parameter overrides on boot
+// PARAMS SERVICE — fetches the active region's parameter payload on boot
 // -----------------------------------------------------------------------------
-// On app boot, load() fetches the saved parameter snapshot and merges it on
-// top of the bundled defaults. The snapshot lives in the Supabase table
-// public.app_parameters (one row) and is normally read through the backend's
-// GET /api/parameters.
+// On app boot, load({ region }) fetches the saved parameter snapshot for the
+// ACTIVE REGION and merges it on top of the bundled defaults. Since v3-231
+// each region (Manila = `luzon`, Cebu = `cebu`; src/lib/region.js) has its
+// own complete payload: the Supabase table public.region_parameters (one row
+// per region), normally read through the backend's GET /api/parameters?region=.
+// Only ONE region's values are live at a time — applyOverrides() rebuilds the
+// shared engine objects from the bundled DEFAULTS on every apply, so loading
+// region B after region A leaves no residue of A. App.jsx remounts the whole
+// calculator on a region switch and calls load() again; while that load is in
+// flight the UI sits behind the boot spinner, so nothing is priced on the
+// previous region's numbers.
 //
 // LOAD CHAIN (2026-09-22). Until now a single failed fetch silently reset the
 // app to the BUNDLED defaults — maintenance gate ON, 10/15/20% down-payment
@@ -61,6 +68,7 @@ import {
   seedPhaseAndComponentMargins,
 } from "@solviva/calc-engine/runtime.js";
 import { getAccessToken, supabase } from "./supabaseClient.js";
+import { DEFAULT_REGION, isRegionId, regionLabel } from "./region.js";
 
 // Parameters endpoint. When VITE_API_BASE_URL is set (production), the admin
 // pipeline reads/writes the Supabase-backed Express service at
@@ -68,6 +76,9 @@ import { getAccessToken, supabase } from "./supabaseClient.js";
 // edits reflect in quotes. When unset (local dev without the backend), we fall
 // back to the legacy Netlify Function + Netlify Blobs path so the calculator
 // still boots. Trailing slashes on the base are trimmed to avoid `//api`.
+// v3-231 — every call carries `?region=`; a query parameter (not a header)
+// so GET, PUT and the audit read all use the same mechanism with no CORS
+// change, and the region shows in the backend's logs.
 const API_BASE = (
   import.meta.env.DEV
     ? "http://localhost:3000"
@@ -79,6 +90,10 @@ const API_URL = API_BASE
 const AUDIT_API_URL = API_BASE
   ? `${API_BASE}/api/parameter-audit`
   : "/.netlify/functions/parameter-audit";
+const paramsUrl = (region) => `${API_URL}?region=${encodeURIComponent(region)}`;
+const auditUrl = (region, limit) =>
+  `${AUDIT_API_URL}?limit=${encodeURIComponent(limit)}&region=${encodeURIComponent(region)}`;
+const normaliseRegion = (region) => (isRegionId(region) ? region : DEFAULT_REGION);
 
 // ═══ v3-83 — DERIVE ON MODULE LOAD, BEFORE ANYTHING ELSE ═════════════════════
 // `directPrice` / `panelDirectPrice` / `batteryUnitPrice` … ship as 0 in the data
@@ -96,13 +111,25 @@ const BACKEND_TIMEOUT_MS = 8000;
 const BACKEND_ATTEMPTS = 2;
 const BACKEND_RETRY_DELAY_MS = 750;
 const SUPABASE_TIMEOUT_MS = 6000;
-const CACHE_KEY = "solviva_params_cache_v1";
+// v3-231 — one cache entry per region. The pre-region key held Luzon's copy;
+// it is read once as Luzon's fallback and then removed (writeCache), so no
+// device loses its offline copy on upgrade day.
+const LEGACY_CACHE_KEY = "solviva_params_cache_v1";
+const cacheKey = (region) => `solviva_params_cache_v2_${region}`;
+
+// The region whose values are live in the shared engine objects right now.
+// save() refuses to write a snapshot to any other region: getSnapshot() reads
+// the live objects, so a snapshot can only ever describe the region they hold.
+let _activeRegion = null;
+export function getActiveRegion() {
+  return _activeRegion;
+}
 
 // Where the live values came from on the most recent load(). `errors` keeps
 // every failed step's message so the on-screen banner (and support) can see
 // WHY a device is not on live data, instead of guessing from symptoms.
 //   source: 'backend' | 'supabase' | 'cache' | 'defaults' | null (not loaded yet)
-let _loadStatus = { source: null, cachedAt: null, errors: [] };
+let _loadStatus = { source: null, cachedAt: null, errors: [], region: null };
 
 export function getLoadStatus() {
   return { ..._loadStatus, errors: _loadStatus.errors.slice() };
@@ -137,7 +164,7 @@ async function fetchWithTimeout(url, opts, ms) {
 
 // Step 1 — the backend. One retry covers a transient blip or a backend that
 // is still waking up; a hard block (proxy, extension) fails both fast.
-async function loadFromBackend() {
+async function loadFromBackend(region) {
   // Since 2026-09-27 the backend answers 401 without a signed-in user's JWT:
   // the row carries COGS and margins. load() only runs once a session exists
   // (App.jsx mounts CalculatorApp after auth), so the token is there. The
@@ -149,12 +176,30 @@ async function loadFromBackend() {
   for (let attempt = 1; attempt <= BACKEND_ATTEMPTS; attempt++) {
     try {
       const res = await fetchWithTimeout(
-        API_URL,
+        paramsUrl(region),
         { method: "GET", cache: "no-store", headers },
         BACKEND_TIMEOUT_MS,
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
+      if (!res.ok) {
+        // 403 region_forbidden / 404 region_not_seeded / 503 not provisioned
+        // carry a readable message — surface it instead of a bare status.
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ? `HTTP ${res.status} — ${body.error}` : `HTTP ${res.status}`);
+      }
+      const payload = await res.json();
+      // v3-231 — the backend echoes the region it served (top-level `region`).
+      // A backend that predates regions ignores the query and echoes nothing;
+      // that is fine for Luzon (identical behaviour) and FATAL for any other
+      // region, which would otherwise be priced on Manila's numbers.
+      const served = payload && typeof payload === "object" ? payload.region : undefined;
+      if (served !== undefined && served !== region) {
+        throw new Error(`served ${served} for ${region}`);
+      }
+      if (served === undefined && region !== DEFAULT_REGION) {
+        throw new Error(`backend has no region support; refusing Manila's payload for ${regionLabel(region)}`);
+      }
+      if (payload && typeof payload === "object") delete payload.region;
+      return payload;
     } catch (err) {
       lastErr = err;
       if (attempt < BACKEND_ATTEMPTS) await sleep(BACKEND_RETRY_DELAY_MS);
@@ -164,70 +209,93 @@ async function loadFromBackend() {
 }
 
 // Step 2 — the same row, read directly through Supabase with the signed-in
-// user's session. Needs the authenticated-read policy from the backend repo's
-// 20260922 migration; without it PostgREST returns no row rather than an
-// error, which we report as such so a missing policy is diagnosable.
+// user's session. Since v3-231 the row is public.region_parameters (one per
+// region; the backend repo's 20261028 migration scopes the read policy to the
+// regions on the JWT). While that table is not there yet, Luzon falls back to
+// the legacy one-row app_parameters (read policy: 20260922 migration);
+// without a policy PostgREST returns no row rather than an error, which we
+// report as such so a missing policy is diagnosable.
 // Bounded by SUPABASE_TIMEOUT_MS: when supabase.co is unreachable too, the
 // client's own retries would otherwise hold the boot spinner for ~7s more
 // before the cache/defaults step. (The no-config facade lacks abortSignal —
 // hence the guard.)
-async function loadFromSupabase() {
-  let query = supabase
-    .from("app_parameters")
-    .select("payload")
-    .eq("id", true);
+async function supabaseRow(buildQuery) {
+  let query = buildQuery();
   const ctrl = typeof AbortController === "function" ? new AbortController() : null;
   const timer = ctrl ? setTimeout(() => ctrl.abort(), SUPABASE_TIMEOUT_MS) : null;
   if (ctrl && typeof query.abortSignal === "function") {
     query = query.abortSignal(ctrl.signal);
   }
-  let data, error;
   try {
-    ({ data, error } = await query.maybeSingle());
+    return await query.maybeSingle();
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+const isMissingTable = (error) =>
+  /PGRST205|does not exist|Could not find the table/i.test(`${error?.code || ""} ${error?.message || ""}`);
+
+async function loadFromSupabase(region) {
+  let { data, error } = await supabaseRow(() =>
+    supabase.from("region_parameters").select("payload").eq("region", region),
+  );
+  // Transition shim (remove one release after the backend migration has run
+  // everywhere): the region table is missing or Luzon's row is not seeded yet.
+  if (region === DEFAULT_REGION && ((error && isMissingTable(error)) || (!error && !data))) {
+    ({ data, error } = await supabaseRow(() =>
+      supabase.from("app_parameters").select("payload").eq("id", true),
+    ));
+  }
   if (error) throw error;
   if (!data || !data.payload || typeof data.payload !== "object") {
-    throw new Error("no readable row (not signed in, or read policy not applied)");
+    throw new Error("no readable row (not signed in, region not on this account, or read policy not applied)");
   }
   return data.payload;
 }
 
 // Step 3 — last good payload on this device. Best-effort: storage may be
 // unavailable or cleared, and a corrupt entry is treated as absent.
-function readCache() {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
+function readCache(region) {
+  const parse = (raw) => {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.payload !== "object" || !parsed.payload) return null;
     return parsed;
+  };
+  try {
+    const own = parse(localStorage.getItem(cacheKey(region)));
+    if (own) return own;
+    // Pre-region cache entry: Luzon's, and Luzon's only.
+    return region === DEFAULT_REGION ? parse(localStorage.getItem(LEGACY_CACHE_KEY)) : null;
   } catch {
     return null;
   }
 }
 
-function writeCache(serializedPayload) {
+function writeCache(region, serializedPayload) {
   try {
     localStorage.setItem(
-      CACHE_KEY,
+      cacheKey(region),
       `{"savedAt":${JSON.stringify(new Date().toISOString())},"payload":${serializedPayload}}`,
     );
+    localStorage.removeItem(LEGACY_CACHE_KEY);
   } catch {
     // Quota / private mode / disabled storage — the cache is a bonus, not a need.
   }
 }
 
-// Load once at boot (and again from the banner's Retry). Always returns the
-// current snapshot; never throws. See the header for the four-step chain.
-export async function load() {
+// Load once at boot (and again from the banner's Retry), for one region.
+// Always returns the current snapshot; never throws. See the header for the
+// four-step chain. `region` defaults to Manila so a caller that predates
+// regions behaves exactly as before.
+export async function load({ region = DEFAULT_REGION } = {}) {
+  region = normaliseRegion(region);
   const errors = [];
   let payload = null;
   let source = null;
 
   try {
-    payload = await loadFromBackend();
+    payload = await loadFromBackend(region);
     source = "backend";
   } catch (err) {
     errors.push(`backend: ${errorMessage(err)}`);
@@ -235,12 +303,16 @@ export async function load() {
 
   if (!payload) {
     try {
-      payload = await loadFromSupabase();
+      payload = await loadFromSupabase(region);
       source = "supabase";
     } catch (err) {
       errors.push(`supabase: ${errorMessage(err)}`);
     }
   }
+
+  // Whatever happens below, the shared objects are about to describe THIS
+  // region — even the bundled defaults are applied in its name.
+  _activeRegion = region;
 
   if (payload) {
     // Serialise BEFORE applyOverrides: it strips legacy keys from the object
@@ -249,13 +321,13 @@ export async function load() {
     try {
       applyOverrides(payload);
       _loadedFromServer = true;
-      _loadStatus = { source, cachedAt: null, errors };
-      writeCache(serialized);
+      _loadStatus = { source, cachedAt: null, errors, region };
+      writeCache(region, serialized);
       // Live data, but not from the first choice: say so, and say why. This
       // is the only trace of a backend that is blocked on one device once the
       // fallback hides the symptom — support needs it in the console.
       if (errors.length && typeof console !== "undefined") {
-        console.info(`[paramsService] loaded from ${source}; earlier steps failed:`, errors);
+        console.info(`[paramsService] loaded ${region} from ${source}; earlier steps failed:`, errors);
       }
       notify();
       return getSnapshot();
@@ -265,25 +337,26 @@ export async function load() {
     }
   }
 
-  // No live data. Prefer this device's last good copy over the bundle.
+  // No live data. Prefer this device's last good copy of THIS region over the
+  // bundle (which is Manila's — the banner says so on any other region).
   _loadedFromServer = false;
-  const cached = readCache();
+  const cached = readCache(region);
   if (cached) {
     try {
       applyOverrides(cached.payload);
-      _loadStatus = { source: "cache", cachedAt: cached.savedAt || null, errors };
+      _loadStatus = { source: "cache", cachedAt: cached.savedAt || null, errors, region };
     } catch (err) {
       errors.push(`apply(cache): ${errorMessage(err)}`);
       resetToDefaults();
-      _loadStatus = { source: "defaults", cachedAt: null, errors };
+      _loadStatus = { source: "defaults", cachedAt: null, errors, region };
     }
   } else {
     resetToDefaults();
-    _loadStatus = { source: "defaults", cachedAt: null, errors };
+    _loadStatus = { source: "defaults", cachedAt: null, errors, region };
   }
   if (typeof console !== "undefined") {
     console.warn(
-      `[paramsService] load() failed; falling back to ${_loadStatus.source}:`,
+      `[paramsService] load(${region}) failed; falling back to ${_loadStatus.source}:`,
       errors,
     );
   }
@@ -291,22 +364,34 @@ export async function load() {
   return getSnapshot();
 }
 
-// Save the entire merged snapshot. Returns { ok, error? }.
+// Save the entire merged snapshot to ONE region. Returns { ok, error? }.
 // Authenticates via the current Supabase session's JWT (Bearer token). The
-// server verifies the token, looks up the caller's role in `user_roles`, and
-// enforces the section-allowlist for that role. `role` is still sent for
-// server-side logging / defensive checks, but the JWT is the source of truth.
+// server verifies the token, looks up the caller's role in `user_roles`,
+// checks the region is on the caller's account, and enforces the
+// section-allowlist for that role. `role` is still sent for server-side
+// logging / defensive checks, but the JWT is the source of truth.
+//
+// The snapshot comes from getSnapshot(), i.e. the LIVE objects, which hold
+// exactly one region's values — so it may only be written back to the region
+// load() last applied. Any other target is refused here, before the network.
 //
 // NOTE: upstream v3-207 passed a shared password here
 // (`save(snapshot, password, role)`); this deployment authenticates per-user
 // through Supabase instead, so the password argument is gone.
-export async function save(snapshot, role) {
+export async function save(snapshot, role, region = _activeRegion || DEFAULT_REGION) {
   try {
+    region = normaliseRegion(region);
+    if (_activeRegion && region !== _activeRegion) {
+      return {
+        ok: false,
+        error: `The editor holds ${regionLabel(_activeRegion)}'s values but the save was aimed at ${regionLabel(region)} — reload and try again.`,
+      };
+    }
     const token = await getAccessToken();
     if (!token) {
       return { ok: false, error: "Not signed in — please log in again." };
     }
-    const res = await fetch(API_URL, {
+    const res = await fetch(paramsUrl(region), {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -321,19 +406,21 @@ export async function save(snapshot, role) {
     }
     applyOverrides(snapshot);
     notify();
-    return { ok: true };
+    return { ok: true, region };
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
   }
 }
 
-export async function getAuditHistory(role, limit = 100) {
+// `region` is a region id or "all" (every region on the caller's account).
+export async function getAuditHistory(role, { limit = 100, region = _activeRegion || DEFAULT_REGION } = {}) {
   try {
     const token = await getAccessToken();
     if (!token)
       return { ok: false, error: "Not signed in — please log in again." };
+    const scope = region === "all" ? "all" : normaliseRegion(region);
     const res = await fetch(
-      `${AUDIT_API_URL}?limit=${encodeURIComponent(limit)}`,
+      auditUrl(scope, limit),
       {
         headers: {
           Authorization: `Bearer ${token}`,

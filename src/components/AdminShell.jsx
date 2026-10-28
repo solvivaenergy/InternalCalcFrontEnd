@@ -42,6 +42,8 @@ import {
   roleLabel, PARAM_KEY_TO_SECTION,
 } from '../lib/permissions.js';
 import { adminStyles, ContactGatePasswordToggle } from './AdminShared.jsx';
+// v3-231 — which region's parameters this editor holds (badge + save target).
+import { DEFAULT_REGION, regionMeta, regionPillStyle } from '../lib/region.js';
 import InventoryTab from './InventoryTab.jsx';
 import EngineeringTab from './EngineeringTab.jsx';
 import ProductTab from './ProductTab.jsx';
@@ -52,9 +54,14 @@ import FinCoTab from './FinCoTab.jsx';
 // the cabling tier-table test rows and is never written back: this component
 // has no handle on calculator state, so the test count cannot follow the admin
 // out on logout. That is a structural guarantee, not a guard.
+// v3-231 — `region`: the editor's drafts below are seeded ONCE from the shared
+// objects, which hold the active region's payload; App.jsx keys this component
+// on the region so a switch remounts it, and every save is aimed at that same
+// region (paramsService.save refuses any other target).
 export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
-                                     calcPanelCount = null }) {
+                                     calcPanelCount = null, region = DEFAULT_REGION }) {
   const anyEdit = hasAnyEditAccess(accessLevel);
+  const regionInfo = regionMeta(region);
   const canEditMaintenance = canEditAdminSection(accessLevel, 'maintenance');
   const canEditInv = canEditInventory(accessLevel);
 
@@ -299,11 +306,26 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
           + 'above zero, or every price in the app would be zero.' };
       }
     }
-    // v3-199 — the Luzon free-delivery radius (mirrors the server guard).
+    // v3-199 — the free-delivery radius (mirrors the server guard).
     {
       const v = params.luzonFreeTravelKm;
       if (!Number.isFinite(v) || v <= 0 || v > 500) {
-        return { ok: false, msg: 'The Luzon free-delivery radius must be a positive number of kilometers (at most 500).' };
+        return { ok: false, msg: 'The free-delivery radius must be a positive number of kilometers (at most 500).' };
+      }
+    }
+    // v3-231 — region-aware delivery (engine 1.3.0; mirrors the server guard).
+    {
+      const label = String(params.deliveryRegionLabel ?? '').trim();
+      if (!label || label.length > 40) {
+        return { ok: false, msg: 'The service region label must be 1 to 40 characters — it names the region on the delivery line and the proposal.' };
+      }
+      const hubOn = params.deliveryHubEnabled !== false;
+      const hub = String(params.deliveryHubLabel ?? '').trim();
+      if (hubOn && !hub) {
+        return { ok: false, msg: 'Name the logistics hub while the delivery hub is in service — it is printed on the delivery line and in the Logistics Add-On clause.' };
+      }
+      if (hub.length > 60) {
+        return { ok: false, msg: 'The logistics hub name must be at most 60 characters.' };
       }
     }
     // v3-191 — the three-phase curve anchors: identical monotonicity rules,
@@ -479,7 +501,7 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
       snapshot.invertersThreePhase  = three.map(i => ({ ...i }));
       snapshot.devices = devices.map(d => ({ ...d }));
     }
-    const result = await paramsService.save(snapshot, accessLevel);
+    const result = await paramsService.save(snapshot, accessLevel, region);
     setSaveStatus(result);
     if (result.ok) setDirty(false);
   };
@@ -501,7 +523,15 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
     <div style={adminStyles.container}>
       <div style={adminStyles.headerRow}>
         <div>
-          <h1 style={adminStyles.title}>{titleByTab[tab] || 'Admin'}</h1>
+          <h1 style={adminStyles.title}>
+            {titleByTab[tab] || 'Admin'}
+            {/* v3-231 — which region's parameters are on screen. Cebu's colour
+                is distinct on purpose: the numbers do not say. */}
+            <span style={{ ...shellStyles.regionBadge, ...regionPillStyle(regionInfo) }}
+                  title={`These are the ${regionInfo.label} calculator's parameters`}>
+              Editing: {regionInfo.label} parameters
+            </span>
+          </h1>
           <p style={adminStyles.subtitle}>
             Mode: <strong>{roleLabel(accessLevel)}</strong>
             {/* v3-141 — build stamp so admins can read the deployed version at
@@ -534,11 +564,12 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
       {anyEdit && !savingDisabled && (
         <div style={{ marginBottom: 16 }}>
           <CalloutBox kind="info">
-            <strong>Edits are saved globally.</strong> When you click Save, the
-            changes are pushed to the server and become the live values for
-            every user of the calculator on their next page load. Sections
-            outside your team's remit are shown read-only. Edits persist across
-            tab switches — save once to commit changes from any tab.
+            <strong>Edits are saved for {regionInfo.label}.</strong> When you click
+            Save, the changes are pushed to the server and become the live values
+            for every user quoting in {regionInfo.label} on their next page load;
+            the other region's parameters are untouched. Sections outside your
+            team's remit are shown read-only. Edits persist across tab switches —
+            save once to commit changes from any tab.
           </CalloutBox>
         </div>
       )}
@@ -612,7 +643,7 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
             <span style={adminStyles.saveStatusInfo}>Saving…</span>
           )}
           {saveStatus && saveStatus !== 'saving' && saveStatus.ok && (
-            <span style={adminStyles.saveStatusOk}>✓ Saved globally — visible to all users.</span>
+            <span style={adminStyles.saveStatusOk}>✓ Saved — live for {regionInfo.label}.</span>
           )}
           {saveStatus && saveStatus !== 'saving' && !saveStatus.ok && (
             <span style={adminStyles.saveStatusErr}>✗ Save failed: {saveStatus.error}</span>
@@ -628,7 +659,7 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
                   disabled={!dirty || saveStatus === 'saving' || savingDisabled || !!validationError}
                   style={{ ...adminStyles.saveBtn,
                            ...((!dirty || saveStatus === 'saving' || savingDisabled || !!validationError) ? adminStyles.btnDisabled : {}) }}>
-            {saveStatus === 'saving' ? 'Saving…' : 'Save changes globally'}
+            {saveStatus === 'saving' ? 'Saving…' : `Save changes for ${regionInfo.label}`}
           </button>
         </div>
       )}
@@ -643,7 +674,12 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
 // that posts directly to the server when changed). Maintenance Mode edit is
 // allowed by all four admin roles (edit, engineering, product, view → only
 // view cannot edit), per ROLE_ADMIN_SECTIONS in permissions.js.
-export function MaintenanceModeBlock({ accessLevel, savingDisabled }) {
+// v3-231 — maintenance mode is GLOBAL (one gate for the whole calculator,
+// product decision) while every other parameter is per region. The toggle is
+// still saved through the active region's payload — the one save path — and
+// the BACKEND copies a changed gateAuthEnabled into every other region's row,
+// so the rows always agree on it.
+export function MaintenanceModeBlock({ accessLevel, savingDisabled, region = DEFAULT_REGION }) {
   const canEdit = canEditAdminSection(accessLevel, 'maintenance');
   const [enabled, setEnabled] = useState(!!(ADMIN_PARAMS.gateAuthEnabled ?? true));
   const [saveStatus, setSaveStatus] = useState(null);
@@ -654,7 +690,7 @@ export function MaintenanceModeBlock({ accessLevel, savingDisabled }) {
     setSaveStatus('saving');
     const snapshot = paramsService.getSnapshot();
     snapshot.adminParams = { ...(snapshot.adminParams || {}), gateAuthEnabled: newVal };
-    const result = await paramsService.save(snapshot, accessLevel);
+    const result = await paramsService.save(snapshot, accessLevel, region);
     setSaveStatus(result);
     if (!result.ok) {
       // Roll back optimistic flip
@@ -665,7 +701,7 @@ export function MaintenanceModeBlock({ accessLevel, savingDisabled }) {
   return (
     <div style={mmStyles.container}>
       <div style={mmStyles.header}>
-        <h3 style={mmStyles.title}>Maintenance Mode</h3>
+        <h3 style={mmStyles.title}>Maintenance Mode <span style={mmStyles.scope}>· applies to Manila and Cebu alike</span></h3>
         {saveStatus === 'saving' && <span style={mmStyles.status}>Saving…</span>}
         {saveStatus && saveStatus !== 'saving' && saveStatus.ok && (
           <span style={mmStyles.statusOk}>✓ Saved</span>
@@ -684,6 +720,15 @@ export function MaintenanceModeBlock({ accessLevel, savingDisabled }) {
   );
 }
 
+// v3-231 — the "Editing: <region> parameters" badge beside the tab title.
+const shellStyles = {
+  regionBadge: {
+    display: 'inline-block', verticalAlign: 'middle', marginLeft: 12,
+    padding: '3px 10px', borderRadius: 999,
+    fontSize: 11, fontWeight: 600, letterSpacing: 0.3, whiteSpace: 'nowrap',
+  },
+};
+
 const mmStyles = {
   container: {
     backgroundColor: '#FFFFFF', borderRadius: 12,
@@ -691,6 +736,7 @@ const mmStyles = {
     padding: '20px 24px',
     marginBottom: 12,
   },
+  scope: { fontSize: 12, fontWeight: 500, color: COLORS.textMuted },
   header: {
     display: 'flex', alignItems: 'center', gap: 12,
     marginBottom: 12, paddingBottom: 12,

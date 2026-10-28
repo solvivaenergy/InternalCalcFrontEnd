@@ -1623,6 +1623,39 @@ export function TextParam({ label, value, onChange, canEdit, hint, placeholder,
 }
 
 
+// ─── BoolParam (v3-231) ──────────────────────────────────────────────────────
+// A yes/no admin row in the Param layout. Until now the only boolean controls
+// were bespoke (the Inventory stock checkbox, the maintenance toggle); the
+// region-aware delivery settings need an ordinary on/off parameter beside
+// numeric ones, so here is the generic row.
+export function BoolParam({ label, value, onChange, canEdit, hint,
+                            onLabel = 'On', offLabel = 'Off' }) {
+  return (
+    <div style={adminStyles.paramRow}>
+      <div style={adminStyles.paramLabelCol}>
+        <div style={adminStyles.paramLabel}>{label}</div>
+        {hint && <div style={adminStyles.paramHint}>{hint}</div>}
+      </div>
+      <div style={adminStyles.paramValueCol}>
+        {canEdit ? (
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8,
+                          cursor: 'pointer', fontSize: 13, color: COLORS.textBody }}>
+            <input
+              type="checkbox"
+              checked={!!value}
+              onChange={e => onChange(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: 'pointer', accentColor: COLORS.brandGreen }}
+            />
+            <span>{value ? onLabel : offLabel}</span>
+          </label>
+        ) : (
+          <div style={adminStyles.paramValueRO}>{value ? onLabel : offLabel}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── SelectParam (v3-187) ────────────────────────────────────────────────────
 // A fixed-choice admin row. `Param` is numeric-free-entry and `TextParam` is
 // free text; neither can express "one of exactly these values". Used for the

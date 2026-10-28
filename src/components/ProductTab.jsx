@@ -479,7 +479,7 @@ const COMPONENT_LABELS = {
   I: ['Single-Phase Inverters',      'inverter-only orders price at Otherwise'],
   J: ['Three-Phase Inverters',       'inverter-only orders price at Otherwise'],
   L: ['Misc Catalog',                'one margin for every row; reversals stay sign-symmetric'],
-  M: ['Location / Delivery',         'Luzon >30 km pair and every dynamic row'],
+  M: ['Location / Delivery',         'beyond-radius pair and every dynamic row'],
   N: ['Standalone Retrofit Charges', 'only prices in no-panel orders — single margin'],
   O: ['Fixed Overhead',              'all five overhead lines'],
   P: ['Mounting Support',            'max(floor, 13% of panels) — decided in COGS space, then priced'],

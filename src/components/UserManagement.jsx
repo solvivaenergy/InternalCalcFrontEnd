@@ -39,8 +39,10 @@ import { isValidPhPhone, formatPhPhone, PH_PHONE_HINT } from '../lib/validation.
 import { isSsoAllowedEmail, SSO_ALLOWED_DOMAINS } from '../lib/supabaseClient.js';
 import {
   listUsers, createUser, updateUser, archiveUser, restoreUser,
-  generatePassword, ROLE_OPTIONS, userRoleLabel,
+  generatePassword, ROLE_OPTIONS, userRoleLabel, normaliseRegions,
 } from '../lib/usersService.js';
+// v3-231 — region access per account (Manila only / Cebu only / both).
+import { REGIONS, regionMeta, regionPillStyle } from '../lib/region.js';
 
 const dateFormatter = new Intl.DateTimeFormat('en-PH', {
   timeZone: 'Asia/Manila',
@@ -72,8 +74,51 @@ function signInLabel(user) {
 }
 
 function matchesFilter(u, q) {
-  return [u.email, u.displayName, u.role, userRoleLabel(u.role)]
+  return [u.email, u.displayName, u.role, userRoleLabel(u.role),
+          ...normaliseRegions(u.regions).map((id) => regionMeta(id).label)]
     .some((v) => String(v || '').toLowerCase().includes(q));
+}
+
+// v3-231 — the Regions control shared by the create and edit dialogs: one
+// checkbox per region, at least one must stay ticked (the backend refuses an
+// empty list too).
+function RegionsFieldset({ value, onChange, idPrefix, hint }) {
+  const toggle = (id) => {
+    const next = value.includes(id) ? value.filter((r) => r !== id) : [...value, id];
+    onChange(normaliseRegions(next.length ? next : value));
+  };
+  return (
+    <fieldset style={styles.fieldset}>
+      <legend style={styles.label}>Regions (calculators they can use)</legend>
+      <div style={styles.regionRow}>
+        {REGIONS.map((r) => {
+          const on = value.includes(r.id);
+          return (
+            <label key={r.id} htmlFor={`${idPrefix}-${r.id}`}
+                   style={{ ...styles.regionChoice, ...(on ? regionPillStyle(r) : {}) }}>
+              <input id={`${idPrefix}-${r.id}`} type="checkbox" checked={on}
+                     onChange={() => toggle(r.id)} style={styles.regionCheck} />
+              {r.label}
+            </label>
+          );
+        })}
+      </div>
+      <p style={styles.hint}>
+        {hint || 'A rep sees only their region’s prices; an account with both gets a Manila | Cebu toggle in the header. At least one region is required.'}
+      </p>
+    </fieldset>
+  );
+}
+
+function RegionPills({ regions }) {
+  return (
+    <span style={styles.regionPills}>
+      {normaliseRegions(regions).map((id) => {
+        const m = regionMeta(id);
+        return <span key={id} style={{ ...styles.regionPill, ...regionPillStyle(m) }}>{m.label}</span>;
+      })}
+    </span>
+  );
 }
 
 export default function UserManagement({ accessLevel }) {
@@ -208,6 +253,7 @@ export default function UserManagement({ accessLevel }) {
                 <tr>
                   <th style={styles.th}>Account</th>
                   <th style={styles.th}>Role</th>
+                  <th style={styles.th}>Regions</th>
                   <th style={styles.th}>Sign-in</th>
                   <th style={styles.th}>Last sign-in</th>
                   <th style={styles.th}>Status</th>
@@ -234,6 +280,10 @@ export default function UserManagement({ accessLevel }) {
                         }}>
                           {userRoleLabel(u.role)}
                         </span>
+                      </td>
+                      <td style={styles.td}
+                          title={u.regionsExplicit === false ? 'Not set on this account yet — Manila by default' : undefined}>
+                        <RegionPills regions={u.regions} />
                       </td>
                       <td style={styles.td}>{signInLabel(u)}</td>
                       <td style={styles.td}>{formatWhen(u.lastSignInAt)}</td>
@@ -396,6 +446,7 @@ function CreateUserDialog({ onClose, onCreated }) {
   const [displayName, setDisplayName] = useState('');
   const [mobile, setMobile] = useState('');
   const [role, setRole] = useState('rep');
+  const [regions, setRegions] = useState(['luzon']);   // v3-231 — Manila by default
   const [signIn, setSignIn] = useState('password'); // 'password' | 'google'
   // Pre-filled with a generated value so the default path is a strong random
   // password; visible by default because the admin has to hand it over.
@@ -417,6 +468,7 @@ function CreateUserDialog({ onClose, onCreated }) {
   const validate = () => {
     if (!EMAIL_RE.test(email.trim())) return 'Enter a valid email address.';
     if (!roleOption) return 'Choose a role.';
+    if (!regions.length) return 'Choose at least one region.';
     if (mobile.trim() && !isValidPhPhone(mobile)) return PH_PHONE_HINT;
     if (signIn === 'google') {
       if (!googleAllowed) {
@@ -439,6 +491,7 @@ function CreateUserDialog({ onClose, onCreated }) {
     const payload = {
       email: email.trim(),
       role,
+      regions,
       displayName: displayName.trim() || undefined,
       mobile: mobile.trim() || undefined,
     };
@@ -480,6 +533,9 @@ function CreateUserDialog({ onClose, onCreated }) {
           ))}
         </select>
         {roleOption && <p style={styles.hint}>{roleOption.hint}</p>}
+
+        <RegionsFieldset value={regions} idPrefix="um-region"
+                         onChange={(next) => { setRegions(next); setError(null); }} />
 
         <div style={styles.twoCol}>
           <div style={{ flex: 1 }}>
@@ -580,7 +636,9 @@ function EditUserDialog({ user, isSelf, onClose, onSaved }) {
   const initialRole = ROLE_OPTIONS.some((o) => o.value === user.role) ? user.role : 'rep';
   const initialName = user.displayName || '';
   const initialMobile = user.mobile ? formatPhPhone(user.mobile) : '';
+  const initialRegions = normaliseRegions(user.regions);   // v3-231
   const [role, setRole] = useState(initialRole);
+  const [regions, setRegions] = useState(initialRegions);
   const [displayName, setDisplayName] = useState(initialName);
   const [mobile, setMobile] = useState(initialMobile);
   const [submitting, setSubmitting] = useState(false);
@@ -596,17 +654,22 @@ function EditUserDialog({ user, isSelf, onClose, onSaved }) {
   // An account with no assignable role (a Google sign-up nobody has placed
   // yet shows as "Customer") counts as changed once any role is picked.
   const roleDirty = role !== user.role;
+  // v3-231 — an account that predates regions (regionsExplicit false) shows
+  // Manila by default; saving it unchanged is a no-op, so it stays clean.
+  const regionsDirty = regions.join(',') !== initialRegions.join(',');
   const nameDirty = displayName.trim().replace(/\s+/g, ' ') !== initialName;
   const mobileDirty = mobile.replace(/\D+/g, '') !== (user.mobile || '').replace(/\D+/g, '');
-  const dirty = roleDirty || nameDirty || mobileDirty;
+  const dirty = roleDirty || regionsDirty || nameDirty || mobileDirty;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (submitting || !dirty) return;
     if (mobile.trim() && !isValidPhPhone(mobile)) { setError(PH_PHONE_HINT); return; }
+    if (!regions.length) { setError('Choose at least one region.'); return; }
 
     const patch = {};
     if (roleDirty) patch.role = role;
+    if (regionsDirty) patch.regions = regions;
     if (nameDirty) patch.displayName = displayName.trim() || null;
     if (mobileDirty) patch.mobile = mobile.trim() || null;
 
@@ -649,6 +712,14 @@ function EditUserDialog({ user, isSelf, onClose, onSaved }) {
             A role change applies the next time they sign in or their session refreshes (within the hour).
           </p>
         )}
+
+        {/* Editable for yourself too (unlike the role): this is how the first
+            Super Admin grants themself the new region. */}
+        <RegionsFieldset value={regions} idPrefix="um-edit-region"
+                         onChange={(next) => { setRegions(next); setError(null); }}
+                         hint={isSelf
+                           ? 'You can change your own regions. The change applies the next time you sign in or your session refreshes (within the hour).'
+                           : 'A rep sees only their region’s prices; an account with both gets a Manila | Cebu toggle. Applies at their next sign-in or session refresh (within the hour).'} />
 
         <div style={styles.twoCol}>
           <div style={{ flex: 1 }}>
@@ -898,6 +969,20 @@ const styles = {
   },
   twoCol: { display: 'flex', gap: 12, flexWrap: 'wrap' },
   fieldset: { border: 'none', padding: 0, margin: '0 0 14px', minWidth: 0 },
+  // v3-231 — region checkboxes (dialogs) and pills (table).
+  regionRow: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 },
+  regionChoice: {
+    display: 'inline-flex', alignItems: 'center', gap: 8,
+    padding: '6px 12px', borderRadius: 999, cursor: 'pointer',
+    fontSize: 13, fontWeight: 600, color: COLORS.textBody,
+    border: `1px solid ${COLORS.inputBorder}`, backgroundColor: '#FFFFFF',
+  },
+  regionCheck: { width: 15, height: 15, cursor: 'pointer', margin: 0, accentColor: COLORS.brandGreen },
+  regionPills: { display: 'inline-flex', gap: 4, flexWrap: 'wrap' },
+  regionPill: {
+    display: 'inline-block', padding: '2px 9px', borderRadius: 999,
+    fontSize: 11, fontWeight: 600, letterSpacing: 0.3, whiteSpace: 'nowrap',
+  },
   radioRow: {
     display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 0',
     fontSize: 13, color: COLORS.textBody, cursor: 'pointer',

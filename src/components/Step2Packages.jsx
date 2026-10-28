@@ -28,7 +28,11 @@ import { availableInverters, directFromCogs, signedDirectFromCogs, buildMarginRe
 import { availableDeliveryLocations, availableMiscCatalog,
          findMiscCatalogItem, MISC_CATALOG_OTHER, racksNeeded } from '../data/adminParams.js';
 import { INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_FREE_TRAVEL_KM, LUZON_REGIONS, resolveLocation, fmtKwp } from '../config.js';
+         LUZON_FREE_TRAVEL_KM, fmtKwp } from '../config.js';
+// v3-231 — the location table is per REGION (Manila/Luzon or Cebu); the
+// sentence under the picker reads the region's hub from the live parameters.
+import { regionsFor, resolveLocation, pickerShape } from '../data/locations.js';
+import { deliveryHint } from '../lib/locationCopy.js';
 import {
   SectionCard, Subsection, Field, NumberInput, Select, Checkbox, TextInput,
   CalloutBox, RecommendationPill, StatTile, COLORS, fmt, RSD_INFO,
@@ -36,7 +40,7 @@ import {
   DC_AC_RATIO_INFO,   // v3-138 — 2C ratio explainer
 } from './ui.jsx';
 
-export default function Step2Packages({ state, updateState, model, adminParams, onReset,
+export default function Step2Packages({ state, updateState, model, adminParams, region = 'luzon', onReset,
                                         afterSection2A, mode = 'rep', onContactRep }) {
   // afterSection2A: optional ReactNode rendered between subsections 2A and 2B.
   // Used by Calculator.jsx to embed the "Visualizing your system" block
@@ -1162,29 +1166,34 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
 
       {/* ─────────── 2E · Location (v3-109 Region → City cascade) ─────────── */}
       {/* Both modes now show the picker (v3-109 — exposed to customers). For
-          "Luzon main island" the rep/customer picks a Region then a City; the
-          city's stored road-km from the Parañaque logistics hub (config
-          LUZON_REGIONS, v3-114 origin rebase) is written to state.locationKm
-          and feeds the identical charge formula in
-          calculations.js (workbook AA38 parity). Cebu / Siargao apply their
-          fixed + per-panel tier. "Other" covers non-road-connected addresses:
-          in customer mode it shows a "contact your rep" note (2F is rep-only);
-          in rep mode the rep enters the cost as a 2F line. */}
+          the home mainland ("Luzon main island" on the Manila calculator,
+          "Cebu main island" on Cebu's — v3-231) the rep/customer picks a
+          Region → Province → City; the city's stored road-km from the region's
+          dispatch hub (src/data/locations.js, v3-114 origin rebase) is written
+          to state.locationKm and feeds the identical charge formula in
+          calculations.js (workbook AA38 parity). Dynamic delivery rows apply
+          their fixed + per-panel tier (switched off since v3-213). "Other"
+          covers non-road-connected addresses: in customer mode it shows a
+          "contact your rep" note (2F is rep-only); in rep mode the rep enters
+          the cost as a 2F line. */}
       {/* v3-121 — customer letter was 2C; Inverters (2C) is public now, so customer lettering runs 2A–2E cleanly */}
       <Subsection title={isCustomer ? '2E · Installation Location' : '2E · Location'}
                   hint={isCustomer ? undefined : 'determines delivery & travel charges'}>
         <Field label="Installation location" inline>
           {/* v3-116 — the middle options are the DYNAMIC in-stock delivery
-              locations (admin-editable, Inventory-toggle idiom). Luzon main
-              island and Other are structural. A stale pick of a hidden/
+              locations (admin-editable, Inventory-toggle idiom). The home
+              mainland and Other are structural. A stale pick of a hidden/
               deleted id is forced back to 'luzon' by App.jsx before pricing,
-              so the Select's value is always a live option. */}
+              so the Select's value is always a live option.
+              v3-231 — 'luzon' is the structural "home mainland" id for EVERY
+              region; its label is the region's own (engine 1.3.0
+              deliveryRegionLabel: "Luzon" for Manila, "Cebu" for Cebu). */}
           <Select
             value={state.location}
             onChange={v => updateState({ location: v })}
             width={300}
             options={[
-              { value: 'luzon', label: 'Luzon main island' },
+              { value: 'luzon', label: `${adminParams.deliveryRegionLabel || 'Luzon'} main island` },
               ...availableDeliveryLocations(adminParams).map(l => ({
                 value: l.id, label: l.label,
               })),
@@ -1193,52 +1202,56 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           />
         </Field>
 
-        {/* Region → Province → City cascade — only for Luzon main island.
+        {/* Region → Province → City cascade — only for the home mainland.
             resolveLocation owns the stale-value fallback, and the province is
             load-bearing: city names are bare, so "Rosario" is ambiguous
-            without it (Cavite 28km vs Batangas 84km). */}
+            without it (Cavite 28km vs Batangas 84km).
+            v3-231 — the table is the active REGION's (src/data/locations.js):
+            Cebu has one region entry, so its Region select is hidden and the
+            cascade is Province → City; with no dispatch hub yet
+            (deliveryHubEnabled false) no km or surcharge is shown because the
+            engine prices every delivery at ₱0. */}
         {state.location === 'luzon' && (() => {
-          const { region, province, provinces, cities, city } =
-            resolveLocation(state.locationRegion, state.locationProvince, state.locationCity);
+          const { region: regionRow, province, provinces, cities, city } =
+            resolveLocation(region, state.locationRegion, state.locationProvince, state.locationCity);
+          const shape = pickerShape(region, adminParams);
           const km = city ? city.km : 0;
           // v3-199 — the free radius is the luzonFreeTravelKm param; the
           // config constant is only the fallback for a params object that
           // predates the key.
           const freeKm = adminParams.luzonFreeTravelKm ?? LUZON_FREE_TRAVEL_KM;
-          // v3-115 — excess-km only, mirroring the corrected AA38 formula.
-          const surcharge = km > freeKm
-            ? adminParams.luzonOver30FixedFee
-              + (km - freeKm) * adminParams.luzonOver30PerKm
-            : 0;
+          const hint = deliveryHint({ adminParams, city: city ? city.name : null, km, freeKm });
           return (
             <div style={{ marginTop: 10 }}>
-              <Field label="Region" inline>
-                <Select
-                  value={region.code}
-                  onChange={code => {
-                    // Re-resolve from the new region so province and city land
-                    // on a valid pair together — setting the region alone would
-                    // leave a province that does not exist in it.
-                    const next = resolveLocation(code, null, null);
-                    updateState({
-                      locationRegion: next.region.code,
-                      locationProvince: next.province,
-                      locationCity: next.city.name,
-                      locationKm: next.city.km,
-                    });
-                  }}
-                  width={300}
-                  options={LUZON_REGIONS.map(r => ({ value: r.code, label: r.label }))}
-                />
-              </Field>
+              {shape.showRegionSelect && (
+                <Field label="Region" inline>
+                  <Select
+                    value={regionRow.code}
+                    onChange={code => {
+                      // Re-resolve from the new region so province and city land
+                      // on a valid pair together — setting the region alone would
+                      // leave a province that does not exist in it.
+                      const next = resolveLocation(region, code, null, null);
+                      updateState({
+                        locationRegion: next.region.code,
+                        locationProvince: next.province,
+                        locationCity: next.city.name,
+                        locationKm: next.city.km,
+                      });
+                    }}
+                    width={300}
+                    options={regionsFor(region).map(r => ({ value: r.code, label: r.label }))}
+                  />
+                </Field>
+              )}
               {/* Hidden for NCR, which has no provinces. */}
               {provinces.length > 0 && (
-                <div style={{ marginTop: 10 }}>
+                <div style={{ marginTop: shape.showRegionSelect ? 10 : 0 }}>
                   <Field label="Province" inline>
                     <Select
                       value={province || ''}
                       onChange={p => {
-                        const next = resolveLocation(region.code, p, null);
+                        const next = resolveLocation(region, regionRow.code, p, null);
                         updateState({
                           locationProvince: next.province,
                           locationCity: next.city.name,
@@ -1265,13 +1278,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                 </Field>
               </div>
               <div style={styles.locationHint}>
-                {surcharge === 0 ? (
-                  <span>{city ? city.name : '—'} — within {freeKm} km of our Parañaque logistics hub. <strong>No delivery charge</strong>.</span>
-                ) : (
-                  <span>{city.name} — approx. {km} km from our Parañaque logistics hub.
-                    A delivery charge for the distance beyond {freeKm} km
-                    is <strong>included in your package price</strong>.</span>
-                )}
+                <span>{hint.before}<strong>{hint.strong}</strong>{hint.after}</span>
               </div>
             </div>
           );

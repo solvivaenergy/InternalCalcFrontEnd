@@ -156,6 +156,10 @@ const PARAM_KEY_TO_SECTION = {
   luzonFreeTravelKm:               'location',   // v3-199 — free-delivery radius
   luzonOver30FixedFeeCogs:         'location',
   luzonOver30PerKmCogs:            'location',
+  deliveryRegionLabel:             'location',   // v3-231 — region-aware delivery (engine 1.3.0)
+  deliveryHubLabel:                'location',
+  deliveryHubEnabled:              'location',
+  odooCompanyId:                   'location',
   // Cabling
   cablingTiers:                  'cabling',
   cablingTiersThreePhase:        'cabling',   // NEW v3-62 — 3-phase tier table

@@ -49,6 +49,7 @@ export default function Calculator({
   state, updateState, model,
   adminParams, disclaimers,
   mode = 'rep',
+  region = 'luzon',   // v3-231 — picks the Step 2E location table
   resetStep1, resetStep2, resetStep3,
   onContactRep,
 }) {
@@ -65,6 +66,7 @@ export default function Calculator({
       <Step2Packages
         state={state} updateState={updateState} model={model}
         adminParams={adminParams}
+        region={region}
         mode={mode}
         onReset={resetStep2}
         onContactRep={onContactRep}
