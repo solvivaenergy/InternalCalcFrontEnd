@@ -1630,6 +1630,13 @@ function CalculatorApp({ role, repIdentity, onSignOut,
           admin branch, which never had the bar; a quote total floating over
           parameter editors would also collide with AdminShell's own save
           affordances). */}
+      {/* v3-231 — the footer renders BEFORE the bar's spacer: it used to come
+          after it and sat entirely under the fixed bar (72px tall vs a 56px
+          spacer), which never mattered while it was white and now hides the
+          lime logo. */}
+      <Footer brand={BRAND}
+              mode={mode} adminAccess={adminAccess}
+              onSignOut={onSignOut} />
       {!model.terms.negativeBalance && !ADMIN_TAB_IDS.includes(activeTab) && (
         <>
           <div className="live-total-spacer" aria-hidden="true" />
@@ -1654,9 +1661,6 @@ function CalculatorApp({ role, repIdentity, onSignOut,
           />
         </>
       )}
-      <Footer brand={BRAND}
-              mode={mode} adminAccess={adminAccess}
-              onSignOut={onSignOut} />
       {lockConfirmOpen && (
         <ConfirmDialog
           title="Return to customer view?"
