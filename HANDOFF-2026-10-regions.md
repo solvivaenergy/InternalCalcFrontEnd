@@ -66,7 +66,10 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
 - **Proposal PDF**: `{{DELIVERY_HUB}}` token; the Logistics Add-On heading +
   clause (`requiresHub`) are dropped when the region has no hub; the
   installation site uses the region's table. Manila's clause now reads "from
-  the Parañaque hub" (was "from Parañaque city").
+  the Parañaque hub" (was "from Parañaque city"). The Inclusions paragraph's
+  delivery item reads the live radius and hub ("Free delivery (within 33 km of
+  the Parañaque hub)"; was the literal "within 30km of KM 0") and is plain
+  "Free delivery" for a region with no hub (Cebu).
 - **Backward compatibility**: `STATE_RECORD_VERSION` 13 → 14 MIGRATES a v13
   record (stamps it `luzon`) instead of wiping it; a record from another region
   is dropped only when the account no longer holds that region. Engine

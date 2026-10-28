@@ -2543,11 +2543,22 @@ function drawPackageDetailPage(mgr) {
   mgr.y = mgr.doc.lastAutoTable.finalY + 6;
 
   // ── Inclusions / Warranty, as two prose paragraphs per the frame ──────────
+  // v3-231 — the delivery inclusion follows the live parameters instead of a
+  // literal: the free radius (luzonFreeTravelKm, v3-199) measured from the
+  // region's dispatch hub (deliveryHubLabel); a region with no hub yet
+  // (deliveryHubEnabled false — Cebu) prices every delivery at ₱0, so it is
+  // simply "Free delivery". The old literal said "within 30km of KM 0", which
+  // was wrong on both counts since v3-114/v3-199.
+  const ap = mgr.ctx?.adminParams || {};
+  const deliveryInclusion =
+    ap.deliveryHubEnabled === false
+      ? "Free delivery"
+      : `Free delivery (within ${ap.luzonFreeTravelKm ?? 30} km of the ${ap.deliveryHubLabel || "Parañaque hub"})`;
   const inclusions = [
     "Free site assessment",
     "Complete installation by certified team",
     "System testing and energization",
-    "Free delivery (within 30km of KM 0)",
+    deliveryInclusion,
     "Customer onboarding and training",
     "Monitoring app access",
     "Dedicated 24/7 technical support team",
