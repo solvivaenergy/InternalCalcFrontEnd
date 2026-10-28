@@ -251,6 +251,32 @@
       body { background: white !important; }
       main { padding: 12px !important; }
     }
+
+    /* v3-231 — motion. Short, one-directional, easing out: content fades up
+       as a tab pane or banner appears, dialogs pop in, the app fades in after
+       sign-in or a region switch. Nothing loops, nothing moves on hover beyond
+       the existing colour transitions, and everything is off under
+       prefers-reduced-motion. */
+    @keyframes svFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes svFadeUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: none; }
+    }
+    @keyframes svPopIn {
+      from { opacity: 0; transform: translateY(4px) scale(0.97); }
+      to   { opacity: 1; transform: none; }
+    }
+    .app-root  { animation: svFadeIn 260ms ease-out both; }
+    .tab-pane  { animation: svFadeUp 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .sv-fade-up { animation: svFadeUp 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .sv-overlay { animation: svFadeIn 160ms ease-out both; }
+    .sv-dialog  { animation: svPopIn 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .tab-btn    { transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease; }
+    button, .mfl-btn { transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, opacity 150ms ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .app-root, .tab-pane, .sv-fade-up, .sv-overlay, .sv-dialog { animation: none !important; }
+      .tab-btn, button, .mfl-btn { transition: none !important; }
+    }
   </style>
 </head>
 <body>

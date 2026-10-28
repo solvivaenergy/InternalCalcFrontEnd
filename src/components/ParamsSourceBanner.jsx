@@ -49,7 +49,7 @@ export default function ParamsSourceBanner({ status, onRetry, retrying, compact,
   const errors = Array.isArray(status.errors) ? status.errors : [];
 
   return (
-    <div style={{ ...styles.wrap, ...(compact ? styles.wrapCompact : {}) }} role="alert">
+    <div style={{ ...styles.wrap, ...(compact ? styles.wrapCompact : {}) }} role="alert" className="sv-fade-up">
       <div style={styles.box}>
         <div style={styles.row}>
           <div style={styles.text}>
@@ -82,7 +82,7 @@ export default function ParamsSourceBanner({ status, onRetry, retrying, compact,
 
 const styles = {
   wrap: {
-    maxWidth: 1200,
+    maxWidth: 1440,
     margin: '12px auto 0',
     padding: '0 24px',
     fontFamily: '"Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',

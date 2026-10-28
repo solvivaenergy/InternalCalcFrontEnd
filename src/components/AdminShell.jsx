@@ -575,6 +575,10 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
       )}
 
       {/* ─── Tab content ────────────────────────────────────────────────── */}
+      {/* v3-231 — keyed on the tab so the content fades in on a switch
+          (index.html `.tab-pane`) while this component — and the unsaved
+          drafts it holds — stays mounted. */}
+      <div key={tab} className="tab-pane">
       {tab === 'inventory' && (
         <InventoryTab
           params={params} updateParam={updateParam}
@@ -609,6 +613,7 @@ export default function AdminShell({ tab, accessLevel, onLogout, savingDisabled,
           accessLevel={accessLevel}
         />
       )}
+      </div>
 
       {/* ─── Validation error ───────────────────────────────────────────── */}
       {anyEdit && validationError && (

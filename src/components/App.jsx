@@ -551,7 +551,7 @@ function BootSplash() {
         minHeight: '100vh', display: 'flex', alignItems: 'center',
         justifyContent: 'center', flexDirection: 'column', gap: 12,
       }}>
-        <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
+        <img src="/logo-mark-v3.png" alt="Solviva" width="48" height="48"
              style={{ opacity: 0.7 }} />
         <div style={{ fontSize: 13, color: '#667085' }}>Loading…</div>
       </div>
@@ -1438,7 +1438,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
           minHeight: '100vh', display: 'flex', alignItems: 'center',
           justifyContent: 'center', flexDirection: 'column', gap: 12,
         }}>
-          <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
+          <img src="/logo-mark-v3.png" alt="Solviva" width="48" height="48"
                style={{ opacity: 0.7 }} />
           <div style={{ fontSize: 13, color: '#667085' }}>Loading…</div>
         </div>
@@ -1514,8 +1514,16 @@ function CalculatorApp({ role, repIdentity, onSignOut,
     );
   }
 
+  // v3-231 — one keyed pane around the tab content so a tab change fades the
+  // new content in (index.html `.tab-pane`). The four parameter tabs share the
+  // key 'params': AdminShell holds unsaved drafts across them, so it must NOT
+  // remount on a tab switch — it animates its own inner content instead.
+  const paneKey = ADMIN_TAB_IDS.includes(activeTab)
+    ? (SUPER_ADMIN_TAB_IDS.includes(activeTab) ? activeTab : 'params')
+    : activeTab;
+
   return (
-    <div style={styles.app}>
+    <div style={styles.app} className="app-root">
       <Header brand={BRAND} contact={contact} setContact={setContact}
               agent={agent} updateAgent={updateAgent}
               generatedDate={generatedDate} validUntil={validUntil}
@@ -1539,6 +1547,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
           content, instead of between the header and the tabs. */}
       <OdooSyncBanner sync={odooSync} onDismiss={() => setOdooSync(null)} />
       <main className="app-main" style={styles.main}>
+        <div key={paneKey} className="tab-pane">
         {activeTab === 'calculator' && (
           <Calculator state={state} updateState={updateState} model={model}
                       adminParams={ADMIN_PARAMS} disclaimers={DISCLAIMERS}
@@ -1605,6 +1614,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
             )}
           </>
         )}
+        </div>
       </main>
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
             adminAccess={adminAccess} theme={theme}
@@ -2590,7 +2600,7 @@ const landscapeReminderStyles = {
     borderBottom: '1px solid #FAC775',
   },
   inner: {
-    maxWidth: 1200,
+    maxWidth: 1440,
     margin: '0 auto',
     padding: '8px 16px',
     display: 'flex',
@@ -2612,8 +2622,8 @@ const landscapeReminderStyles = {
 function ConfirmDialog({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel',
                           onConfirm, onCancel }) {
   return (
-    <div style={confirmStyles.overlay} role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-      <div style={confirmStyles.card}>
+    <div style={confirmStyles.overlay} className="sv-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div style={confirmStyles.card} className="sv-dialog">
         <div style={confirmStyles.accentStripe} aria-hidden="true" />
         <div style={confirmStyles.body}>
           <h2 id="confirm-title" style={confirmStyles.title}>{title}</h2>
@@ -2698,12 +2708,18 @@ const confirmStyles = {
   },
 };
 
+// v3-231 — the footer is a brand dark-green band carrying the LIME logo: the
+// kit's rule is lime logo on dark green, green logo on light (the header),
+// so the two logo variants each sit where they belong.
 function Footer({ brand, mode, adminAccess = 'none', onSignOut }) {
   return (
     <footer style={styles.footer}>
       <div className="footer-inner" style={styles.footerInner}>
-        <div style={{ opacity: 0.7, fontSize: 12 }}>
-          © 2026 {brand.legalEntity}. An AboitizPower Company.
+        <div style={styles.footerBrand}>
+          <img src="/logo-full-lime-v3.png" alt="Solviva Energy" style={styles.footerLogo} />
+          <div style={styles.footerText}>
+            © 2026 {brand.legalEntity}. An AboitizPower Company.
+          </div>
         </div>
         {/* DEPLOYMENT DIVERGENCE: upstream's footer staff key is replaced by a
             plain sign-out, shown only in the customer view (in rep/admin views
@@ -2711,7 +2727,7 @@ function Footer({ brand, mode, adminAccess = 'none', onSignOut }) {
         {mode === 'customer' && adminAccess === 'none' && onSignOut && (
           <button
             onClick={onSignOut}
-            style={styles.signOutBtn}
+            style={{ ...styles.signOutBtn, ...styles.footerSignOut }}
             className="desktop-only-admin"
             title="Sign out"
           >
@@ -2750,7 +2766,7 @@ const styles = {
   },
   header: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #e4e7ec', padding: '20px 0' },
   headerInner: {
-    maxWidth: 1200, margin: '0 auto', padding: '0 24px',
+    maxWidth: 1440, margin: '0 auto', padding: '0 24px',
     display: 'flex', alignItems: 'center', gap: 32,
   },
   logo: { height: 56, width: 'auto' },
@@ -2913,7 +2929,7 @@ const styles = {
   // v3-203 — flexWrap added: seven tabs + the Generate PDF pill can exceed
   // 1200px; wrapping to a second row beats horizontal clipping. Sub-1200px
   // customer view is unaffected (three tabs never wrapped anyway).
-  tabsInner: { maxWidth: 1200, margin: '0 auto', padding: '0 24px',
+  tabsInner: { maxWidth: 1440, margin: '0 auto', padding: '0 24px',
                display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'stretch' },
   tab: {
     background: 'transparent', border: 'none', padding: '14px 22px',
@@ -2968,11 +2984,17 @@ const styles = {
     background: '#667085',
     cursor: 'wait',
   },
-  main: { maxWidth: 1200, margin: '0 auto', padding: '32px 24px' },
-  footer: { borderTop: '1px solid #e4e7ec', backgroundColor: '#FFFFFF', marginTop: 40 },
+  main: { maxWidth: 1440, margin: '0 auto', padding: '32px 24px' },
+  footer: { backgroundColor: '#1f512a', color: '#FFFFFF', marginTop: 40 },
   footerInner: {
-    maxWidth: 1200, margin: '0 auto', padding: '20px 24px',
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    maxWidth: 1440, margin: '0 auto', padding: '22px 24px',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+  },
+  footerBrand: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
+  footerLogo: { height: 26, width: 'auto', display: 'block' },
+  footerText: { fontSize: 12, color: 'rgba(255,255,255,0.78)' },
+  footerSignOut: {
+    color: 'rgba(255,255,255,0.85)', borderColor: 'rgba(255,255,255,0.35)', background: 'transparent',
   },
   footerFixed: { position: 'fixed', bottom: 16, right: 16, zIndex: 10, display: 'flex', gap: 8 },
   agentLink: {

@@ -18,7 +18,7 @@ export default function OdooSyncBanner({ sync, onDismiss }) {
   const palette = good ? styles.good : styles.warn;
   const warnings = Array.isArray(sync.warnings) ? sync.warnings.filter(Boolean) : [];
   return (
-    <div style={styles.wrap} role={good ? 'status' : 'alert'} aria-live="polite">
+    <div style={styles.wrap} role={good ? 'status' : 'alert'} aria-live="polite" className="sv-fade-up">
       <div style={{ ...styles.box, ...palette.box }}>
         <div style={styles.row}>
           <div style={styles.text}>
@@ -41,7 +41,7 @@ export default function OdooSyncBanner({ sync, onDismiss }) {
 
 const styles = {
   wrap: {
-    maxWidth: 1200,
+    maxWidth: 1440,
     margin: '12px auto 0',
     padding: '0 24px',
     fontFamily: '"Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',
