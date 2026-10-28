@@ -18,10 +18,21 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   `['luzon']`, the same default the backend and its RLS policy apply, so no
   account was backfilled); the active region is remembered per device
   (`localStorage.solviva_region_v1`).
-- **Header toggle / badge** (`RegionSwitch` in `App.jsx`): an account with
-  both regions gets a Manila | Cebu segmented toggle; one region ⇒ a fixed
-  badge, no control. Cebu is teal on purpose — the prices do not say which
-  region produced them.
+- **Region stamp, switch and theme** (`src/components/RegionControls.jsx`,
+  design pass after the first staging review): `<RegionStamp/>` — "MANILA
+  calculator" / "CEBU calculator" with a map-pin, filled in the region's
+  accent — sits under the logo in the desktop header and in the mobile header
+  for EVERY account; `<RegionSwitch/>` — a labelled segmented control
+  ("Quoting in  Manila | Cebu", active segment filled) — only for both-region
+  accounts. Per-region `theme` in `region.js`: Manila keeps the calculator's
+  green; Cebu uses the Solviva **brand blue `#006ac6`** (the brand kit's
+  blue, already the proposal's heading colour) for a 4px band along the top
+  of the header, a light wash of the same blue on the header, the active
+  quote-tab indicator, the live total bar and the pills in tables/admin. The
+  header's actions block wraps right-aligned so the quote/agent column keeps
+  its width beside the switch. Logo: `public/logo-full-v3.png` from the
+  brand kit's cropped transparent `logo-horizontal-green.png` (583×168),
+  used by the header, login, reset-password, maintenance gate and mobile flow.
 - **A quote belongs to one region.** Switching starts a NEW quote in the other
   region: a confirm dialog (same idiom as "Reset & lock") when Steps 1–4 or the
   contact were touched, then Steps 1–4, the issue date AND the customer contact
