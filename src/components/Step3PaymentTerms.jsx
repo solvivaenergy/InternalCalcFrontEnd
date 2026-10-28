@@ -435,8 +435,8 @@ const styles = {
     marginTop: 14,
   },
   totalDue: {
-    backgroundColor: COLORS.brandGreen,
-    color: '#FFFFFF',
+    backgroundColor: COLORS.primary,
+    color: COLORS.onPrimary,
     padding: '20px 24px',
     borderRadius: 10,
     marginTop: 24,

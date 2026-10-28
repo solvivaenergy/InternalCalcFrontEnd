@@ -84,7 +84,7 @@ export default function MaintenanceGate({ onUnlock, agent, brand }) {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <img src="/logo-full-v3.png" alt="Solviva Energy" style={styles.logo} />
+        <img src="/logo-horizontal-dark-green.svg" alt="Solviva Energy" style={styles.logo} />
 
         <h1 style={styles.heroHeadline}>We'll be right back.</h1>
         <p style={styles.subtitle}>
@@ -186,7 +186,7 @@ const styles = {
   heroHeadline: {
     fontSize: 28,
     fontWeight: 700,
-    color: '#1f512a',
+    color: '#1F522B',
     margin: '0 0 8px',
     letterSpacing: -0.5,
     lineHeight: 1.2,
@@ -240,8 +240,8 @@ const styles = {
     padding: '14px 20px',
     fontSize: 15,
     fontWeight: 600,
-    backgroundColor: '#1f512a',
-    color: '#FFFFFF',
+    backgroundColor: 'var(--sv-primary)',
+    color: 'var(--sv-on-primary)',
     border: 'none',
     borderRadius: 8,
     cursor: 'pointer',

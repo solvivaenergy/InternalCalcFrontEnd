@@ -486,8 +486,20 @@ export default function App() {
   const [region, setRegion] = useState(null);
   const regions = session ? regionsOf(session) : [DEFAULT_REGION];
   const regionsKey = regions.join(',');
+  // The region also goes on <html data-region>: index.html keys the primary
+  // fill (--sv-primary / --sv-on-primary) off it, so every filled button, bar
+  // and table header recolours for Cebu without threading a prop through.
+  const applyRegion = (next) => {
+    setActiveRegion(next);
+    setRegion(next);
+    try { document.documentElement.dataset.region = next; } catch (_) { /* SSR / tests */ }
+  };
   useEffect(() => {
-    if (!session?.user?.id) { setRegion(null); return; }
+    if (!session?.user?.id) {
+      setRegion(null);
+      try { delete document.documentElement.dataset.region; } catch (_) { /* ignore */ }
+      return;
+    }
     const allowed = regionsKey.split(',');
     let next = getActiveRegion(allowed);
     const stored = peekStoredQuoteRegion();
@@ -495,13 +507,11 @@ export default function App() {
       if (allowed.includes(stored)) next = stored;
       else dropStoredQuote();
     }
-    setActiveRegion(next);
-    setRegion(next);
+    applyRegion(next);
   }, [session?.user?.id, regionsKey]);
   const handleSwitchRegion = (next) => {
     if (!isRegionId(next) || !regions.includes(next)) return;
-    setActiveRegion(next);
-    setRegion(next);
+    applyRegion(next);
   };
 
   const handleSignOut = async () => {
@@ -1699,13 +1709,29 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
   // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
   // v3-231 — the header carries the region: a 4px band in the region's accent
-  // along the top and, on Cebu, a light wash of the same blue (Manila stays
-  // white). The logo gets the stamp underneath it.
+  // along the top; Manila stays a white header with the dark-green logo, Cebu
+  // is a DARK GREEN header with the LIME (chartreuse) logo — the design
+  // system's pairing (dark-green ink on light grounds, chartreuse on dark
+  // green). While the contact form is open inside the header the surface goes
+  // light for both (the form's inputs need it) and the logo follows. The
+  // logo gets the stamp underneath it.
   const theme = regionTheme(region);
-  const headerStyle = { ...styles.header, backgroundColor: theme.headerBg, borderTop: `4px solid ${theme.accent}` };
+  const surfaceDark = theme.headerDark && !editing;
+  const headerStyle = {
+    ...styles.header,
+    backgroundColor: editing ? theme.headerEditBg : theme.headerBg,
+    borderTop: `4px solid ${theme.accent}`,
+    color: surfaceDark ? theme.headerFg : '#212121',
+  };
+  const headerMetaStyle = { ...styles.headerMeta, color: surfaceDark ? theme.headerFg : undefined };
+  const metaMutedStyle = { ...styles.metaMuted, ...(surfaceDark ? { color: theme.headerMuted } : {}) };
+  const headerBtnOverride = surfaceDark && theme.headerBtnFg
+    ? { color: theme.headerBtnFg, borderColor: theme.headerBtnBorder }
+    : {};
   const logoBlock = (
     <div style={styles.logoCol}>
-      <img src="/logo-full-v3.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
+      <img src={surfaceDark ? theme.logoDark : theme.logoLight} alt="Solviva Energy"
+           style={styles.logo} className="header-logo" />
       <RegionStamp region={region} />
     </div>
   );
@@ -1735,15 +1761,15 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
     <header style={headerStyle}>
       <div className="header-inner" style={styles.headerInner}>
         {logoBlock}
-        <div className="header-meta" style={styles.headerMeta}>
+        <div className="header-meta" style={headerMetaStyle}>
           <div style={styles.metaRow}>
             <strong>Quote for:</strong> {contact.name || '—'}
-            {contact.email && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{contact.email}</span></>}
-            {contact.mobile && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{contact.mobile}</span></>}
+            {contact.email && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{contact.email}</span></>}
+            {contact.mobile && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{contact.mobile}</span></>}
             {/* 064A/064C — which Odoo opportunity the proposal will be saved to. */}
             {mode === 'rep' && contact.leadId && (
               <><span style={styles.metaSep}>·</span>
-                <span style={styles.metaMuted} title="The generated proposal is saved to this Odoo opportunity as a quotation">
+                <span style={metaMutedStyle} title="The generated proposal is saved to this Odoo opportunity as a quotation">
                   Odoo lead {contact.leadId}
                 </span></>
             )}
@@ -1752,27 +1778,27 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
             {agent.name ? (
               <>
                 <strong>Solviva Agent:</strong> {agent.name}
-                {agent.email && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{agent.email}</span></>}
-                {agent.phone && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{agent.phone}</span></>}
+                {agent.email && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{agent.email}</span></>}
+                {agent.phone && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{agent.phone}</span></>}
               </>
             ) : (
               <>
                 <strong>Solviva Customer Support:</strong>
-                {agent.email && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{agent.email}</span></>}
-                {agent.phone && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{agent.phone}</span></>}
+                {agent.email && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{agent.email}</span></>}
+                {agent.phone && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{agent.phone}</span></>}
               </>
             )}
           </div>
           <div style={styles.metaRow}>
-            <span style={styles.metaMuted}>Generated {fmt(generatedDate)}</span>
+            <span style={metaMutedStyle}>Generated {fmt(generatedDate)}</span>
             <span style={styles.metaSep}>·</span>
-            <span style={quoteExpired ? styles.metaExpired : styles.metaMuted}>
+            <span style={quoteExpired ? styles.metaExpired : metaMutedStyle}>
               {quoteExpired ? 'EXPIRED' : `Valid until ${fmt(validUntil)}`}
             </span>
           </div>
         </div>
         <div className="header-actions" style={styles.headerActions} data-no-print="true">
-          <RegionSwitch regions={regions} active={region} onSwitch={onSwitchRegion} />
+          <RegionSwitch regions={regions} active={region} onSwitch={onSwitchRegion} onDark={surfaceDark} />
           {mode === 'rep' && onLockMode && (
             <button onClick={onLockMode}
                     style={styles.repPillBtn}
@@ -1795,7 +1821,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
           {onSignOut && (
             <button
               onClick={() => setShowChangePw(true)}
-              style={styles.signOutBtn}
+              style={{ ...styles.signOutBtn, ...headerBtnOverride }}
               title="Change password"
             >
               Change password
@@ -1804,13 +1830,13 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
           {onSignOut && (
             <button
               onClick={onSignOut}
-              style={styles.signOutBtn}
+              style={{ ...styles.signOutBtn, ...headerBtnOverride }}
               title="Sign out"
             >
               Sign out
             </button>
           )}
-          <button onClick={() => setEditing(true)} style={styles.editBtn}>
+          <button onClick={() => setEditing(true)} style={{ ...styles.editBtn, ...headerBtnOverride }}>
             {mode === 'customer' ? (
               <>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -2024,7 +2050,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     ? <span style={{ fontSize: 10.5, color: '#DC2626', marginTop: 3, display: 'block' }}>{text}</span>
     : null;
   const groupTitle = {
-    fontSize: 12, fontWeight: 700, color: '#1f512a', textTransform: 'uppercase',
+    fontSize: 12, fontWeight: 700, color: '#1F522B', textTransform: 'uppercase',
     letterSpacing: 0.7, margin: '0 0 8px',
   };
 
@@ -2050,8 +2076,8 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           <div style={{ marginTop: 14 }}>
             <button onClick={onDone}
                     style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
-                             background: '#1f512a', border: 'none', borderRadius: 6,
-                             color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}>
+                             background: 'var(--sv-primary)', border: 'none', borderRadius: 6,
+                             color: 'var(--sv-on-primary)', cursor: 'pointer', fontFamily: 'inherit' }}>
               Done
             </button>
           </div>
@@ -2064,9 +2090,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     <div>
     {isLeadFlow && (
       <div style={{
-        background: '#f2f4f7', borderLeft: '3px solid #1f512a',
+        background: '#f2f4f7', borderLeft: '3px solid var(--sv-primary)',
         borderRadius: '4px 8px 8px 4px', padding: '12px 16px', marginBottom: 16,
-        fontSize: 13, color: '#1f512a', lineHeight: 1.6,
+        fontSize: 13, color: '#1F522B', lineHeight: 1.6,
       }}>
         Talk to a Solviva representative — complete your contact details and proposed
         installation address below. The calculator settings you've chosen (panels, battery,
@@ -2113,9 +2139,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                         disabled={lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)}
                         style={{
                           fontSize: 12.5, fontWeight: 600, padding: '7px 14px',
-                          borderRadius: 6, border: '1px solid #1f512a',
-                          background: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? '#9CA3AF' : '#1f512a',
-                          color: '#fff', cursor: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? 'default' : 'pointer',
+                          borderRadius: 6, border: '1px solid var(--sv-primary)',
+                          background: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? '#9CA3AF' : 'var(--sv-primary)',
+                          color: 'var(--sv-on-primary)', cursor: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? 'default' : 'pointer',
                           fontFamily: 'inherit', whiteSpace: 'nowrap',
                         }}>
                   {lookup === 'loading' ? 'Searching…' : 'Search'}
@@ -2298,7 +2324,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                           fontSize: 12.5, color: '#475467', lineHeight: 1.5, cursor: 'pointer' }}>
             <input type="checkbox" checked={consentGiven}
                    onChange={e => setConsentGiven(e.target.checked)}
-                   style={{ marginTop: 2, width: 16, height: 16, accentColor: '#1f512a',
+                   style={{ marginTop: 2, width: 16, height: 16, accentColor: 'var(--sv-primary)',
                             cursor: 'pointer', flexShrink: 0 }} />
             <span>{LEAD_CONSENT_TEXT}</span>
           </label>
@@ -2334,8 +2360,8 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           return (
             <button onClick={save} disabled={disabled}
                     style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
-                             background: disabled ? '#9CA3AF' : '#1f512a', border: 'none',
-                             borderRadius: 6, color: 'white', cursor: disabled ? 'not-allowed' : 'pointer',
+                             background: disabled ? '#9CA3AF' : 'var(--sv-primary)', border: 'none',
+                             borderRadius: 6, color: 'var(--sv-on-primary)', cursor: disabled ? 'not-allowed' : 'pointer',
                              fontFamily: 'inherit' }}>
               {label}
             </button>
@@ -2408,7 +2434,6 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
       title="Jump to Step 3 · Pricing"
       style={{
         ...styles.liveTotalBar,
-        ...(theme?.barBg ? { backgroundColor: theme.barBg } : {}),
         ...(theme?.barEdge ? { borderTop: `3px solid ${theme.barEdge}` } : {}),
       }}
     >
@@ -2674,7 +2699,7 @@ const confirmStyles = {
   title: {
     fontSize: 18,
     fontWeight: 700,
-    color: '#1f512a',           // brandGreen
+    color: '#1F522B',           // brandGreen
     margin: '0 0 8px',
   },
   message: {
@@ -2703,8 +2728,8 @@ const confirmStyles = {
     padding: '10px 20px',
     fontSize: 14,
     fontWeight: 600,
-    backgroundColor: '#1f512a',  // brandGreen
-    color: '#FFFFFF',
+    backgroundColor: 'var(--sv-primary)',  // brandGreen
+    color: 'var(--sv-on-primary)',
     border: 'none',
     borderRadius: 8,
     cursor: 'pointer',
@@ -2720,7 +2745,7 @@ function Footer({ brand, mode, adminAccess = 'none', onSignOut }) {
     <footer style={styles.footer}>
       <div className="footer-inner" style={styles.footerInner}>
         <div style={styles.footerBrand}>
-          <img src="/logo-full-lime-v3.png" alt="Solviva Energy" style={styles.footerLogo} />
+          <img src="/logo-horizontal-chartreuse.svg" alt="Solviva Energy" style={styles.footerLogo} />
           <div style={styles.footerText}>
             © 2026 {brand.legalEntity}. An AboitizPower Company.
           </div>
@@ -2888,8 +2913,8 @@ const styles = {
     left: 0, right: 0, bottom: 0,
     zIndex: 40,
     padding: '8px 14px',
-    backgroundColor: '#1f512a',
-    color: '#FFFFFF',
+    backgroundColor: 'var(--sv-primary)',
+    color: 'var(--sv-on-primary)',
     cursor: 'pointer',
     boxShadow: '0 -2px 8px rgba(0,0,0,0.12)',
   },
@@ -2906,7 +2931,7 @@ const styles = {
     textTransform: 'uppercase',
     // rgba (not opacity) so the bold rate below can restore FULL white —
     // a child can override inherited color, but never a parent's opacity.
-    color: 'rgba(255,255,255,0.75)',
+    color: 'var(--sv-on-primary-muted)',
     lineHeight: 1.35,
   },
   liveTotalRateBold: {      // v3-129 — user-directed emphasis on the utility rate
@@ -2923,7 +2948,7 @@ const styles = {
   liveTotalUnit: {
     fontSize: 12,
     fontWeight: 400,
-    color: 'rgba(255,255,255,0.8)',
+    color: 'var(--sv-on-primary-soft)',
   },
   tabsBottom: {
     backgroundColor: '#FFFFFF',
@@ -2940,14 +2965,14 @@ const styles = {
     fontSize: 14, fontWeight: 500, color: '#667085', cursor: 'pointer',
     borderBottom: '3px solid transparent', transition: 'all 150ms',
   },
-  tabActive: { color: '#1f512a', borderBottom: '3px solid #1f512a', fontWeight: 600 },
+  tabActive: { color: '#1F522B', borderBottom: '3px solid var(--sv-primary)', fontWeight: 600 },
   // Bottom-tab variants — same typography, indicator on top edge instead.
   tabBottom: {
     background: 'transparent', border: 'none', padding: '14px 22px',
     fontSize: 14, fontWeight: 500, color: '#667085', cursor: 'pointer',
     borderTop: '3px solid transparent', transition: 'all 150ms',
   },
-  tabActiveBottom: { color: '#1f512a', borderTop: '3px solid #1f512a', fontWeight: 600 },
+  tabActiveBottom: { color: '#1F522B', borderTop: '3px solid var(--sv-primary)', fontWeight: 600 },
   // v3-203 — admin tab variants (D2): brand-gold label so the settings group
   // reads apart from the green-accented quote tabs. Active state deepens the
   // gold and moves the same 3px indicator into gold. Slightly tighter
@@ -2969,9 +2994,9 @@ const styles = {
   generatePdfBtn: {
     marginLeft: 'auto',
     alignSelf: 'center',
-    background: '#1f512a',
+    background: 'var(--sv-primary)',
     border: 'none',
-    color: '#FFFFFF',
+    color: 'var(--sv-on-primary)',
     fontSize: 12,
     fontWeight: 600,
     padding: '7px 14px',
@@ -2989,7 +3014,7 @@ const styles = {
     cursor: 'wait',
   },
   main: { maxWidth: 1440, margin: '0 auto', padding: '32px 24px' },
-  footer: { backgroundColor: '#1f512a', color: '#FFFFFF', marginTop: 40 },
+  footer: { backgroundColor: '#1F522B', color: '#FFFFFF', marginTop: 40 },
   footerInner: {
     maxWidth: 1440, margin: '0 auto', padding: '22px 24px',
     display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,

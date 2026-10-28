@@ -42,12 +42,14 @@ export function RegionStamp({ region, compact = false }) {
   );
 }
 
-export function RegionSwitch({ regions, active, onSwitch }) {
+// `onDark` — the control sits on a dark header (Cebu's dark green): caption
+// and inactive segments go light, the pill group becomes a translucent well.
+export function RegionSwitch({ regions, active, onSwitch, onDark = false }) {
   if (!Array.isArray(regions) || regions.length < 2) return null;
   return (
     <div style={styles.switchWrap} role="group" aria-label="Switch calculator region" data-no-print="true">
-      <span style={styles.switchCaption}>Quoting in</span>
-      <div style={styles.segmented}>
+      <span style={{ ...styles.switchCaption, ...(onDark ? styles.switchCaptionDark : {}) }}>Quoting in</span>
+      <div style={{ ...styles.segmented, ...(onDark ? styles.segmentedDark : {}) }}>
         {regions.map(id => {
           const m = regionMeta(id);
           const on = id === active;
@@ -55,7 +57,8 @@ export function RegionSwitch({ regions, active, onSwitch }) {
             <button key={id} type="button" aria-pressed={on}
                     title={on ? `You are quoting in ${m.label}` : `Switch to the ${m.label} calculator`}
                     onClick={() => { if (!on && onSwitch) onSwitch(id); }}
-                    style={{ ...styles.segment, ...(on ? { backgroundColor: m.theme.accent, color: m.theme.onAccent, boxShadow: '0 1px 2px rgba(0,0,0,0.15)' } : {}) }}>
+                    style={{ ...styles.segment, ...(onDark && !on ? styles.segmentDark : {}),
+                             ...(on ? { backgroundColor: m.theme.accent, color: m.theme.onAccent, boxShadow: '0 1px 2px rgba(0,0,0,0.15)' } : {}) }}>
               <PinIcon size={11} />
               {m.label}
             </button>
@@ -82,11 +85,13 @@ const styles = {
     fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
     color: '#667085', whiteSpace: 'nowrap',
   },
+  switchCaptionDark: { color: 'rgba(255,255,255,0.75)' },
   segmented: {
     display: 'inline-flex', alignItems: 'center', gap: 2,
     padding: 3, borderRadius: 999,
     backgroundColor: '#F3F4F6', border: '1px solid #D1D5DB',
   },
+  segmentedDark: { backgroundColor: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.3)' },
   segment: {
     display: 'inline-flex', alignItems: 'center', gap: 6,
     padding: '6px 14px', borderRadius: 999, border: 'none',
@@ -95,4 +100,5 @@ const styles = {
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     transition: 'background-color 150ms, color 150ms',
   },
+  segmentDark: { color: 'rgba(255,255,255,0.88)' },
 };

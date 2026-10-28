@@ -194,8 +194,8 @@ const toggleStyles = {
     fontFamily: 'inherit',
   },
   active: {
-    backgroundColor: COLORS.brandGreen,
-    color: '#FFFFFF',
+    backgroundColor: COLORS.primary,
+    color: COLORS.onPrimary,
     fontWeight: 600,
   },
 };

@@ -15,8 +15,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 export const COLORS = {
-  brandGreen:   '#1f512a',
-  brandGreenLight: '#50890a',
+  // Solviva brand kit (2026-10-28). brandGreen is the dark green used for TEXT
+  // and lines on light backgrounds in every region; `primary` / `onPrimary`
+  // are the region-themed FILL and the text that sits on it (CSS variables
+  // set per region in index.html: Manila dark green + white, Cebu lime +
+  // dark green). Use `primary` for a filled button / bar / header row and
+  // pair it with `onPrimary`; never put brandGreen behind text that should
+  // follow the region.
+  brandGreen:   '#1F522B',
+  brandGreenLight: '#508908',
+  primary:      'var(--sv-primary)',
+  onPrimary:    'var(--sv-on-primary)',
+  onPrimaryMuted: 'var(--sv-on-primary-muted)',
   brandCream:   '#f2f4f7',
   inputTint:    '#DBEAFE',  // Excel-style user-input blue
   inputBorder:  '#9DB7DD',
@@ -948,12 +958,12 @@ const infoStyles = {
 export const RSD_INFO = (
   <div>
     <div style={{ marginBottom: 10, color: '#212121' }}>
-      A <span style={{ fontWeight: 500, color: '#1f512a' }}>Rapid Shutdown Device</span> is a small
+      A <span style={{ fontWeight: 500, color: '#1F522B' }}>Rapid Shutdown Device</span> is a small
       module installed at each panel that lets first responders quickly de-energize the rooftop
       DC wiring during an emergency.
     </div>
     <div style={{ marginBottom: 8 }}>
-      <span style={{ fontWeight: 500, color: '#1f512a' }}>Why it matters:</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>Why it matters:</span>{' '}
       <span style={{ color: '#212121' }}>
         Without RSD, solar panels keep generating live DC voltage on the roof whenever the sun is
         out — even if the main breaker is off. That can put firefighters at electrocution risk
@@ -961,7 +971,7 @@ export const RSD_INFO = (
       </span>
     </div>
     <div style={{ marginBottom: 10 }}>
-      <span style={{ fontWeight: 500, color: '#1f512a' }}>How RSD helps:</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>How RSD helps:</span>{' '}
       <span style={{ color: '#212121' }}>
         With one button-press at the AC disconnect, RSD drops each panel's output to a safe
         voltage within 30 seconds. It also adds module-level monitoring so you can spot
@@ -998,12 +1008,12 @@ export const RSD_INFO = (
 export const DC_AC_RATIO_INFO = (
   <div>
     <div style={{ marginBottom: 10, color: '#212121' }}>
-      Your panels are rated in <span style={{ fontWeight: 500, color: '#1f512a' }}>DC</span> kilowatts
-      (kWp); your inverter is rated in <span style={{ fontWeight: 500, color: '#1f512a' }}>AC</span> kilowatts.
+      Your panels are rated in <span style={{ fontWeight: 500, color: '#1F522B' }}>DC</span> kilowatts
+      (kWp); your inverter is rated in <span style={{ fontWeight: 500, color: '#1F522B' }}>AC</span> kilowatts.
       The DC/AC ratio is simply the first divided by the second.
     </div>
     <div style={{ marginBottom: 10 }}>
-      <span style={{ fontWeight: 500, color: '#1f512a' }}>Why it's above 1.0:</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>Why it's above 1.0:</span>{' '}
       <span style={{ color: '#212121' }}>
         panels almost never hit their rated output — that figure is measured in a lab. Under real
         Philippine conditions a typical array peaks at roughly 75–85% of nameplate, so pairing it
@@ -1011,7 +1021,7 @@ export const DC_AC_RATIO_INFO = (
       </span>
     </div>
     <div style={{ marginBottom: 10 }}>
-      <span style={{ fontWeight: 500, color: '#1f512a' }}>Why there's a maximum:</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>Why there's a maximum:</span>{' '}
       <span style={{ color: '#212121' }}>
         past the cap the inverter would sit at its ceiling for much of the day and start clipping —
         discarding energy your panels already produced. Solviva caps the ratio so your system isn't
@@ -1040,13 +1050,13 @@ export const DC_AC_RATIO_INFO = (
 export const SERVICE_TYPE_INFO = (
   <div>
     <div style={{ marginBottom: 8 }}>
-      <span style={{ fontWeight: 500, color: '#1f512a' }}>Single-phase:</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>Single-phase:</span>{' '}
       <span style={{ color: '#212121' }}>
         Standard for residential homes and small businesses.
       </span>
     </div>
     <div style={{ marginBottom: 10 }}>
-      <span style={{ fontWeight: 500, color: '#1f512a' }}>3-phase:</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>3-phase:</span>{' '}
       <span style={{ color: '#212121' }}>
         For larger commercial buildings, factories, or homes with industrial-scale loads.
         Your electricity bill or meter will indicate "3-phase" or "3Φ" if applicable.
@@ -1325,7 +1335,7 @@ export const RATE_INFO = (
     <div style={{ marginBottom: 10, color: '#212121' }}>
       Your DU statement should show your effective rate per kWh near the top.
       On Meralco bills, look for{' '}
-      <span style={{ fontWeight: 500, color: '#1f512a' }}>"Your rate this month"</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>"Your rate this month"</span>{' '}
       — shown as a peso-per-kWh value (e.g., ₱15.68 per kWh).
     </div>
     <MeralcoRateMockup />
@@ -1354,7 +1364,7 @@ export const CHARGES_INFO = (
     <div style={{ marginBottom: 10, color: '#212121' }}>
       Your DU statement should show a breakdown of charges for the current billing
       period, separate from any carry-over balance. On Meralco bills, look for{' '}
-      <span style={{ fontWeight: 500, color: '#1f512a' }}>"Charges for this billing period"</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>"Charges for this billing period"</span>{' '}
       in the Bill Computation Summary.
     </div>
     <MeralcoChargesMockup />
@@ -1386,10 +1396,10 @@ export const MAJOR_DEVICES_INFO = (
   <div style={{ color: '#212121' }}>
     By default, this calculator assumes your daily electricity consumption is split evenly
     between day and night. Consumption that's heavier in the daytime needs{' '}
-    <span style={{ fontWeight: 500, color: '#1f512a' }}>fewer batteries</span>;
+    <span style={{ fontWeight: 500, color: '#1F522B' }}>fewer batteries</span>;
     consumption that's heavier at night needs{' '}
-    <span style={{ fontWeight: 500, color: '#1f512a' }}>more</span>. Entering the usual{' '}
-    <span style={{ fontWeight: 500, color: '#1f512a' }}>hours</span> you use your major
+    <span style={{ fontWeight: 500, color: '#1F522B' }}>more</span>. Entering the usual{' '}
+    <span style={{ fontWeight: 500, color: '#1F522B' }}>hours</span> you use your major
     devices and appliances helps determine this.
   </div>
 );
@@ -1648,7 +1658,8 @@ const fieldStyles = {
     fontFamily: 'inherit',
   },
   recPillActive: {
-    backgroundColor: COLORS.brandGreen,
+    backgroundColor: COLORS.primary,
+    color: COLORS.onPrimary,   // v3-231 — dark green on Cebu's lime fill
   },
 };
 

@@ -74,8 +74,8 @@ const ROTATE_MS = 3000;
 const FADE_MS = 300;
 
 const CSS = `
-.mfl{--g9:#1f512a;--g6:#50890a;--g3:#AAC78D;--neon:#D2FF1E;--sky:#B9D8EB;
-  --cream:#fcfcfc;--ink:#1f512a;--muted:#667085;--line:#e4e7ec;
+.mfl{--g9:#1F522B;--g6:#50890a;--g3:#AAC78D;--neon:#D2FF1E;--sky:#B9D8EB;
+  --cream:#fcfcfc;--ink:#1F522B;--muted:#667085;--line:#e4e7ec;
   font-family:'Mulish',system-ui,sans-serif;background:var(--cream);
   color:var(--ink);min-height:100vh;display:flex;flex-direction:column;
   max-width:480px;margin:0 auto;position:relative}
@@ -85,7 +85,7 @@ const CSS = `
 .mfl-header img{height:24px;display:block}
 .mfl-progress{display:flex;gap:5px;padding:4px 20px 12px}
 .mfl-progress i{flex:1;height:4px;border-radius:4px;background:#e4e7ec;transition:background .3s}
-.mfl-progress i.done{background:var(--g9)}
+.mfl-progress i.done{background:var(--sv-primary)}
 .mfl-progress i.now{background:var(--neon);outline:1px solid var(--g9)}
 .mfl-screen{flex:1;padding:6px 20px 150px}
 .mfl-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--g6);
@@ -130,25 +130,25 @@ const CSS = `
   cursor:pointer;margin-top:10px;padding:0}
 .mfl-obj{border:2px solid var(--line);border-radius:22px;padding:16px;margin-bottom:12px;
   background:#fff;cursor:pointer;position:relative}
-.mfl-obj.sel{border-color:var(--g9);background:var(--g9)}
+.mfl-obj.sel{border-color:var(--sv-primary);background:var(--sv-primary)}
 .mfl-obj-t{font-weight:900;font-size:16px;color:var(--g9);padding-right:36px}
 .mfl-obj-d{font-size:13px;color:var(--muted);line-height:1.5;margin-top:5px}
-.mfl-obj.sel .mfl-obj-t{color:var(--neon)}
-.mfl-obj.sel .mfl-obj-d{color:#D9E4D2}
+.mfl-obj.sel .mfl-obj-t{color:var(--sv-on-primary)}
+.mfl-obj.sel .mfl-obj-d{color:var(--sv-on-primary-muted)}
 .mfl-tick{position:absolute;top:14px;right:14px;width:22px;height:22px;border-radius:50%;
   border:2px solid var(--g3);display:flex;align-items:center;justify-content:center;
   font-size:12px;color:transparent}
-.mfl-obj.sel .mfl-tick{background:var(--neon);border-color:var(--neon);
-  color:var(--g9);font-weight:900}
+.mfl-obj.sel .mfl-tick{background:var(--sv-on-primary);border-color:var(--sv-on-primary);
+  color:var(--sv-primary);font-weight:900}
 .mfl-obj-price{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
   margin-top:10px;font-size:13px;font-weight:700;color:var(--muted)}
 .mfl-obj-price b{font-size:16px;font-weight:900;color:var(--g9)}
-.mfl-obj.sel .mfl-obj-price{color:#D9E4D2}
-.mfl-obj.sel .mfl-obj-price b{color:var(--neon)}
+.mfl-obj.sel .mfl-obj-price{color:var(--sv-on-primary-muted)}
+.mfl-obj.sel .mfl-obj-price b{color:var(--sv-on-primary)}
 .mfl-obj-delta{font-size:11px;font-weight:800;border-radius:999px;
   padding:3px 9px;background:#FEF6E0;color:#8A6D1B}
 .mfl-obj-cheapest{font-size:11px;font-weight:800;border-radius:999px;
-  padding:3px 9px;background:var(--g6);color:var(--cream)}
+  padding:3px 9px;background:var(--g6);color:var(--sv-on-primary)}
 .mfl-obj.sel .mfl-obj-delta{background:rgba(255,255,255,.14);color:#F3E2AE}
 .mfl-obj.sel .mfl-obj-cheapest{background:var(--neon);color:var(--g9)}
 .mfl-sliderval{font-size:38px;font-weight:900;color:var(--g9)}
@@ -174,11 +174,11 @@ const CSS = `
 .mfl-dotg{background:var(--g6)}.mfl-dotb{background:var(--sky)}
 .mfl-roof{display:flex;align-items:center;gap:14px;border:2px solid var(--line);
   border-radius:22px;padding:13px 16px;margin-bottom:10px;background:#fff;cursor:pointer}
-.mfl-roof.sel{border-color:var(--g9);background:var(--g9)}
+.mfl-roof.sel{border-color:var(--sv-primary);background:var(--sv-primary)}
 .mfl-roof .ic{font-size:26px}
 .mfl-roof .t{font-weight:900;font-size:15px;color:var(--g9)}
 .mfl-roof .d{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.4}
-.mfl-roof.sel .t{color:var(--neon)}.mfl-roof.sel .d{color:#D9E4D2}
+.mfl-roof.sel .t{color:var(--sv-on-primary)}.mfl-roof.sel .d{color:var(--sv-on-primary-muted)}
 .mfl-select{width:100%;font:inherit;font-size:16px;font-weight:700;color:var(--g9);
   border:2px solid var(--g3);border-radius:16px;padding:13px 40px 13px 14px;background:#fff;
   appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9'%3E%3Cpath d='M1 1l6 6 6-6' stroke='%231F522B' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
@@ -192,17 +192,17 @@ const CSS = `
   text-align:center;background:#fff;cursor:pointer;font-weight:800;font-size:13px;
   color:var(--g9)}
 .mfl-tenor small{display:block;font-size:10px;font-weight:700;color:var(--muted)}
-.mfl-tenor.sel{background:var(--g9);border-color:var(--g9);color:var(--neon)}
-.mfl-tenor.sel small{color:var(--g3)}
+.mfl-tenor.sel{background:var(--sv-primary);border-color:var(--sv-primary);color:var(--sv-on-primary)}
+.mfl-tenor.sel small{color:var(--sv-on-primary-muted)}
 .mfl-payline{display:flex;justify-content:space-between;font-size:14px;
   padding:9px 0;border-bottom:1px solid #ECEEE2;gap:10px}
 .mfl-payline:last-child{border-bottom:none}
 .mfl-payline b{font-weight:900;color:var(--g9);white-space:nowrap}
-.mfl-monthly{background:var(--g9);border-radius:22px;padding:20px;text-align:center;
+.mfl-monthly{background:var(--sv-primary);border-radius:22px;padding:20px;text-align:center;
   margin-bottom:14px}
-.mfl-monthly .v{font-size:38px;font-weight:900;color:var(--neon)}
+.mfl-monthly .v{font-size:38px;font-weight:900;color:var(--sv-on-primary)}
 .mfl-monthly .l{font-size:12px;font-weight:800;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--g3);margin-top:2px}
+  text-transform:uppercase;color:var(--sv-on-primary-muted);margin-top:2px}
 .mfl-exrow{padding:10px 0;border-bottom:1px solid #ECEEE2}
 .mfl-exrow:last-child{border-bottom:none}
 .mfl-exhead{display:flex;align-items:baseline;gap:10px;margin-bottom:5px;flex-wrap:wrap}
@@ -228,7 +228,7 @@ const CSS = `
 .mfl-welcome h1 span{transition:opacity .3s ease;opacity:1}
 .mfl-welcome h1 span.fading{opacity:0}
 .mfl-returns{position:fixed;left:50%;transform:translate(-50%,calc(100% - 62px));
-  bottom:0;width:100%;max-width:480px;z-index:30;background:var(--g9);color:var(--cream);
+  bottom:0;width:100%;max-width:480px;z-index:30;background:var(--sv-primary);color:var(--sv-on-primary);
   border-radius:26px 26px 0 0;box-shadow:0 -8px 30px rgba(23,61,32,.28);
   padding:0 20px calc(12px + env(safe-area-inset-bottom));
   transition:transform .32s cubic-bezier(.2,.8,.2,1)}
@@ -272,11 +272,11 @@ const CSS = `
 .mfl-dusctl{display:flex;align-items:center;border:1px solid #AAC78D;
   border-radius:10px;overflow:hidden;background:#fff;flex-shrink:0}
 .mfl-dusctl button{width:46px;height:46px;border:none;background:#EAF3E1;
-  color:#1f512a;font-size:22px;font-weight:800;line-height:1;cursor:pointer;
+  color:#1F522B;font-size:22px;font-weight:800;line-height:1;cursor:pointer;
   font-family:inherit}
 .mfl-dusctl button:disabled{opacity:.35;cursor:not-allowed}
 .mfl-dusval{min-width:82px;text-align:center;font-size:17px;font-weight:800;
-  color:#1f512a;font-variant-numeric:tabular-nums}
+  color:#1F522B;font-variant-numeric:tabular-nums}
 .mfl-detail{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:2px 0 14px}
 .mfl-rt{background:rgba(255,255,255,.07);border-radius:16px;padding:12px}
 .mfl-rt .v{font-weight:900;font-size:22px;color:var(--neon)}
@@ -287,7 +287,7 @@ const CSS = `
   font-weight:800;color:var(--neon);cursor:pointer;text-align:left;padding:2px 0}
 .mfl-explain{grid-column:1/-1}
 .mfl-explain p{font-size:11px;color:#D9E4D2;line-height:1.55;margin:0 0 8px}
-.mfl-explain b{color:var(--cream)}
+.mfl-explain b{color:var(--sv-on-primary)}
 .mfl-note{grid-column:1/-1;font-size:10px;color:var(--g3);line-height:1.5}
 /* v3-182 — screen 6 metrics block. The sticky sheet is a summary you can
    dismiss; screen 6 is the last screen before the proposal request, so every
@@ -360,7 +360,7 @@ const CSS = `
   border-radius:16px;overflow:hidden}
 .mfl-seg button{border:none;font:inherit;font-size:14px;font-weight:800;
   padding:12px 8px;background:#fff;color:var(--g9);cursor:pointer}
-.mfl-seg button.sel{background:var(--g9);color:var(--neon)}
+.mfl-seg button.sel{background:var(--sv-primary);color:var(--sv-on-primary)}
 .mfl-invite{font-size:12px;color:var(--muted);line-height:1.55;margin:20px 0 0;
   padding:12px 14px;background:rgba(185,216,235,.35);border-radius:14px;text-align:left}
 .mfl-invite b{color:var(--g9)}
@@ -391,7 +391,7 @@ function Info({ title, children }) {
           <circle cx="9" cy="9" r="9" fill="#FFAB40" />
           <text x="9" y="12.8" textAnchor="middle" fontFamily="Georgia, serif"
                 fontStyle="italic" fontWeight="800" fontSize="11.5"
-                fill="#1f512a">i</text>
+                fill="#1F522B">i</text>
         </svg>
       </button>
       {open && (
@@ -766,7 +766,7 @@ function WelcomeScreen({ onStart }) {
   const rotor = useRotator(TAGLINES, true);
   return (
     <div className="mfl-screen mfl-welcome">
-      <img className="mfl-biglogo" src="/logo-full-v3.png"
+      <img className="mfl-biglogo" src="/logo-horizontal-dark-green.svg"
            alt="Solviva — An AboitizPower Company" />
       <img className="mfl-heroimg" src="/mobile-hero-v1.jpg"
            alt="Rooftop solar installation" />
@@ -1634,7 +1634,7 @@ export default function MobileFlow({
       {screen > 0 && (
         <>
           <div className="mfl-header">
-            <img src="/logo-full-v3.png" alt="Solviva" />
+            <img src="/logo-horizontal-dark-green.svg" alt="Solviva" />
             <RegionStamp region={region} compact />
           </div>
           <div className="mfl-progress">

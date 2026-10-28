@@ -319,7 +319,7 @@ export default function EngineeringTab({
 }
 
 const localStyles = {
-  addPillBtn: { background: COLORS.brandGreen, color: '#FFFFFF', border: 'none',
+  addPillBtn: { background: COLORS.primary, color: COLORS.onPrimary, border: 'none',
     fontSize: 12, fontWeight: 600, padding: '6px 12px', borderRadius: 6,
     cursor: 'pointer', fontFamily: 'inherit', textTransform: 'none', letterSpacing: 0 },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },

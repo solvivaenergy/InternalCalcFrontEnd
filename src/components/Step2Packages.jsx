@@ -982,7 +982,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             <input type="checkbox"
               checked={!!state.expansionMode}
               onChange={e => updateState({ expansionMode: e.target.checked })}
-              style={{ marginTop: 3, width: 16, height: 16, accentColor: COLORS.brandGreen }} />
+              style={{ marginTop: 3, width: 16, height: 16, accentColor: COLORS.primary }} />
             <span>
               <div style={{ fontWeight: 600 }}>
                 Panels only — I already have an inverter with spare capacity
@@ -1852,7 +1852,7 @@ const styles = {
     width: 16,
     height: 16,
     marginTop: 2,
-    accentColor: COLORS.brandGreen,
+    accentColor: COLORS.primary,
     flexShrink: 0,
   },
   consvLabel: {

@@ -242,7 +242,7 @@ const weightSliderStyles = {
   tenorNum: { fontSize: 17, fontWeight: 700, color: '#006ac6',
               fontVariantNumeric: 'tabular-nums' },
   sideLbl: { fontSize: 12, color: COLORS.textMuted },
-  range: { width: '100%', accentColor: COLORS.brandGreen, cursor: 'pointer' },
+  range: { width: '100%', accentColor: COLORS.primary, cursor: 'pointer' },
   rangeDisabled: { opacity: 0.45, cursor: 'not-allowed' },
   endLbls: {
     display: 'flex', justifyContent: 'space-between', marginTop: 3,
@@ -297,7 +297,7 @@ export function ContactGatePasswordToggle({ enabled, onChange, envVarSet, canEdi
 const gateStyles = {
   row: { display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
          fontSize: 14, fontWeight: 500, color: COLORS.textBody, marginBottom: 8 },
-  checkbox: { width: 18, height: 18, cursor: 'pointer', accentColor: COLORS.brandGreen },
+  checkbox: { width: 18, height: 18, cursor: 'pointer', accentColor: COLORS.primary },
   labelText: { userSelect: 'none' },
   hint: { fontSize: 12, color: COLORS.textMuted, lineHeight: 1.55,
           marginBottom: 12, paddingLeft: 28 },
@@ -1109,7 +1109,7 @@ const tableStyles = {
   },
   td: { padding: '6px 12px', borderBottom: `1px solid ${COLORS.divider}` },
   addBtn: {
-    background: COLORS.brandGreen, color: '#FFFFFF', border: 'none',
+    background: COLORS.primary, color: COLORS.onPrimary, border: 'none',
     fontSize: 12, fontWeight: 600, padding: '6px 12px', borderRadius: 6,
     cursor: 'pointer', fontFamily: 'inherit',
   },
@@ -1452,7 +1452,7 @@ export const adminStyles = {
   saveStatusOk:   { fontSize: 13, color: '#065F46', fontWeight: 600 },
   saveStatusErr:  { fontSize: 13, color: '#991B1B', fontWeight: 600 },
   saveBtn: {
-    background: '#1f512a', border: '1px solid #1f512a', color: '#FFFFFF',
+    background: 'var(--sv-primary)', border: '1px solid var(--sv-primary)', color: COLORS.onPrimary,
     fontSize: 13, fontWeight: 700, padding: '10px 20px', borderRadius: 6,
     cursor: 'pointer', fontFamily: 'inherit', letterSpacing: 0.3,
   },
@@ -1644,7 +1644,7 @@ export function BoolParam({ label, value, onChange, canEdit, hint,
               type="checkbox"
               checked={!!value}
               onChange={e => onChange(e.target.checked)}
-              style={{ width: 16, height: 16, cursor: 'pointer', accentColor: COLORS.brandGreen }}
+              style={{ width: 16, height: 16, cursor: 'pointer', accentColor: COLORS.primary }}
             />
             <span>{value ? onLabel : offLabel}</span>
           </label>

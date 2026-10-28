@@ -205,7 +205,7 @@ const styles = {
   actions: { display: 'flex', gap: 10, marginTop: 4 },
   button: {
     flex: 1, padding: '12px', fontSize: 14, fontWeight: 600,
-    backgroundColor: COLORS.brandGreen, color: '#FFFFFF', border: 'none',
+    backgroundColor: COLORS.primary, color: COLORS.onPrimary, border: 'none',
     borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
   },
   buttonDisabled: { backgroundColor: '#9CA3AF', cursor: 'not-allowed' },

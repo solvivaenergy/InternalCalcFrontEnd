@@ -48,7 +48,7 @@ export default function ResetPassword({ onDone }) {
   return (
     <div style={styles.page}>
       <form style={styles.card} onSubmit={handleSubmit}>
-        <img src="/logo-full-v3.png" alt="Solviva Energy" style={styles.logo} />
+        <img src="/logo-horizontal-dark-green.svg" alt="Solviva Energy" style={styles.logo} />
         <h1 style={styles.title}>Set a new password</h1>
 
         {success ? (
@@ -174,7 +174,7 @@ const styles = {
   },
   button: {
     width: '100%', padding: '12px', fontSize: 14, fontWeight: 600,
-    backgroundColor: COLORS.brandGreen, color: '#FFFFFF', border: 'none',
+    backgroundColor: COLORS.primary, color: COLORS.onPrimary, border: 'none',
     borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', marginTop: 4,
   },
   buttonDisabled: { backgroundColor: '#9CA3AF', cursor: 'not-allowed' },

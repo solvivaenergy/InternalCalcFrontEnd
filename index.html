@@ -33,9 +33,9 @@
        ───────────────────────────────────────────────────────────────── */
     .tenor-row { transition: background-color 120ms ease; }
     .tenor-row:hover { background-color: #f2f4f7; }
-    .tenor-row:hover .tenor-dot { border-color: #1f512a; }
+    .tenor-row:hover .tenor-dot { border-color: #1F522B; }
     .tenor-row:focus-visible {
-      outline: 2px solid #1f512a;
+      outline: 2px solid var(--sv-primary);
       outline-offset: -2px;
     }
     /* Coarse pointers have no hover; the tint would latch on after a tap and
@@ -250,6 +250,28 @@
       [data-no-print] { display: none !important; }
       body { background: white !important; }
       main { padding: 12px !important; }
+    }
+
+    /* v3-231 — region theme. The calculator's PRIMARY fill (buttons, the
+       phase toggle, table header rows, the live total bar, underlines, the
+       focus ring) is a CSS variable so the active region recolours it in one
+       place: Manila = the brand dark green with white text on it; Cebu = the
+       brand lime #D2FF1E with dark green text on it (lime is a background
+       colour in the brand kit — never white text on lime). App.jsx sets
+       data-region on <html> once the region is known. TEXT that is dark green
+       on a light background stays dark green in both regions: lime text on
+       white is unreadable. */
+    :root {
+      --sv-primary: #1F522B;
+      --sv-on-primary: #FFFFFF;
+      --sv-on-primary-muted: rgba(255, 255, 255, 0.75);
+      --sv-on-primary-soft: rgba(255, 255, 255, 0.8);
+    }
+    :root[data-region="cebu"] {
+      --sv-primary: #D2FF1E;
+      --sv-on-primary: #1F522B;
+      --sv-on-primary-muted: rgba(31, 82, 43, 0.72);
+      --sv-on-primary-soft: rgba(31, 82, 43, 0.8);
     }
 
     /* v3-231 — motion. Short, one-directional, easing out: content fades up

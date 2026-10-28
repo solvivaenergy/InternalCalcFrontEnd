@@ -914,7 +914,7 @@ const styles = {
   // ── buttons ──
   primaryBtn: {
     padding: '9px 16px', fontSize: 13, fontWeight: 600,
-    backgroundColor: COLORS.brandGreen, color: '#FFFFFF', border: 'none',
+    backgroundColor: COLORS.primary, color: COLORS.onPrimary, border: 'none',
     borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
   },
   secondaryBtn: {
@@ -977,7 +977,7 @@ const styles = {
     fontSize: 13, fontWeight: 600, color: COLORS.textBody,
     border: `1px solid ${COLORS.inputBorder}`, backgroundColor: '#FFFFFF',
   },
-  regionCheck: { width: 15, height: 15, cursor: 'pointer', margin: 0, accentColor: COLORS.brandGreen },
+  regionCheck: { width: 15, height: 15, cursor: 'pointer', margin: 0, accentColor: COLORS.primary },
   regionPills: { display: 'inline-flex', gap: 4, flexWrap: 'wrap' },
   regionPill: {
     display: 'inline-block', padding: '2px 9px', borderRadius: 999,

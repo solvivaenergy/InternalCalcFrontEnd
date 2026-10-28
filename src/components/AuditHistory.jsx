@@ -153,7 +153,7 @@ const styles = {
     marginBottom: 16,
     flexWrap: "wrap",
   },
-  title: { margin: 0, fontSize: 22, color: COLORS.darkGreen || "#1f512a" },
+  title: { margin: 0, fontSize: 22, color: COLORS.darkGreen || "#1F522B" },
   subtitle: { margin: "5px 0 0", color: "#777", fontSize: 13 },
   scopeRow: { display: "inline-flex", gap: 4, alignItems: "center", marginLeft: 8 },
   scopeBtn: {
@@ -182,7 +182,7 @@ const styles = {
     display: "inline-block", padding: "2px 9px", borderRadius: 999,
     fontSize: 11, fontWeight: 600, letterSpacing: 0.3, whiteSpace: "nowrap",
   },
-  area: { color: COLORS.darkGreen || "#1f512a", fontWeight: 600 },
+  area: { color: COLORS.darkGreen || "#1F522B", fontWeight: 600 },
   changeCount: { color: "#777", textAlign: "right" },
   details: { padding: "0 14px 14px 34px", borderTop: "1px solid #e4e7ec" },
   meta: { padding: "11px 0", color: "#777", fontSize: 12 },
@@ -192,5 +192,5 @@ const styles = {
   values: { display: "flex", gap: 8, alignItems: "baseline", fontSize: 13, overflowWrap: "anywhere" },
   before: { color: "#8b3a32" },
   arrow: { color: "#999" },
-  after: { color: COLORS.darkGreen || "#1f512a" },
+  after: { color: COLORS.darkGreen || "#1F522B" },
 };

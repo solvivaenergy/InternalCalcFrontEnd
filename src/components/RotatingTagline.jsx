@@ -130,7 +130,7 @@ const styles = {
   headline: {
     fontSize: 26,
     fontWeight: 700,
-    color: '#1f512a',
+    color: '#1F522B',
     letterSpacing: -0.5,
     lineHeight: 1.2,
     margin: 0,

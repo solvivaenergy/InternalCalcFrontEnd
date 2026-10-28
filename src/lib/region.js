@@ -30,11 +30,20 @@
 // text on lime, never lime text on white — hence `onAccent` / `tabText`, and
 // the live total bar keeps a dark green fill with a lime edge instead of a
 // lime fill. The wash is lime at ~15% on white; nothing is outside the kit.
-//   accent    fill of the band, stamp and active segment; the tab underline
-//   onAccent  text colour on that fill
-//   tabText   active quote-tab text (must read on white)
-//   headerBg  header background while the region is active
-//   barBg / barEdge   live total bar fill and (optional) top edge
+//   accent     fill of the band, stamp and active segment; the tab underline
+//   onAccent   text colour on that fill
+//   tabText    active quote-tab text (must read on white)
+//   headerBg / headerDark / headerFg / headerMuted
+//              header background while the region is active, whether it is a
+//              dark surface (Cebu: brand dark green, so the LIME logo sits on
+//              it per the kit's rule), and the text colours on it
+//   headerEditBg  the header while the contact form is open inside it (always
+//              light — the form's inputs need a light surface)
+//   headerBtnFg / headerBtnBorder  account buttons on a dark header
+//   logoDark / logoLight  the logo variant for a dark / light header surface
+// The PRIMARY fill of the whole calculator (buttons, toggles, table header
+// rows, the live total bar) is NOT here: it is the --sv-primary CSS variable
+// that index.html sets per region from data-region on <html>.
 export const REGIONS = Object.freeze([
   {
     id: 'luzon',
@@ -42,18 +51,22 @@ export const REGIONS = Object.freeze([
     shortLabel: 'MNL',
     colour: { fg: '#854F0B', bg: '#FAEEDA', border: '#FAC775' },
     theme: {
-      accent: '#1f512a', onAccent: '#FFFFFF', tabText: '#1f512a',
-      headerBg: '#FFFFFF', barBg: '#1f512a', barEdge: null,
+      accent: '#1F522B', onAccent: '#FFFFFF', tabText: '#1F522B',
+      headerBg: '#FFFFFF', headerDark: false, headerFg: '#212121', headerMuted: '#667085',
+      headerEditBg: '#FFFFFF', headerBtnFg: null, headerBtnBorder: null,
+      logoDark: '/logo-horizontal-chartreuse.svg', logoLight: '/logo-horizontal-dark-green.svg',
     },
   },
   {
     id: 'cebu',
     label: 'Cebu',
     shortLabel: 'CEB',
-    colour: { fg: '#1f512a', bg: '#F1FFB8', border: '#d2ff1e' },
+    colour: { fg: '#1F522B', bg: '#F1FFB8', border: '#D2FF1E' },
     theme: {
-      accent: '#d2ff1e', onAccent: '#1f512a', tabText: '#1f512a',
-      headerBg: '#FAFFE6', barBg: '#1f512a', barEdge: '#d2ff1e',
+      accent: '#D2FF1E', onAccent: '#1F522B', tabText: '#1F522B',
+      headerBg: '#1F522B', headerDark: true, headerFg: '#FFFFFF', headerMuted: 'rgba(255,255,255,0.72)',
+      headerEditBg: '#FAFFE6', headerBtnFg: '#FFFFFF', headerBtnBorder: 'rgba(255,255,255,0.45)',
+      logoDark: '/logo-horizontal-chartreuse.svg', logoLight: '/logo-horizontal-dark-green.svg',
     },
   },
 ]);
