@@ -21,7 +21,7 @@ import {
 } from './ui.jsx';
 import ConsumptionDonut from './charts/ConsumptionDonut.jsx';
 
-export default function Step1Consumption({ state, updateState, model, onReset }) {
+export default function Step1Consumption({ state, updateState, model, onReset, badge }) {
   const { recommended } = model;
 
   return (
@@ -30,6 +30,7 @@ export default function Step1Consumption({ state, updateState, model, onReset })
       title="Tell us about your consumption"
       subtitle="A few quick details about your monthly bill help us recommend the right system size for your home."
       onReset={onReset}
+      badge={badge}
     >
       <div className="grid-2col" style={styles.grid}>
         {/* ─── Left column: inputs ──────────────────────────── */}

@@ -12,9 +12,9 @@ import { DEFAULTS, BRAND, AGENT, AUTH,
 // regions come from Supabase app_metadata (src/lib/region.js); the location
 // tables and the cascade helpers live in src/data/locations.js.
 import { regionsFor, resolveLocation, defaultLocationState, pickerShape } from '../data/locations.js';
-import { DEFAULT_REGION, isRegionId, regionMeta, regionTheme, regionsOf,
+import { DEFAULT_REGION, isRegionId, regionMeta, regionLabel, regionTheme, regionsOf,
          getActiveRegion, setActiveRegion } from '../lib/region.js';
-import { RegionStamp, RegionSwitch } from './RegionControls.jsx';
+import { RegionSelect, RegionPricingPill } from './RegionControls.jsx';
 // The sizing/pricing pipeline is computeProposal() in @solviva/calc-engine (proposal.js)
 // (this file's model memo, lifted out 2026-09-27). Only the PDF path still
 // reaches into the engine directly, to rebuild the annex on the issue date.
@@ -1549,7 +1549,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
                           retrying={paramsRetrying} region={region} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
-            adminAccess={adminAccess} theme={theme}
+            adminAccess={adminAccess} theme={theme} regionLabel={regionLabel(region)}
             negativeBalance={model.terms.negativeBalance}
             onGeneratePdf={handleGeneratePdf} pdfGenerating={pdfGenerating} />
       {/* v3-223 — the Odoo hand-off banner sits UNDER the tab bar (user
@@ -1562,6 +1562,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
           <Calculator state={state} updateState={updateState} model={model}
                       adminParams={ADMIN_PARAMS} disclaimers={DISCLAIMERS}
                       mode={mode} region={region}
+                      priceListUpdatedAt={paramsStatus?.updatedAt ?? null}
                       resetStep1={resetStep1} resetStep2={resetStep2} resetStep3={resetStep3}
                       onContactRep={() => {
                         // v3-98 — the contact form renders inside the header at
@@ -1627,7 +1628,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
         </div>
       </main>
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
-            adminAccess={adminAccess} theme={theme}
+            adminAccess={adminAccess} theme={theme} regionLabel={regionLabel(region)}
             negativeBalance={model.terms.negativeBalance}
             position="bottom" />
       {/* v3-123 — spacer keeps the tab strip + page end visible above the
@@ -1655,7 +1656,7 @@ function CalculatorApp({ role, repIdentity, onSignOut,
             cashFlows={model.cashFlows}
             irrYears={state.irrYears}
             utilityRate={state.utilityRate}
-            theme={theme}
+            region={region}
             onJumpToPricing={() => {
               const jump = () => {
                 const el = document.getElementById('step3-pricing');
@@ -1696,9 +1697,13 @@ function CalculatorApp({ role, repIdentity, onSignOut,
   );
 }
 
-// v3-231 — the region controls live in RegionControls.jsx: <RegionStamp/>
-// under the logo names the calculator for every account; <RegionSwitch/>
-// (both-region accounts only) is the segmented "Quoting in" control.
+// v3-231 — the region controls live in RegionControls.jsx. The header carries
+// the "Pricing branch" dropdown (<RegionSelect/>, every account) and a 4px
+// band in the branch colour along its top; the branch is named again beside
+// the numbers it priced (the live total bar's pill, the Step 1 price-list
+// badge, the Generate PDF button). The header surface itself stays white with
+// the dark-green logo in every region (the three-colour design, 2026-11-01;
+// the earlier dark-green Cebu header is gone).
 
 function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
                   generatedDate, validUntil, quoteExpired,
@@ -1708,32 +1713,11 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
-  // v3-231 — the header carries the region: a 4px band in the region's accent
-  // along the top; Manila stays a white header with the dark-green logo, Cebu
-  // is a DARK GREEN header with the LIME (chartreuse) logo — the design
-  // system's pairing (dark-green ink on light grounds, chartreuse on dark
-  // green). While the contact form is open inside the header the surface goes
-  // light for both (the form's inputs need it) and the logo follows. The
-  // logo gets the stamp underneath it.
   const theme = regionTheme(region);
-  const surfaceDark = theme.headerDark && !editing;
-  const headerStyle = {
-    ...styles.header,
-    backgroundColor: editing ? theme.headerEditBg : theme.headerBg,
-    borderTop: `4px solid ${theme.accent}`,
-    color: surfaceDark ? theme.headerFg : '#212121',
-  };
-  const headerMetaStyle = { ...styles.headerMeta, color: surfaceDark ? theme.headerFg : undefined };
-  const metaMutedStyle = { ...styles.metaMuted, ...(surfaceDark ? { color: theme.headerMuted } : {}) };
-  const headerBtnOverride = surfaceDark && theme.headerBtnFg
-    ? { color: theme.headerBtnFg, borderColor: theme.headerBtnBorder }
-    : {};
+  const headerStyle = { ...styles.header, borderTop: `4px solid ${theme.accent}` };
   const logoBlock = (
-    <div style={styles.logoCol}>
-      <img src={surfaceDark ? theme.logoDark : theme.logoLight} alt="Solviva Energy"
-           style={styles.logo} className="header-logo" />
-      <RegionStamp region={region} />
-    </div>
+    <img src="/logo-horizontal-dark-green.svg" alt="Solviva Energy"
+         style={styles.logo} className="header-logo" />
   );
 
   if (editing) {
@@ -1761,15 +1745,15 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
     <header style={headerStyle}>
       <div className="header-inner" style={styles.headerInner}>
         {logoBlock}
-        <div className="header-meta" style={headerMetaStyle}>
+        <div className="header-meta" style={styles.headerMeta}>
           <div style={styles.metaRow}>
             <strong>Quote for:</strong> {contact.name || '—'}
-            {contact.email && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{contact.email}</span></>}
-            {contact.mobile && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{contact.mobile}</span></>}
+            {contact.email && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{contact.email}</span></>}
+            {contact.mobile && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{contact.mobile}</span></>}
             {/* 064A/064C — which Odoo opportunity the proposal will be saved to. */}
             {mode === 'rep' && contact.leadId && (
               <><span style={styles.metaSep}>·</span>
-                <span style={metaMutedStyle} title="The generated proposal is saved to this Odoo opportunity as a quotation">
+                <span style={styles.metaMuted} title="The generated proposal is saved to this Odoo opportunity as a quotation">
                   Odoo lead {contact.leadId}
                 </span></>
             )}
@@ -1778,27 +1762,27 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
             {agent.name ? (
               <>
                 <strong>Solviva Agent:</strong> {agent.name}
-                {agent.email && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{agent.email}</span></>}
-                {agent.phone && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{agent.phone}</span></>}
+                {agent.email && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{agent.email}</span></>}
+                {agent.phone && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{agent.phone}</span></>}
               </>
             ) : (
               <>
                 <strong>Solviva Customer Support:</strong>
-                {agent.email && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{agent.email}</span></>}
-                {agent.phone && <><span style={styles.metaSep}>·</span><span style={metaMutedStyle}>{agent.phone}</span></>}
+                {agent.email && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{agent.email}</span></>}
+                {agent.phone && <><span style={styles.metaSep}>·</span><span style={styles.metaMuted}>{agent.phone}</span></>}
               </>
             )}
           </div>
           <div style={styles.metaRow}>
-            <span style={metaMutedStyle}>Generated {fmt(generatedDate)}</span>
+            <span style={styles.metaMuted}>Generated {fmt(generatedDate)}</span>
             <span style={styles.metaSep}>·</span>
-            <span style={quoteExpired ? styles.metaExpired : metaMutedStyle}>
+            <span style={quoteExpired ? styles.metaExpired : styles.metaMuted}>
               {quoteExpired ? 'EXPIRED' : `Valid until ${fmt(validUntil)}`}
             </span>
           </div>
         </div>
         <div className="header-actions" style={styles.headerActions} data-no-print="true">
-          <RegionSwitch regions={regions} active={region} onSwitch={onSwitchRegion} onDark={surfaceDark} />
+          <RegionSelect regions={regions} active={region} onSwitch={onSwitchRegion} />
           {mode === 'rep' && onLockMode && (
             <button onClick={onLockMode}
                     style={styles.repPillBtn}
@@ -1821,7 +1805,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
           {onSignOut && (
             <button
               onClick={() => setShowChangePw(true)}
-              style={{ ...styles.signOutBtn, ...headerBtnOverride }}
+              style={styles.signOutBtn}
               title="Change password"
             >
               Change password
@@ -1830,13 +1814,13 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
           {onSignOut && (
             <button
               onClick={onSignOut}
-              style={{ ...styles.signOutBtn, ...headerBtnOverride }}
+              style={styles.signOutBtn}
               title="Sign out"
             >
               Sign out
             </button>
           )}
-          <button onClick={() => setEditing(true)} style={{ ...styles.editBtn, ...headerBtnOverride }}>
+          <button onClick={() => setEditing(true)} style={styles.editBtn}>
             {mode === 'customer' ? (
               <>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -2395,7 +2379,11 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
 // v3-231 — `theme` recolours the bar for the active region: `barBg` fill and
 // an optional `barEdge` top edge (Cebu: dark green with the lime edge — lime
 // cannot be the fill because the figures are white).
-function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing, theme }) {
+// v3-231 (2026-11-01 design) — the bar is a light tint of the branch colour
+// with a top edge and figures in the branch ink (CSS --sv-bar-* tokens), and
+// its first cell is the "{Region} pricing" pill: the branch is named next to
+// the numbers it priced.
+function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing, region = DEFAULT_REGION }) {
   // v3-161 — FIVE live figures: IRR added between Payback and Cost/kWh,
   // mirroring Step 4's Payback → IRR → LCOE ordering (user-directed).
   // v3-129 — FOUR live figures (user-approved mockup incl. the bold utility
@@ -2432,11 +2420,11 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
       onClick={onJumpToPricing}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') onJumpToPricing(); }}
       title="Jump to Step 3 · Pricing"
-      style={{
-        ...styles.liveTotalBar,
-        ...(theme?.barEdge ? { borderTop: `3px solid ${theme.barEdge}` } : {}),
-      }}
+      style={styles.liveTotalBar}
     >
+      <span className="live-total-pill">
+        <RegionPricingPill region={region} />
+      </span>
       <span className="live-total-cell" style={styles.liveTotalCell}>
         <span style={styles.liveTotalLabel}>Your Total<br />Price</span>
         <span style={styles.liveTotalValue}>{fmt.peso(total)}</span>
@@ -2470,7 +2458,7 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
 }
 
 function Tabs({ activeTab, setActiveTab, mode, position = 'top',
-                adminAccess = 'none', theme,
+                adminAccess = 'none', theme, regionLabel: branchLabel = '',
                 negativeBalance, onGeneratePdf, pdfGenerating }) {
   // Summary AND Schedule tabs are rep-only — in customer mode the formal
   // line-item quote (Summary) AND the year-by-year payment schedule are both
@@ -2513,16 +2501,15 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
   const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;
-  // v3-231 — the quote tabs' active indicator takes the region's accent and
-  // the text its `tabText` (Manila: the green these styles already hold;
-  // Cebu: dark green text under a lime line — lime text on white is a brand
-  // no).
+  // v3-231 — the quote tabs' active text and underline take the region's INK
+  // (the branch colour as text on white: dark green for Manila AND Cebu —
+  // a lime line on white is invisible — blue for Davao when it opens).
   const tabActiveStyle = {
     ...(position === 'bottom' ? styles.tabActiveBottom : styles.tabActive),
     ...(theme
       ? (position === 'bottom'
-          ? { color: theme.tabText, borderTop: `3px solid ${theme.accent}` }
-          : { color: theme.tabText, borderBottom: `3px solid ${theme.accent}` })
+          ? { color: theme.ink, borderTop: `3px solid ${theme.ink}` }
+          : { color: theme.ink, borderBottom: `3px solid ${theme.ink}` })
       : {}),
   };
   const tabAdminActiveStyle = position === 'bottom'
@@ -2571,7 +2558,7 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
             <span aria-hidden="true" style={{ marginRight: 6, fontSize: 13 }}>
               {pdfGenerating ? '\u23F3' : '\u2B07'}
             </span>
-            {pdfGenerating ? 'Generating…' : 'Generate PDF'}
+            {pdfGenerating ? 'Generating…' : `Generate ${branchLabel ? `${branchLabel} ` : ''}PDF`}
           </button>
         )}
       </div>
@@ -2804,11 +2791,11 @@ const styles = {
   metaSep: { opacity: 0.4 },
   metaMuted: { color: '#667085' },
   metaExpired: { color: '#B91C1C', fontWeight: 600, letterSpacing: 0.5 },
-  // v3-231 — wraps: with the "Quoting in" switch in the row, a both-region
-  // account's controls no longer fit beside the quote/agent column at 1200px,
-  // and squeezing that column made its lines break. The block now caps its
-  // width and wraps right-aligned — the switch takes the first row, the
-  // account buttons the second — so the meta column keeps its room.
+  // v3-231 — wraps: with the "Pricing branch" dropdown in the row, the
+  // controls no longer fit beside the quote/agent column at 1200px, and
+  // squeezing that column made its lines break. The block caps its width and
+  // wraps right-aligned — the dropdown takes the first row, the account
+  // buttons the second — so the meta column keeps its room.
   headerActions: {
     display: 'flex',
     flexWrap: 'wrap',
@@ -2818,8 +2805,6 @@ const styles = {
     flexShrink: 0,
     maxWidth: 580,
   },
-  // v3-231 — the logo column: logo with the region stamp underneath.
-  logoCol: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 7, flexShrink: 0 },
   editBtn: {
     background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
     padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#667085',
@@ -2907,14 +2892,17 @@ const styles = {
   // (where the user just was) rather than to whatever lies further down.
   // Hairline above to detach from the main content; nothing below since the
   // footer separator handles that.
-  // v3-123 — live Total Amount Due bar.
+  // v3-123 — live Total Amount Due bar. v3-231 — on the --sv-bar-* tokens: a
+  // light tint of the branch colour, a top edge in the accent, figures in the
+  // branch ink (index.html sets them per region).
   liveTotalBar: {
     position: 'fixed',
     left: 0, right: 0, bottom: 0,
     zIndex: 40,
     padding: '8px 14px',
-    backgroundColor: 'var(--sv-primary)',
-    color: 'var(--sv-on-primary)',
+    backgroundColor: 'var(--sv-bar-bg)',
+    color: 'var(--sv-bar-fg)',
+    borderTop: '3px solid var(--sv-bar-edge)',
     cursor: 'pointer',
     boxShadow: '0 -2px 8px rgba(0,0,0,0.12)',
   },
@@ -2929,15 +2917,15 @@ const styles = {
     fontSize: 9.5,
     letterSpacing: '0.06em',
     textTransform: 'uppercase',
-    // rgba (not opacity) so the bold rate below can restore FULL white —
-    // a child can override inherited color, but never a parent's opacity.
-    color: 'var(--sv-on-primary-muted)',
+    // a muted token (not opacity) so the bold rate below can restore the FULL
+    // ink — a child can override inherited color, but never a parent's opacity.
+    color: 'var(--sv-bar-muted)',
     lineHeight: 1.35,
   },
   liveTotalRateBold: {      // v3-129 — user-directed emphasis on the utility rate
     fontSize: 13,
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: 'var(--sv-bar-fg)',
   },
   liveTotalValue: {
     fontSize: 18,
@@ -2948,7 +2936,7 @@ const styles = {
   liveTotalUnit: {
     fontSize: 12,
     fontWeight: 400,
-    color: 'var(--sv-on-primary-soft)',
+    color: 'var(--sv-bar-muted)',
   },
   tabsBottom: {
     backgroundColor: '#FFFFFF',

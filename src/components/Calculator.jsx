@@ -39,6 +39,7 @@
 
 import React from 'react';
 import Step1Consumption from './Step1Consumption.jsx';
+import { PriceListBadge } from './RegionControls.jsx';
 import Step2Packages from './Step2Packages.jsx';
 import EnergyVisuals from './EnergyVisuals.jsx';
 import Step3PaymentTerms from './Step3PaymentTerms.jsx';
@@ -50,6 +51,7 @@ export default function Calculator({
   adminParams, disclaimers,
   mode = 'rep',
   region = 'luzon',   // v3-231 — picks the Step 2E location table
+  priceListUpdatedAt = null,   // v3-231 — when the region's payload was last saved (Step 1 badge)
   resetStep1, resetStep2, resetStep3,
   onContactRep,
 }) {
@@ -59,9 +61,12 @@ export default function Calculator({
           (user-directed). The component still lives in RotatingTagline.jsx
           because MobileFlow's WelcomeScreen imports TAGLINES from it for its
           own hero headline; only the desktop Calculator render is gone. */}
+      {/* v3-231 — the Step 1 card header carries the price-list badge:
+          "● Manila rates, costs and margins · price list updated …". */}
       <Step1Consumption
         state={state} updateState={updateState} model={model}
         onReset={resetStep1}
+        badge={<PriceListBadge region={region} updatedAt={priceListUpdatedAt} />}
       />
       <Step2Packages
         state={state} updateState={updateState} model={model}

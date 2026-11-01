@@ -17,66 +17,70 @@
 //   • the active region is remembered per DEVICE (localStorage), because a
 //     rep with both regions works one office at a time; the quote record in
 //     sessionStorage carries its own region and wins on restore (App.jsx).
+//   • PLANNED_BRANCHES are offices that do not exist yet. They appear in the
+//     "Pricing branch" dropdown, disabled, so every rep sees what is coming;
+//     they are NOT regions — no payload, no access flag, never active, and
+//     the backend's allowlist (src/regions.js there) does not know them.
 // =============================================================================
 
 // `colour` is the soft pill used in tables and the admin badge; `theme` is
-// the page accent applied while that region is active — the header band and
-// wash, the stamp, the active switch segment, the active tab indicator and
-// the live total bar. Manila's theme is the calculator's green, so Manila
-// looks exactly as before. Cebu takes the Solviva LIME ACCENT (#d2ff1e, the
-// brand kit's light green) so a rep can tell at a glance, from any corner of
-// the screen, which calculator they are in (the prices do not say). Brand
-// rule: lime is a BACKGROUND colour with dark green text on it — never white
-// text on lime, never lime text on white — hence `onAccent` / `tabText`, and
-// the live total bar keeps a dark green fill with a lime edge instead of a
-// lime fill. The wash is lime at ~15% on white; nothing is outside the kit.
-//   accent     fill of the band, stamp and active segment; the tab underline
-//   onAccent   text colour on that fill
-//   tabText    active quote-tab text (must read on white)
-//   headerBg / headerDark / headerFg / headerMuted
-//              header background while the region is active, whether it is a
-//              dark surface (Cebu: brand dark green, so the LIME logo sits on
-//              it per the kit's rule), and the text colours on it
-//   headerEditBg  the header while the contact form is open inside it (always
-//              light — the form's inputs need a light surface)
-//   headerBtnFg / headerBtnBorder  account buttons on a dark header
-//   logoDark / logoLight  the logo variant for a dark / light header surface
+// the page colour applied while that region is active, from the three-colour
+// design the product owner signed off (2026-11-01):
+//   accent    the branch colour — the dropdown's dot and border, the 4px band
+//             along the top of the header, the "{Region} pricing" pill in the
+//             live total bar, the mobile stamp. Manila dark green, Cebu lime,
+//             Davao blue (not open yet).
+//   onAccent  text on the accent fill (dark green on lime — the brand rule:
+//             never white text on lime, never lime text on white).
+//   ink       the branch colour as TEXT on white: active tab text and
+//             underline, live-bar figures, the price-list badge. Cebu's ink is
+//             dark green, because lime cannot be read on white.
+//   tint      the accent at ~8–20% on white — the live total bar's ground and
+//             the price-list badge.
 // The PRIMARY fill of the whole calculator (buttons, toggles, table header
-// rows, the live total bar) is NOT here: it is the --sv-primary CSS variable
-// that index.html sets per region from data-region on <html>.
+// rows) and the live bar's tokens are CSS variables that index.html sets per
+// region from data-region on <html>; the values there mirror these.
 export const REGIONS = Object.freeze([
   {
     id: 'luzon',
     label: 'Manila',
     shortLabel: 'MNL',
     colour: { fg: '#854F0B', bg: '#FAEEDA', border: '#FAC775' },
-    theme: {
-      accent: '#1F522B', onAccent: '#FFFFFF', tabText: '#1F522B',
-      headerBg: '#FFFFFF', headerDark: false, headerFg: '#212121', headerMuted: '#667085',
-      headerEditBg: '#FFFFFF', headerBtnFg: null, headerBtnBorder: null,
-      logoDark: '/logo-horizontal-chartreuse.svg', logoLight: '/logo-horizontal-dark-green.svg',
-    },
+    theme: { accent: '#1F522B', onAccent: '#FFFFFF', ink: '#1F522B', tint: '#EEF4EC' },
   },
   {
     id: 'cebu',
     label: 'Cebu',
     shortLabel: 'CEB',
     colour: { fg: '#1F522B', bg: '#F1FFB8', border: '#D2FF1E' },
-    theme: {
-      accent: '#D2FF1E', onAccent: '#1F522B', tabText: '#1F522B',
-      headerBg: '#1F522B', headerDark: true, headerFg: '#FFFFFF', headerMuted: 'rgba(255,255,255,0.72)',
-      headerEditBg: '#FAFFE6', headerBtnFg: '#FFFFFF', headerBtnBorder: 'rgba(255,255,255,0.45)',
-      logoDark: '/logo-horizontal-chartreuse.svg', logoLight: '/logo-horizontal-dark-green.svg',
-    },
+    theme: { accent: '#D2FF1E', onAccent: '#1F522B', ink: '#1F522B', tint: '#F7FFD1' },
   },
 ]);
+
+// Not open yet: listed in the dropdown, disabled ("coming soon"). Davao takes
+// the brand blue when it opens; until then nothing in the app is blue.
+export const PLANNED_BRANCHES = Object.freeze([
+  {
+    id: 'davao',
+    label: 'Davao',
+    shortLabel: 'DVO',
+    colour: { fg: '#004E92', bg: '#E8F1FA', border: '#9CC5EE' },
+    theme: { accent: '#006AC6', onAccent: '#FFFFFF', ink: '#006AC6', tint: '#E8F1FA' },
+  },
+]);
+
+// Everything the "Pricing branch" dropdown lists, in order.
+export const BRANCHES = Object.freeze([...REGIONS, ...PLANNED_BRANCHES]);
+
 export const DEFAULT_REGION = 'luzon';
 export const REGION_IDS = Object.freeze(REGIONS.map(r => r.id));
 
 const STORAGE_KEY = 'solviva_region_v1';
 
 export const isRegionId = (x) => REGION_IDS.includes(x);
+export const isPlannedBranch = (x) => PLANNED_BRANCHES.some(b => b.id === x);
 export const regionMeta = (id) => REGIONS.find(r => r.id === id) || REGIONS[0];
+export const branchMeta = (id) => BRANCHES.find(b => b.id === id) || REGIONS[0];
 export const regionLabel = (id) => regionMeta(id).label;
 export const regionTheme = (id) => regionMeta(id).theme;
 

@@ -230,20 +230,30 @@
     /* Print styles — hide nav and footer for clean PDFs */
     /* v3-129 — live bar: 4 cells desktop, 2×2 on narrow; divider only where
        a cell has a right-hand neighbour (structural, via nth-child). */
+    /* v3-231 (2026-11-01 design): the first cell is the "{Region} pricing"
+       pill, then the five figures; the bar is a light tint of the branch
+       colour (--sv-bar-*), so the dividers are a dark hairline. */
     .live-total-grid {
       display: grid;
-      grid-template-columns: repeat(5, 1fr); /* v3-161: IRR is the fifth cell */
+      grid-template-columns: auto repeat(5, 1fr); /* pill + five figures (v3-161: IRR is the fifth) */
+      align-items: center;
       row-gap: 7px;
     }
-    .live-total-cell { border-right: 1px solid rgba(255,255,255,0.18); }
-    .live-total-cell:nth-child(5n) { border-right: none; }
+    .live-total-pill {
+      display: flex; align-items: center;
+      padding: 0 16px 0 2px;
+      border-right: 1px solid var(--sv-bar-divider);
+    }
+    .live-total-cell { border-right: 1px solid var(--sv-bar-divider); }
+    .live-total-cell:last-child { border-right: none; }
     .live-total-spacer { height: 76px; }   /* v3-231: ≥ the bar's 72px so the footer above it is never covered */
     @media (max-width: 560px) {
       .live-total-grid { grid-template-columns: repeat(2, 1fr); }
+      .live-total-pill { grid-column: 1 / -1; border-right: none; padding: 0 0 2px; }
       .live-total-cell { border-right: none; }
-      .live-total-cell:nth-child(odd) { border-right: 1px solid rgba(255,255,255,0.18); }
-      /* v3-161: five cells wrap to three rows at 2-col */
-      .live-total-spacer { height: 156px; }
+      .live-total-cell:nth-child(even) { border-right: 1px solid var(--sv-bar-divider); }
+      /* v3-161: five cells wrap to three rows at 2-col, plus the pill row */
+      .live-total-spacer { height: 196px; }
     }
     @media print {
       header, nav, footer, button { -webkit-print-color-adjust: exact; }
@@ -272,6 +282,32 @@
       --sv-on-primary: #1F522B;
       --sv-on-primary-muted: rgba(31, 82, 43, 0.72);
       --sv-on-primary-soft: rgba(31, 82, 43, 0.8);
+    }
+    /* The live total bar (2026-11-01 three-colour design): a light tint of
+       the branch colour, a top edge in the accent, figures in the branch INK
+       (dark green for Manila and Cebu — lime cannot be read on a light
+       ground — blue for Davao). Mirrors `theme` in src/lib/region.js. */
+    :root {
+      --sv-bar-bg: #EEF4EC;
+      --sv-bar-edge: #1F522B;
+      --sv-bar-fg: #1F522B;
+      --sv-bar-muted: #4B6B52;
+      --sv-bar-divider: rgba(31, 82, 43, 0.18);
+    }
+    :root[data-region="cebu"] {
+      --sv-bar-bg: #F7FFD1;
+      --sv-bar-edge: #D2FF1E;
+    }
+    /* Davao — the brand blue, inert until the branch opens (it is listed in
+       the Pricing branch dropdown, disabled; App.jsx never sets this value). */
+    :root[data-region="davao"] {
+      --sv-primary: #006AC6;
+      --sv-on-primary: #FFFFFF;
+      --sv-bar-bg: #E8F1FA;
+      --sv-bar-edge: #006AC6;
+      --sv-bar-fg: #004E92;
+      --sv-bar-muted: #3D6A94;
+      --sv-bar-divider: rgba(0, 106, 198, 0.2);
     }
     /* Numbers you READ (stat tiles, the Step 3E total card, the Summary total
        row, the mobile price hero): Manila keeps light tiles with dark-green

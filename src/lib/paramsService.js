@@ -129,7 +129,12 @@ export function getActiveRegion() {
 // every failed step's message so the on-screen banner (and support) can see
 // WHY a device is not on live data, instead of guessing from symptoms.
 //   source: 'backend' | 'supabase' | 'cache' | 'defaults' | null (not loaded yet)
-let _loadStatus = { source: null, cachedAt: null, errors: [], region: null };
+//   updatedAt: when the region's row was last saved (ISO), from whichever step
+//   served it (the cache remembers it too); null for the bundled defaults or
+//   a legacy row. The Step 1 badge shows it as "price list updated …".
+let _loadStatus = { source: null, cachedAt: null, errors: [], region: null, updatedAt: null };
+// Set by the step that served the payload on the current load().
+let _lastUpdatedAt = null;
 
 export function getLoadStatus() {
   return { ..._loadStatus, errors: _loadStatus.errors.slice() };
@@ -198,7 +203,14 @@ async function loadFromBackend(region) {
       if (served === undefined && region !== DEFAULT_REGION) {
         throw new Error(`backend has no region support; refusing Manila's payload for ${regionLabel(region)}`);
       }
-      if (payload && typeof payload === "object") delete payload.region;
+      if (payload && typeof payload === "object") {
+        // Top-level `updatedAt` rides beside the payload keys since the
+        // 2026-11-01 backend; strip it with `region` so the cache and
+        // applyOverrides see the payload alone.
+        _lastUpdatedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : null;
+        delete payload.region;
+        delete payload.updatedAt;
+      }
       return payload;
     } catch (err) {
       lastErr = err;
@@ -237,19 +249,20 @@ const isMissingTable = (error) =>
 
 async function loadFromSupabase(region) {
   let { data, error } = await supabaseRow(() =>
-    supabase.from("region_parameters").select("payload").eq("region", region),
+    supabase.from("region_parameters").select("payload, updated_at").eq("region", region),
   );
   // Transition shim (remove one release after the backend migration has run
   // everywhere): the region table is missing or Luzon's row is not seeded yet.
   if (region === DEFAULT_REGION && ((error && isMissingTable(error)) || (!error && !data))) {
     ({ data, error } = await supabaseRow(() =>
-      supabase.from("app_parameters").select("payload").eq("id", true),
+      supabase.from("app_parameters").select("payload, updated_at").eq("id", true),
     ));
   }
   if (error) throw error;
   if (!data || !data.payload || typeof data.payload !== "object") {
     throw new Error("no readable row (not signed in, region not on this account, or read policy not applied)");
   }
+  _lastUpdatedAt = typeof data.updated_at === "string" ? data.updated_at : null;
   return data.payload;
 }
 
@@ -272,11 +285,11 @@ function readCache(region) {
   }
 }
 
-function writeCache(region, serializedPayload) {
+function writeCache(region, serializedPayload, updatedAt = null) {
   try {
     localStorage.setItem(
       cacheKey(region),
-      `{"savedAt":${JSON.stringify(new Date().toISOString())},"payload":${serializedPayload}}`,
+      `{"savedAt":${JSON.stringify(new Date().toISOString())},"updatedAt":${JSON.stringify(updatedAt)},"payload":${serializedPayload}}`,
     );
     localStorage.removeItem(LEGACY_CACHE_KEY);
   } catch {
@@ -293,6 +306,7 @@ export async function load({ region = DEFAULT_REGION } = {}) {
   const errors = [];
   let payload = null;
   let source = null;
+  _lastUpdatedAt = null;
 
   try {
     payload = await loadFromBackend(region);
@@ -321,8 +335,8 @@ export async function load({ region = DEFAULT_REGION } = {}) {
     try {
       applyOverrides(payload);
       _loadedFromServer = true;
-      _loadStatus = { source, cachedAt: null, errors, region };
-      writeCache(region, serialized);
+      _loadStatus = { source, cachedAt: null, errors, region, updatedAt: _lastUpdatedAt };
+      writeCache(region, serialized, _lastUpdatedAt);
       // Live data, but not from the first choice: say so, and say why. This
       // is the only trace of a backend that is blocked on one device once the
       // fallback hides the symptom — support needs it in the console.
@@ -344,15 +358,16 @@ export async function load({ region = DEFAULT_REGION } = {}) {
   if (cached) {
     try {
       applyOverrides(cached.payload);
-      _loadStatus = { source: "cache", cachedAt: cached.savedAt || null, errors, region };
+      _loadStatus = { source: "cache", cachedAt: cached.savedAt || null, errors, region,
+                      updatedAt: typeof cached.updatedAt === "string" ? cached.updatedAt : null };
     } catch (err) {
       errors.push(`apply(cache): ${errorMessage(err)}`);
       resetToDefaults();
-      _loadStatus = { source: "defaults", cachedAt: null, errors, region };
+      _loadStatus = { source: "defaults", cachedAt: null, errors, region, updatedAt: null };
     }
   } else {
     resetToDefaults();
-    _loadStatus = { source: "defaults", cachedAt: null, errors, region };
+    _loadStatus = { source: "defaults", cachedAt: null, errors, region, updatedAt: null };
   }
   if (typeof console !== "undefined") {
     console.warn(
