@@ -18,23 +18,37 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   `['luzon']`, the same default the backend and its RLS policy apply, so no
   account was backfilled); the active region is remembered per device
   (`localStorage.solviva_region_v1`).
-- **Region stamp, switch and theme** (`src/components/RegionControls.jsx`,
-  design pass after the first staging review): `<RegionStamp/>` — "MANILA
-  calculator" / "CEBU calculator" with a map-pin, filled in the region's
-  accent — sits under the logo in the desktop header and in the mobile header
-  for EVERY account; `<RegionSwitch/>` — a labelled segmented control
-  ("Quoting in  Manila | Cebu", active segment filled) — only for both-region
-  accounts. Per-region `theme` in `region.js`: Manila keeps the calculator's
-  green; Cebu uses the Solviva **lime accent `#d2ff1e`** (the brand kit's
-  light green) for a 4px band along the top of the header, a light wash of
-  the same lime on the header, the stamp and active switch segment (dark
-  green text on lime, per the brand rule — never white on lime), the active
-  quote-tab underline (dark green text), a lime top edge on the dark green
-  live total bar, and the pills in tables/admin. The header's actions block
+- **Pricing branch dropdown and the three-colour branch design**
+  (`src/components/RegionControls.jsx`, `src/lib/region.js`; the product
+  owner's mockups, 2026-11-01 — this replaced the earlier stamp-under-the-logo
+  + segmented "Quoting in" switch and the dark-green Cebu header):
+  `<RegionSelect/>` — "Pricing branch  [● Manila ⌄]" in the header for EVERY
+  account, a native `<select>` listing every branch: the account's regions
+  are selectable, a region it does not hold is disabled ("Manila · no
+  access"), and a planned branch is disabled ("Davao · coming soon").
+  `PLANNED_BRANCHES` in `region.js` holds Davao (brand blue theme, ready;
+  NOT a region — no payload, no access flag, not in the backend allowlist,
+  never active; `REGIONS`/`REGION_IDS` stay Manila + Cebu so the Users tab,
+  the Audit filter and `regionsOf()` never see it). The branch is named next
+  to the numbers it priced: `<RegionPricingPill/>` "⌖ Manila pricing" is the
+  first cell of the live total bar; `<PriceListBadge/>` "● Manila rates,
+  costs and margins · price list updated 28 Oct 2026" sits in the Step 1 card
+  header (the date is the region row's `updated_at`, which `GET
+  /api/parameters` now returns as top-level `updatedAt` — backend `4c3404e`;
+  `paramsService` strips it like `region`, keeps it in `getLoadStatus()` and
+  in the per-region cache; absent ⇒ the badge shows no date); the Generate
+  PDF button reads "Generate Manila PDF" / "Generate Cebu PDF". Per-region
+  `theme` is now `{ accent, onAccent, ink, tint }`: the accent (dark green /
+  lime / blue) fills the dropdown's dot and border, the 4px band on top of
+  the (always white) header, the pricing pill and the mobile stamp; the
+  **ink** — the branch colour as text on white: dark green for Manila AND
+  Cebu, blue for Davao — colours the active tab text and underline, the live
+  bar's figures and the badge; the **tint** is the live bar's ground
+  (`--sv-bar-bg/-edge/-fg/-muted/-divider` in `index.html`, incl. an inert
+  `[data-region="davao"]` block). The mobile flow keeps `<RegionStamp/>`
+  (compact) in its header — it has no live bar. The header's actions block
   wraps right-aligned so the quote/agent column keeps its width beside the
-  switch. Logo: `public/logo-full-v3.png` from the
-  brand kit's cropped transparent `logo-horizontal-green.png` (583×168),
-  used by the header, login, reset-password, maintenance gate and mobile flow.
+  dropdown. Logo: the design system's dark-green SVG everywhere.
 - **A quote belongs to one region.** Switching starts a NEW quote in the other
   region: a confirm dialog (same idiom as "Reset & lock") when Steps 1–4 or the
   contact were touched, then Steps 1–4, the issue date AND the customer contact
@@ -121,14 +135,14 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
   underlines, the focus ring and the mobile flow's fills follow it
   (`COLORS.primary` / `COLORS.onPrimary` in ui.jsx; literal fills were
   rewritten to the variable). Dark-green TEXT on light grounds stays dark
-  green in both regions (lime text on white is unreadable). Cebu's header is a
-  dark-green surface with the chartreuse logo, white meta text and
-  light-bordered buttons (the design system's dark-green ⇄ chartreuse
-  pairing); it goes light while the contact form is open. Logos are the
-  design system's master SVGs trimmed to the artwork
-  (`public/logo-horizontal-{dark-green,chartreuse,white}.svg`); the footer
-  stays dark green with the chartreuse logo. Dark green aligned to the design
-  system's `#1F522B`.
+  green in both regions (lime text on white is unreadable). (Cebu briefly had
+  a dark-green header with the chartreuse logo; the 2026-11-01 three-colour
+  design put the header back to white for every branch — see the dropdown
+  bullet above.) Logos are the design system's master SVGs trimmed to the
+  artwork (`public/logo-horizontal-{dark-green,chartreuse,white}.svg`); the
+  footer stays dark green with the chartreuse logo. Dark green aligned to the
+  design system's `#1F522B`. The live total bar no longer takes the primary
+  fill: it is the branch TINT with ink figures (the `--sv-bar-*` tokens).
 
 - **Numbers you read, on Cebu** (fourth pass): a second token pair,
   `--sv-tile-*` (StatTile background/border/figure/label/sub) and
@@ -151,17 +165,21 @@ payload, and every account holds region access: Manila only, Cebu only, or both.
 New: `src/lib/region.js`, `src/data/locations.js`, `src/lib/locationCopy.js`,
 this file. Changed: `src/config.js` (table + helpers removed), `src/lib/
 {paramsService,permissions,lead,odooQuotation,crmContact,usersService,
-pdfGenerator}.js`, `src/components/{App,Calculator,Step2Packages,MobileFlow,
-AdminShell,AdminShared,EngineeringTab,ProductTab,AuditHistory,UserManagement,
-ParamsSourceBanner}.jsx`, `netlify/functions/parameters.js` (mirror),
+pdfGenerator}.js`, `src/components/{App,Calculator,Step1Consumption,
+Step2Packages,MobileFlow,AdminShell,AdminShared,EngineeringTab,ProductTab,
+AuditHistory,UserManagement,ParamsSourceBanner,RegionControls}.jsx`,
+`index.html` (tokens + motion), `netlify/functions/parameters.js` (mirror),
 `package.json` (3.231.0; `@solviva/calc-engine` → `calc-engine-v1.3.0`
 tarball), `package-lock.json`, `HANDOFF.md` (one row).
 
 ## Behavior changes
 
-- Manila: byte-identical pricing; the header gains a badge (one region) or a
-  toggle (both); admin copy names the region; Engineering → Location fields
-  renamed; the proposal's Logistics clause says "from the Parañaque hub".
+- Manila: byte-identical pricing; the header gains the Pricing branch
+  dropdown (every account; other branches disabled when not held), the live
+  bar a "Manila pricing" pill and the branch tint, Step 1 the price-list
+  badge, the PDF button the branch name; admin copy names the region;
+  Engineering → Location fields renamed; the proposal's Logistics clause
+  says "from the Parañaque hub".
 - Cebu: own payload; every delivery ₱0 (no hub yet); Province → City picker;
   "Location / Delivery — Cebu" on the Summary; no Logistics clause on the PDF;
   installation site "…, Cebu City, Cebu".
@@ -170,7 +188,9 @@ tarball), `package-lock.json`, `HANDOFF.md` (one row).
 
 - `GET/PUT /api/parameters?region=`, `GET /api/parameter-audit?region=|all`,
   `GET /api/crm-contact?…&region=`; `region` in the `POST /api/odoo/quotation`
-  body; `regions[]` on `/api/users` (list / POST / PATCH). New statuses:
+  body; `regions[]` on `/api/users` (list / POST / PATCH). `GET
+  /api/parameters` also returns top-level `updatedAt` (the row's last save;
+  `null` from the legacy row) beside the `region` echo. New statuses:
   `403 region_forbidden`, `404 region_not_seeded`, `503 region_not_provisioned`.
   New warning codes: `lead_region_mismatch`, `lead_region_unknown`,
   `lead_company_mismatch`.
@@ -199,13 +219,19 @@ tarball), `package-lock.json`, `HANDOFF.md` (one row).
   (a stale Manila triple on Cebu) resolves to Cebu City; `pickerShape('cebu',
   { deliveryHubEnabled: false })` → no Region select, no km.
 - Staging checklist (browser, after Pages deploys): both-regions user sees
-  Manila | Cebu; switch with a touched quote ⇒ confirm ⇒ fresh Cebu quote,
+  the Pricing branch dropdown with Manila, Cebu and a disabled "Davao ·
+  coming soon"; switch with a touched quote ⇒ confirm ⇒ fresh Cebu quote,
   Province "Cebu" → "Cebu City", no km sentence, Summary "Location / Delivery
   — Cebu" ₱0; admin "Editing: Cebu parameters", a Cebu save leaves Manila
   unchanged (SQL on `region_parameters`); Audit History Cebu / All; Users tab
-  Regions column + checkboxes; Cebu-only user: badge only, no toggle; v13
-  `solviva_state` record restores as Manila; Cebu PDF without the Logistics
-  clause, Manila PDF with "from the Parañaque hub".
+  Regions column + checkboxes; Cebu-only user: dropdown on Cebu with "Manila
+  · no access" disabled; v13 `solviva_state` record restores as Manila; Cebu
+  PDF without the Logistics clause, Manila PDF with "from the Parañaque hub".
+- Opening Davao later: add it to `REGIONS` in `region.js` (move the entry out
+  of `PLANNED_BRANCHES`), to the backend allowlist (`src/regions.js`) and the
+  migration/seed (a `davao` row in `region_parameters`), a location table in
+  `src/data/locations.js`, and the Davao `--sv-tile-*`/`--sv-hero-*` tokens
+  in `index.html` (only its primary and bar tokens exist today).
 
 ## Deployment
 

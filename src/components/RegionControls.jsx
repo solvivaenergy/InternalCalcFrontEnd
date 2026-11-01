@@ -104,11 +104,15 @@ export function RegionPricingPill({ region }) {
   );
 }
 
+// "28 Oct 2026" — the brand's table date, built by hand so it reads the same
+// in every browser (toLocaleDateString('en-PH') falls back to the US order
+// where the locale data is missing).
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtDate = (iso) => {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString('en-PH', { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };
 
 export function PriceListBadge({ region, updatedAt }) {
