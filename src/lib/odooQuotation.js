@@ -45,7 +45,7 @@ const inverterLabels = (arr) => (arr || [])
 /**
  * Assemble the request body. Pure: no I/O, so the shape is testable.
  */
-export function buildOdooQuotationPayload({ state, model, contact, agent, issuedAt, validUntil, quoteRef }) {
+export function buildOdooQuotationPayload({ state, model, contact, agent, issuedAt, validUntil, quoteRef, region = "luzon" }) {
   const terms = model?.terms || {};
   const tenor = Number(state?.tenor) || 0;
   const isDirect = tenor <= 0;
@@ -53,6 +53,10 @@ export function buildOdooQuotationPayload({ state, model, contact, agent, issued
   const orderLines = buildOdooOrderLines({ model, state });
   return {
     leadId: contact?.leadId ?? null,
+    // v3-231 — the region whose parameters priced this proposal. The backend
+    // names it in the quotation's chatter note and warns when the lead's
+    // address belongs to the other region (warningCodes).
+    region,
     proposal: {
       quoteRef,
       generatedAt: issuedAt instanceof Date ? issuedAt.toISOString() : issuedAt,

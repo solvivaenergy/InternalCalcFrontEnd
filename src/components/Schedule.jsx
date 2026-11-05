@@ -55,7 +55,7 @@ export default function Schedule({ model, state, contact, generatedDate }) {
             ? 'Post-Installation Direct Purchase Balance'
             : 'Post-Installation Monthly Payment'}
           value={fmt.peso(terms.customerMonthlyPmt)}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
         />
         <SummaryCard
           label="Post-Installation Payment Tenor"
@@ -174,7 +174,7 @@ const styles = {
   },
   td: { padding: '6px 10px', borderBottom: `1px solid ${COLORS.divider}` },
   tdNum: { textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
-  dpRow: { backgroundColor: '#F5F1E8' },
+  dpRow: { backgroundColor: '#f2f4f7' },
   disclaimer: {
     fontSize: 12, color: COLORS.textMuted, marginTop: 16, lineHeight: 1.6,
   },

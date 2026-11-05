@@ -121,14 +121,14 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
         <StatTile
           label="Simple Payback Period"
           value={cashFlows.paybackLabel}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={paybackTip}
         />
         <StatTile
           label={`Internal Rate of Return (${state.irrYears}-yr)`}
           value={cashFlows.irr !== null ? fmt.pct(cashFlows.irr, 1) : '—'}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={irrTip}
         />
@@ -136,7 +136,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
           label="Levelized Cost of Energy"
           value={`${fmt.pesoCents(cashFlows.lcoe)}/kWh`}
           sub={`Compare to your current ${fmt.pesoCents(state.utilityRate)}/kWh`}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={lcoeTip}
         />
@@ -149,7 +149,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
           label="Estimated Savings per Month"
           value={fmt.peso(cashFlows.monthlyDuSavings)}
           sub="At today's DU rate, before any assumed annual increase."
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={monthlyTip}
         />
@@ -160,7 +160,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
               <span style={{
                 fontSize: 13,
                 fontWeight: 700,
-                color: COLORS.textBody,
+                color: COLORS.tileStrong,
                 letterSpacing: 1,
               }}>
                 SAVINGS
@@ -169,7 +169,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
             </>
           }
           value={fmt.peso(cashFlows.totalDuSavings)}
-          color={COLORS.brandGreen}
+          color={COLORS.tileFg}
           large stacked
           tooltip={duTip}
         />
@@ -204,7 +204,7 @@ export default function Step4Returns({ state, updateState, model, disclaimers, a
       <div style={{ marginTop: 16 }}>
         <CalloutBox kind="info">
           <strong>Disclaimer.</strong> {disclaimers.irrDisclaimerBefore}
-          <strong style={{ color: '#E87722' }}>
+          <strong style={{ color: '#006ac6' }}>
             {disclaimers.irrDisclaimerHighlight}
           </strong>
           {disclaimers.irrDisclaimerAfter}
@@ -388,7 +388,7 @@ const styles = {
   // visible than a small footnote.
   duStepLabel: {
     fontSize: 12.5, fontWeight: 600, letterSpacing: 0.4,
-    color: '#4B5563', textTransform: 'uppercase',
+    color: '#475467', textTransform: 'uppercase',
   },
   duStepSub: {
     fontSize: 11.5, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 2,
@@ -408,8 +408,8 @@ const styles = {
   // metric tiles above so the adjuster reads as the last row of that stack;
   // the reference sits inset beneath a divider rather than in its own card.
   duBlock: {
-    marginTop: 9, borderRadius: 9, backgroundColor: '#F5F2EA',
-    border: '1px solid #E8E2D3', overflow: 'hidden',
+    marginTop: 9, borderRadius: 9, backgroundColor: '#f2f4f7',
+    border: '1px solid #e4e7ec', overflow: 'hidden',
   },
   duBlockTop: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',

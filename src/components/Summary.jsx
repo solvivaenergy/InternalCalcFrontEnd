@@ -199,7 +199,7 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
           };
           const numTh = { ...styles.th, textAlign: 'right' };
           const numTd = { ...styles.td, ...styles.tdNum };
-          const mutedTd = { ...numTd, color: '#6B7280' };
+          const mutedTd = { ...numTd, color: '#667085' };
           return (
             <table style={styles.table}>
               <thead>
@@ -288,13 +288,13 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                 })}
                 <tr style={styles.totalRow}>
                   <td style={{ ...styles.td, fontWeight: 700 }}>
-                    Total Package Price <span style={styles.muted}>(VAT Inclusive)</span>
+                    Total Package Price <span style={{ ...styles.muted, color: COLORS.tileSub }}>(VAT Inclusive)</span>
                   </td>
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.cogs)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>{fmt.peso(tot.cogs)}</td>
                   )}
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>
                       {fmt.peso(tot.gm)}
                       {netRevTot > 0 && (
                         <span style={{ fontSize: 11, color: '#9CA3AF' }}>
@@ -304,13 +304,13 @@ export default function Summary({ state, model, adminParams, contact, agent, gen
                     </td>
                   )}
                   {pricesShown && commOn && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.commAmt)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>{fmt.peso(tot.commAmt)}</td>
                   )}
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.mdrAmt)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>{fmt.peso(tot.mdrAmt)}</td>
                   )}
                   {pricesShown && (
-                    <td style={{ ...mutedTd, fontWeight: 700 }}>{fmt.peso(tot.vat)}</td>
+                    <td style={{ ...mutedTd, fontWeight: 700, color: COLORS.tileSub }}>{fmt.peso(tot.vat)}</td>
                   )}
                   <td style={{ ...styles.td, ...styles.tdNum, fontWeight: 700 }}>
                     {fmt.peso(pricesShown ? tot.dp : pkg.totalDirect)}
@@ -782,7 +782,7 @@ function fmtDate(d) {
 
 const styles = {
   // v3-80 — tenor comparison table.
-  tenorCaption: { fontSize: 12, color: '#6B7280', margin: '0 0 10px' },
+  tenorCaption: { fontSize: 12, color: '#667085', margin: '0 0 10px' },
   tenorFoot:    { fontSize: 11, color: '#9CA3AF', fontStyle: 'italic', marginTop: 8 },
   tenorSelRow:  { backgroundColor: '#FEF9EF' },
   tenorSelCell: { fontWeight: 700, color: '#854F0B' },
@@ -840,7 +840,7 @@ const styles = {
     padding: '3px 10px',
     background: 'transparent',
     color: '#9CA3AF',
-    border: '1px solid #E5E7EB',
+    border: '1px solid #e4e7ec',
     borderRadius: 999,
     cursor: 'pointer',
   },
@@ -932,8 +932,11 @@ const styles = {
   subtotalRow: {
     backgroundColor: COLORS.brandCream,
   },
+  // v3-231 — the total row is a "number you read": light with a dark-green
+  // figure on Manila, dark green with a lime figure on Cebu (COLORS.tile*).
   totalRow: {
-    backgroundColor: '#F5F1E8',
+    backgroundColor: COLORS.tileBg,
+    color: COLORS.tileFg,
     borderTop: `2px solid ${COLORS.brandGreen}`,
   },
 

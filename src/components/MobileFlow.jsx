@@ -41,7 +41,12 @@ import { DEVICES } from '../data/devices.js';
 import { useMemo } from 'react';
 import { availableDeliveryLocations, availableBatteryPackages, optimizeBatteryPackage,
          DISCLAIMERS } from '../data/adminParams.js';
-import { LUZON_REGIONS, LUZON_FREE_TRAVEL_KM, resolveLocation, fmtKwp } from '../config.js';
+import { LUZON_FREE_TRAVEL_KM, fmtKwp } from '../config.js';
+// v3-231 — the location table is per REGION; the sentence under the picker
+// reads the region's hub from the live parameters (shared with Step 2E).
+import { regionsFor, resolveLocation, pickerShape } from '../data/locations.js';
+import { deliveryHint } from '../lib/locationCopy.js';
+import { RegionStamp } from './RegionControls.jsx';   // v3-231 — names the calculator in the header
 import { formatHour12, optimizeSystem } from '../lib/schedule.js';
 import {
   allowedDpOptions, resolveMinDpPct, DP_EPS,
@@ -69,8 +74,8 @@ const ROTATE_MS = 3000;
 const FADE_MS = 300;
 
 const CSS = `
-.mfl{--g9:#1F522B;--g6:#467147;--g3:#AAC78D;--neon:#D2FF1E;--sky:#B9D8EB;
-  --cream:#F6F5ED;--ink:#173D20;--muted:#5C7561;--line:#E3E6D8;
+.mfl{--g9:#1F522B;--g6:#50890a;--g3:#AAC78D;--neon:#D2FF1E;--sky:#B9D8EB;
+  --cream:#fcfcfc;--ink:#1F522B;--muted:#667085;--line:#e4e7ec;
   font-family:'Mulish',system-ui,sans-serif;background:var(--cream);
   color:var(--ink);min-height:100vh;display:flex;flex-direction:column;
   max-width:480px;margin:0 auto;position:relative}
@@ -79,8 +84,8 @@ const CSS = `
   display:flex;align-items:center;justify-content:space-between}
 .mfl-header img{height:24px;display:block}
 .mfl-progress{display:flex;gap:5px;padding:4px 20px 12px}
-.mfl-progress i{flex:1;height:4px;border-radius:4px;background:#DDE0D2;transition:background .3s}
-.mfl-progress i.done{background:var(--g9)}
+.mfl-progress i{flex:1;height:4px;border-radius:4px;background:#e4e7ec;transition:background .3s}
+.mfl-progress i.done{background:var(--sv-primary)}
 .mfl-progress i.now{background:var(--neon);outline:1px solid var(--g9)}
 .mfl-screen{flex:1;padding:6px 20px 150px}
 .mfl-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--g6);
@@ -125,25 +130,25 @@ const CSS = `
   cursor:pointer;margin-top:10px;padding:0}
 .mfl-obj{border:2px solid var(--line);border-radius:22px;padding:16px;margin-bottom:12px;
   background:#fff;cursor:pointer;position:relative}
-.mfl-obj.sel{border-color:var(--g9);background:var(--g9)}
+.mfl-obj.sel{border-color:var(--sv-primary);background:var(--sv-primary)}
 .mfl-obj-t{font-weight:900;font-size:16px;color:var(--g9);padding-right:36px}
 .mfl-obj-d{font-size:13px;color:var(--muted);line-height:1.5;margin-top:5px}
-.mfl-obj.sel .mfl-obj-t{color:var(--neon)}
-.mfl-obj.sel .mfl-obj-d{color:#D9E4D2}
+.mfl-obj.sel .mfl-obj-t{color:var(--sv-on-primary)}
+.mfl-obj.sel .mfl-obj-d{color:var(--sv-on-primary-muted)}
 .mfl-tick{position:absolute;top:14px;right:14px;width:22px;height:22px;border-radius:50%;
   border:2px solid var(--g3);display:flex;align-items:center;justify-content:center;
   font-size:12px;color:transparent}
-.mfl-obj.sel .mfl-tick{background:var(--neon);border-color:var(--neon);
-  color:var(--g9);font-weight:900}
+.mfl-obj.sel .mfl-tick{background:var(--sv-on-primary);border-color:var(--sv-on-primary);
+  color:var(--sv-primary);font-weight:900}
 .mfl-obj-price{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
   margin-top:10px;font-size:13px;font-weight:700;color:var(--muted)}
 .mfl-obj-price b{font-size:16px;font-weight:900;color:var(--g9)}
-.mfl-obj.sel .mfl-obj-price{color:#D9E4D2}
-.mfl-obj.sel .mfl-obj-price b{color:var(--neon)}
+.mfl-obj.sel .mfl-obj-price{color:var(--sv-on-primary-muted)}
+.mfl-obj.sel .mfl-obj-price b{color:var(--sv-on-primary)}
 .mfl-obj-delta{font-size:11px;font-weight:800;border-radius:999px;
   padding:3px 9px;background:#FEF6E0;color:#8A6D1B}
 .mfl-obj-cheapest{font-size:11px;font-weight:800;border-radius:999px;
-  padding:3px 9px;background:var(--g6);color:var(--cream)}
+  padding:3px 9px;background:var(--g6);color:var(--sv-on-primary)}
 .mfl-obj.sel .mfl-obj-delta{background:rgba(255,255,255,.14);color:#F3E2AE}
 .mfl-obj.sel .mfl-obj-cheapest{background:var(--neon);color:var(--g9)}
 .mfl-sliderval{font-size:38px;font-weight:900;color:var(--g9)}
@@ -169,11 +174,11 @@ const CSS = `
 .mfl-dotg{background:var(--g6)}.mfl-dotb{background:var(--sky)}
 .mfl-roof{display:flex;align-items:center;gap:14px;border:2px solid var(--line);
   border-radius:22px;padding:13px 16px;margin-bottom:10px;background:#fff;cursor:pointer}
-.mfl-roof.sel{border-color:var(--g9);background:var(--g9)}
+.mfl-roof.sel{border-color:var(--sv-primary);background:var(--sv-primary)}
 .mfl-roof .ic{font-size:26px}
 .mfl-roof .t{font-weight:900;font-size:15px;color:var(--g9)}
 .mfl-roof .d{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.4}
-.mfl-roof.sel .t{color:var(--neon)}.mfl-roof.sel .d{color:#D9E4D2}
+.mfl-roof.sel .t{color:var(--sv-on-primary)}.mfl-roof.sel .d{color:var(--sv-on-primary-muted)}
 .mfl-select{width:100%;font:inherit;font-size:16px;font-weight:700;color:var(--g9);
   border:2px solid var(--g3);border-radius:16px;padding:13px 40px 13px 14px;background:#fff;
   appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9'%3E%3Cpath d='M1 1l6 6 6-6' stroke='%231F522B' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
@@ -187,17 +192,26 @@ const CSS = `
   text-align:center;background:#fff;cursor:pointer;font-weight:800;font-size:13px;
   color:var(--g9)}
 .mfl-tenor small{display:block;font-size:10px;font-weight:700;color:var(--muted)}
-.mfl-tenor.sel{background:var(--g9);border-color:var(--g9);color:var(--neon)}
-.mfl-tenor.sel small{color:var(--g3)}
+.mfl-tenor.sel{background:var(--sv-primary);border-color:var(--sv-primary);color:var(--sv-on-primary)}
+.mfl-tenor.sel small{color:var(--sv-on-primary-muted)}
 .mfl-payline{display:flex;justify-content:space-between;font-size:14px;
   padding:9px 0;border-bottom:1px solid #ECEEE2;gap:10px}
 .mfl-payline:last-child{border-bottom:none}
 .mfl-payline b{font-weight:900;color:var(--g9);white-space:nowrap}
-.mfl-monthly{background:var(--g9);border-radius:22px;padding:20px;text-align:center;
+.mfl-monthly{background:var(--sv-primary);border-radius:22px;padding:20px;text-align:center;
   margin-bottom:14px}
-.mfl-monthly .v{font-size:38px;font-weight:900;color:var(--neon)}
+.mfl-monthly .v{font-size:38px;font-weight:900;color:var(--sv-on-primary)}
 .mfl-monthly .l{font-size:12px;font-weight:800;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--g3);margin-top:2px}
+  text-transform:uppercase;color:var(--sv-on-primary-muted);margin-top:2px}
+/* v3-231 — Cebu: numbers you read sit on dark-green tiles with lime figures
+   (design-system chartreuse-on-dark-green). Manila keeps the light hero and
+   the lime monthly card above. */
+[data-region="cebu"] .mfl-pricehero{background:var(--sv-tile-bg);border-radius:22px;padding:16px 12px 12px;margin:6px 0 10px}
+[data-region="cebu"] .mfl-pricehero .p{color:var(--sv-tile-fg)}
+[data-region="cebu"] .mfl-pricehero .l{color:var(--sv-tile-label)}
+[data-region="cebu"] .mfl-monthly{background:var(--sv-hero-bg)}
+[data-region="cebu"] .mfl-monthly .v{color:var(--sv-hero-fg)}
+[data-region="cebu"] .mfl-monthly .l{color:var(--sv-hero-muted)}
 .mfl-exrow{padding:10px 0;border-bottom:1px solid #ECEEE2}
 .mfl-exrow:last-child{border-bottom:none}
 .mfl-exhead{display:flex;align-items:baseline;gap:10px;margin-bottom:5px;flex-wrap:wrap}
@@ -223,7 +237,7 @@ const CSS = `
 .mfl-welcome h1 span{transition:opacity .3s ease;opacity:1}
 .mfl-welcome h1 span.fading{opacity:0}
 .mfl-returns{position:fixed;left:50%;transform:translate(-50%,calc(100% - 62px));
-  bottom:0;width:100%;max-width:480px;z-index:30;background:var(--g9);color:var(--cream);
+  bottom:0;width:100%;max-width:480px;z-index:30;background:var(--sv-primary);color:var(--sv-on-primary);
   border-radius:26px 26px 0 0;box-shadow:0 -8px 30px rgba(23,61,32,.28);
   padding:0 20px calc(12px + env(safe-area-inset-bottom));
   transition:transform .32s cubic-bezier(.2,.8,.2,1)}
@@ -282,7 +296,7 @@ const CSS = `
   font-weight:800;color:var(--neon);cursor:pointer;text-align:left;padding:2px 0}
 .mfl-explain{grid-column:1/-1}
 .mfl-explain p{font-size:11px;color:#D9E4D2;line-height:1.55;margin:0 0 8px}
-.mfl-explain b{color:var(--cream)}
+.mfl-explain b{color:var(--sv-on-primary)}
 .mfl-note{grid-column:1/-1;font-size:10px;color:var(--g3);line-height:1.5}
 /* v3-182 — screen 6 metrics block. The sticky sheet is a summary you can
    dismiss; screen 6 is the last screen before the proposal request, so every
@@ -297,10 +311,10 @@ const CSS = `
 .mfl-payoff .f{font-size:11px;color:#6F8A6C;line-height:1.5;margin-top:8px;font-style:italic}
 .mfl-payoff .k{display:flex;gap:12px;flex-wrap:wrap;font-size:10.5px;color:#5A7358;margin-top:8px}
 .mfl-payoff .k i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;
-  vertical-align:-1px;background:#3B7B5A}
+  vertical-align:-1px;background:#50890a}
 .mfl-payoff .k i.ln{border-radius:0;height:0;border-top:2px dashed #C9862B;width:13px}
 /* v3-193 — the payment caption lives here, NOT over the bars. #8A5C1C on white
-   clears WCAG AA at 11px; the old in-plot label was #9A6B1F over #3B7B5A. */
+   clears WCAG AA at 11px; the old in-plot label was #9A6B1F over #50890a. */
 .mfl-payoff .mfl-paycap{font-size:11px;font-weight:700;color:#8A5C1C;margin-top:6px}
 .mfl-m6{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
 .mfl-m6 .t{background:var(--cream);border:1px solid var(--line);border-radius:14px;
@@ -355,7 +369,7 @@ const CSS = `
   border-radius:16px;overflow:hidden}
 .mfl-seg button{border:none;font:inherit;font-size:14px;font-weight:800;
   padding:12px 8px;background:#fff;color:var(--g9);cursor:pointer}
-.mfl-seg button.sel{background:var(--g9);color:var(--neon)}
+.mfl-seg button.sel{background:var(--sv-primary);color:var(--sv-on-primary)}
 .mfl-invite{font-size:12px;color:var(--muted);line-height:1.55;margin:20px 0 0;
   padding:12px 14px;background:rgba(185,216,235,.35);border-radius:14px;text-align:left}
 .mfl-invite b{color:var(--g9)}
@@ -527,7 +541,7 @@ function MobilePayoff({ state, model, adminParams }) {
     const x = X0 + y * slot + (slot - bw) / 2;
     const hs = h(v);
     return <rect key={y} x={x.toFixed(1)} y={(YB - hs).toFixed(1)}
-                 width={bw.toFixed(1)} height={hs.toFixed(1)} rx="1.5" fill="#3B7B5A" />;
+                 width={bw.toFixed(1)} height={hs.toFixed(1)} rx="1.5" fill="#50890a" />;
   });
 
   let paymentLine = null;
@@ -761,7 +775,7 @@ function WelcomeScreen({ onStart }) {
   const rotor = useRotator(TAGLINES, true);
   return (
     <div className="mfl-screen mfl-welcome">
-      <img className="mfl-biglogo" src="/logo-full-transparent-v1.png"
+      <img className="mfl-biglogo" src="/logo-horizontal-dark-green.svg"
            alt="Solviva — An AboitizPower Company" />
       <img className="mfl-heroimg" src="/mobile-hero-v1.jpg"
            alt="Rooftop solar installation" />
@@ -1098,7 +1112,7 @@ function RecommendationScreen({ state, model, adminParams, go }) {
   );
 }
 
-function YourHomeScreen({ state, updateState, model, adminParams, go }) {
+function YourHomeScreen({ state, updateState, model, adminParams, go, region = 'luzon' }) {
   const roofs = [
     { id: 'metal', icon: '\uD83C\uDFE0', t: 'Metal / GI sheet',
       d: 'The most common roof in the Philippines. No prep work \u2014 no additional charge.' },
@@ -1110,17 +1124,21 @@ function YourHomeScreen({ state, updateState, model, adminParams, go }) {
       d: 'Requires the most prep work, included in your package price.' },
   ];
   const dynamicLocs = availableDeliveryLocations(adminParams);
+  // 'luzon' is the structural "home mainland" id for EVERY region (v3-231).
   const isLuzon = state.location === 'luzon';
   // Region -> Province -> City. The province is load-bearing, not cosmetic:
   // city names are bare, so "Rosario" is ambiguous without it (Cavite 28km vs
   // Batangas 84km). resolveLocation owns the stale-value fallback.
-  const { region, province, provinces, cities, city } =
-    resolveLocation(state.locationRegion, state.locationProvince, state.locationCity);
+  // v3-231 — the active REGION's table; Cebu has one region entry so its
+  // Region select is hidden, and with no dispatch hub yet no km is shown.
+  const { region: regionRow, province, provinces, cities, city } =
+    resolveLocation(region, state.locationRegion, state.locationProvince, state.locationCity);
+  const shape = pickerShape(region, adminParams);
   const km = city ? city.km : 0;
   // v3-199 — the free radius is the luzonFreeTravelKm param (config constant
   // is the fallback only).
   const freeKm = adminParams.luzonFreeTravelKm ?? LUZON_FREE_TRAVEL_KM;
-  const beyondFreeKm = km > freeKm;   // v3-171 — wording only; no price shown
+  const hint = deliveryHint({ adminParams, city: city ? city.name : null, km, freeKm });
   const dynRow = (!isLuzon && state.location !== 'other')
     ? (adminParams.deliveryLocations || []).find(l => l.id === state.location)
     : null;
@@ -1147,31 +1165,35 @@ function YourHomeScreen({ state, updateState, model, adminParams, go }) {
         <label className="mfl-field">Installation location</label>
         <select className="mfl-select" value={state.location}
                 onChange={e => updateState({ location: e.target.value })}>
-          <option value="luzon">Luzon main island</option>
+          <option value="luzon">{adminParams.deliveryRegionLabel || 'Luzon'} main island</option>
           {dynamicLocs.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
           <option value="other">Other</option>
         </select>
         {isLuzon && (
           <>
-            <label className="mfl-field" style={{ marginTop: 14 }}>Region</label>
-            <select className="mfl-select" value={region.code}
-                    onChange={e => {
-                      // Re-resolve so region, province and city land on a valid
-                      // triple together.
-                      const next = resolveLocation(e.target.value, null, null);
-                      updateState({ locationRegion: next.region.code,
-                                    locationProvince: next.province,
-                                    locationCity: next.city.name,
-                                    locationKm: next.city.km });
-                    }}>
-              {LUZON_REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
-            </select>
+            {shape.showRegionSelect && (
+              <>
+                <label className="mfl-field" style={{ marginTop: 14 }}>Region</label>
+                <select className="mfl-select" value={regionRow.code}
+                        onChange={e => {
+                          // Re-resolve so region, province and city land on a valid
+                          // triple together.
+                          const next = resolveLocation(region, e.target.value, null, null);
+                          updateState({ locationRegion: next.region.code,
+                                        locationProvince: next.province,
+                                        locationCity: next.city.name,
+                                        locationKm: next.city.km });
+                        }}>
+                  {regionsFor(region).map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+                </select>
+              </>
+            )}
             {provinces.length > 0 && (
               <>
                 <label className="mfl-field" style={{ marginTop: 14 }}>Province</label>
                 <select className="mfl-select" value={province || ''}
                         onChange={e => {
-                          const next = resolveLocation(region.code, e.target.value, null);
+                          const next = resolveLocation(region, regionRow.code, e.target.value, null);
                           updateState({ locationProvince: next.province,
                                         locationCity: next.city.name,
                                         locationKm: next.city.km });
@@ -1188,16 +1210,17 @@ function YourHomeScreen({ state, updateState, model, adminParams, go }) {
                     }}>
               {cities.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
             </select>
-            {!beyondFreeKm ? (
+            {/* v3-171 \u2014 wording only; no price shown. v3-231 \u2014 one sentence
+                source with Step 2E (deliveryHint): no hub \u21D2 "included", within
+                the radius \u21D2 delivery included, beyond \u21D2 the km sentence. */}
+            {hint.kind === 'beyond' ? (
+              <p className="mfl-hint" style={{ marginTop: 12 }}>
+                {hint.before}<b>{hint.strong}</b>{hint.after}
+              </p>
+            ) : (
               <div className="mfl-derived" style={{ marginTop: 14 }}>
                 {'\uD83D\uDE9A'} {city ? city.name : '\u2014'} &mdash; delivery included
               </div>
-            ) : (
-              <p className="mfl-hint" style={{ marginTop: 12 }}>
-                {city.name} &mdash; approx. {km} km from our Para&ntilde;aque logistics hub.
-                A delivery charge for the distance beyond {freeKm} km is
-                already <b>included in your price</b>.
-              </p>
             )}
           </>
         )}
@@ -1450,7 +1473,7 @@ function InvestmentScreen({ state, updateState, model, adminParams, go, onPropos
   );
 }
 
-function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent }) {
+function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent, region = 'luzon' }) {
   const [draft, setDraft] = useState({
     name: contact.name || '', email: contact.email || '',
     mobile: contact.mobile || '', installAddress: contact.installAddress || '',
@@ -1475,7 +1498,7 @@ function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent
       const reference = makeLeadRef(now, draft);
       const payload = buildLeadPayload({
         state, model, contact: draft,
-        submittedAt: now.toISOString(), reference, adminParams,
+        submittedAt: now.toISOString(), reference, adminParams, region,
       });
       await submitLead(payload);
       setRef(reference);
@@ -1555,6 +1578,7 @@ function LeadScreen({ state, model, adminParams, contact, setContact, go, onSent
 // viewport; the welcome invitation already points humans at tablet/desktop.
 export default function MobileFlow({
   state, updateState, model, adminParams, contact, setContact,
+  region = 'luzon',   // v3-231 — picks the Your Home location table; rides on the lead
 }) {
   const [screen, setScreen] = useState(0);
   // v3-164 — direction of the last navigation, driving the slide-in
@@ -1619,7 +1643,8 @@ export default function MobileFlow({
       {screen > 0 && (
         <>
           <div className="mfl-header">
-            <img src="/logo-full-transparent-v1.png" alt="Solviva" />
+            <img src="/logo-horizontal-dark-green.svg" alt="Solviva" />
+            <RegionStamp region={region} compact />
           </div>
           <div className="mfl-progress">
             {Array.from({ length: 6 }, (_, i) => (
@@ -1639,9 +1664,9 @@ export default function MobileFlow({
       {screen === 2 && <AppliancesScreen state={state} updateState={updateState} go={go} />}
       {screen === 3 && <GoalScreen state={state} updateState={updateState} model={model} adminParams={adminParams} go={go} />}
       {screen === 4 && <RecommendationScreen state={state} model={model} adminParams={adminParams} go={go} />}
-      {screen === 5 && <YourHomeScreen state={state} updateState={updateState} model={model} adminParams={adminParams} go={go} />}
+      {screen === 5 && <YourHomeScreen state={state} updateState={updateState} model={model} adminParams={adminParams} go={go} region={region} />}
       {screen === 6 && <InvestmentScreen state={state} updateState={updateState} model={model} adminParams={adminParams} go={go} onProposal={() => go(7)} />}
-      {screen === 7 && <LeadScreen state={state} model={model} adminParams={adminParams} contact={contact} setContact={setContact} go={go} onSent={() => setLeadSent(true)} />}
+      {screen === 7 && <LeadScreen state={state} model={model} adminParams={adminParams} contact={contact} setContact={setContact} go={go} onSent={() => setLeadSent(true)} region={region} />}
       </div>
       {/* v3-165 — investment returns appear starting on Step 3 (the savings
           target screen), not before (user decision). */}

@@ -9,7 +9,7 @@
 // ALDEN-LEAD-DELIVERY.md. The channel must be wired before this ships to real
 // customers.
 
-import { LUZON_REGIONS } from '../config.js';   // v3-125 — location labels
+import { regionsFor } from '../data/locations.js';   // v3-125 — location labels; v3-231 per region
 
 export const LEAD_ENDPOINT = '/.netlify/functions/submit-lead';
 
@@ -52,7 +52,9 @@ const hhmm = (frac) => {
   return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 };
 
-export function buildLeadPayload({ state, model, contact, submittedAt, reference, adminParams }) {
+// v3-231 — `region` is the calculator (office) the quote was priced in
+// ('luzon' | 'cebu'); it rides on the payload and picks the location table.
+export function buildLeadPayload({ state, model, contact, submittedAt, reference, adminParams, region = 'luzon' }) {
   const terms = model?.terms || {};
   // The battery package label already includes the size (e.g. "5 kWh Pylontech"),
   // so prefer it; fall back to a bare kWh string, or "None".
@@ -67,10 +69,12 @@ export function buildLeadPayload({ state, model, contact, submittedAt, reference
   const loc = (() => {
     if (state?.location === 'other') return { label: 'Other' };
     if (state?.location === 'luzon') {
-      const region = LUZON_REGIONS.find(r => r.code === state?.locationRegion) || null;
+      // 'luzon' is the structural "home mainland" id for every region; the
+      // label comes from the region's parameters (engine 1.3.0).
+      const regionRow = regionsFor(region).find(r => r.code === state?.locationRegion) || null;
       return {
-        label: 'Luzon main island',
-        region: region ? region.label : state?.locationRegion || null,
+        label: `${adminParams?.deliveryRegionLabel || 'Luzon'} main island`,
+        region: regionRow ? regionRow.label : state?.locationRegion || null,
         city: state?.locationCity || null,
         roadKm: state?.locationKm ?? null,
       };
@@ -97,6 +101,8 @@ export function buildLeadPayload({ state, model, contact, submittedAt, reference
     quoteReference: reference,
     submittedAt,
     source: 'public-calculator',
+    region,                                                 // v3-231
+
     customer: {
       name: contact?.name || '',
       email: contact?.email || '',

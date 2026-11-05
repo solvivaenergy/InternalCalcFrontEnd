@@ -29,7 +29,7 @@ export default function ConsumptionDonut({ dayKwh, nightKwh, totalKwh }) {
   // If the model produced a negative baseload (consumption inputs don't add up),
   // we still want to render something — show an empty donut.
   const isEmpty = data.every(d => d.value <= 0);
-  const renderData = isEmpty ? [{ name: 'No data', value: 1, color: '#E5E7EB' }] : data;
+  const renderData = isEmpty ? [{ name: 'No data', value: 1, color: '#e4e7ec' }] : data;
 
   return (
     <div style={styles.container}>

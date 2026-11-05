@@ -15,17 +15,40 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 export const COLORS = {
-  brandGreen:   '#25543A',
-  brandGreenLight: '#3B7B5A',
-  brandCream:   '#F7F4ED',
+  // Solviva brand kit (2026-10-28). brandGreen is the dark green used for TEXT
+  // and lines on light backgrounds in every region; `primary` / `onPrimary`
+  // are the region-themed FILL and the text that sits on it (CSS variables
+  // set per region in index.html: Manila dark green + white, Cebu lime +
+  // dark green). Use `primary` for a filled button / bar / header row and
+  // pair it with `onPrimary`; never put brandGreen behind text that should
+  // follow the region.
+  brandGreen:   '#1F522B',
+  brandGreenLight: '#508908',
+  primary:      'var(--sv-primary)',
+  onPrimary:    'var(--sv-on-primary)',
+  onPrimaryMuted: 'var(--sv-on-primary-muted)',
+  // Stat tiles — numbers you read. Manila: light tile, dark-green figure;
+  // Cebu: dark-green tile, lime figure (index.html --sv-tile-*).
+  tileBg:       'var(--sv-tile-bg)',
+  tileBorder:   'var(--sv-tile-border)',
+  tileFg:       'var(--sv-tile-fg)',
+  tileLabel:    'var(--sv-tile-label)',
+  tileSub:      'var(--sv-tile-sub)',
+  tileStrong:   'var(--sv-tile-strong)', // an emphasised word inside a tile label
+  // The hero price card (Step 3E): dark green in both regions; white figure
+  // on Manila, lime on Cebu.
+  heroBg:       'var(--sv-hero-bg)',
+  heroFg:       'var(--sv-hero-fg)',
+  heroMuted:    'var(--sv-hero-muted)',
+  brandCream:   '#f2f4f7',
   inputTint:    '#DBEAFE',  // Excel-style user-input blue
   inputBorder:  '#9DB7DD',
   recHint:      '#10B981',  // recommendation pill bg
   warning:      '#B45309',
   error:        '#B91C1C',
-  textMuted:    '#6B7280',
-  textBody:     '#1F2937',
-  divider:      '#E5E1D6',
+  textMuted:    '#667085',
+  textBody:     '#212121',
+  divider:      '#e4e7ec',
   surfaceCard:  '#FFFFFF',
 };
 
@@ -558,8 +581,14 @@ export function Checkbox({ checked, onChange, label, info }) {
 //     Step 4 when the side-by-side Step3+Step4 layout (≥1024px) compresses
 //     Step 4's grid into a narrower right column; vertical stacking of
 //     thin rows reads better than a 2x2 of cards there.
+// v3-231 — the tile follows the region (COLORS.tile*): Manila keeps the light
+// tile with a dark-green figure, Cebu gets a dark-green tile with a lime
+// figure. A tile that hosts an `aside` (Step 2A's battery package panel)
+// stays LIGHT in both regions — its inner controls are built for a light
+// surface — and a value passed as the region token falls back to dark green
+// there. A caller passing any other colour (the error red, say) keeps it.
 export function StatTile({
-  label, value, sub, color = COLORS.brandGreen, large, xl,
+  label, value, sub, color = COLORS.tileFg, large, xl,
   badge, note, tooltip, stacked,
   // v3-63: optional right-hand column rendered INSIDE the tile, beside the
   // value/sub block. Used by Step 2A's Recommended Battery tile to host the
@@ -568,6 +597,11 @@ export function StatTile({
   aside,
 }) {
   const valueFontSize = xl ? 40 : (large ? (stacked ? 24 : 32) : 22);
+  const light = !!aside;
+  const valueColor = light && color === COLORS.tileFg ? COLORS.brandGreen : color;
+  const labelStyle = light ? statStyles.labelLight : statStyles.label;
+  const subStyle = light ? statStyles.subLight : statStyles.sub;
+  const noteStyle = light ? statStyles.noteLight : statStyles.note;
   if (stacked) {
     // Horizontal layout: label + optional ⓘ on the left, value on the right
     // aligned along a shared baseline. Sub (e.g. LCOE's "Compare to your
@@ -584,7 +618,7 @@ export function StatTile({
         </div>
         <div className="stat-tile-value" style={{
           ...statStyles.value,
-          color,
+          color: valueColor,
           fontSize: valueFontSize,
           textAlign: 'right',
         }}>
@@ -594,13 +628,13 @@ export function StatTile({
     );
   }
   return (
-    <div style={statStyles.tile}>
+    <div style={light ? statStyles.tileLight : statStyles.tile}>
       <div style={aside ? statStyles.splitRow : undefined}>
         <div style={aside ? statStyles.splitLeftCol : undefined}>
           {/* Header row: label on the left, optional override badge on the right */}
           <div style={statStyles.headerRow}>
             <div style={statStyles.labelWithTip}>
-              <span style={statStyles.label}>{label}</span>
+              <span style={labelStyle}>{label}</span>
               {tooltip && <InfoTooltip content={tooltip}
                                        ariaLabel={typeof label === 'string' ? `More info about ${label}` : 'More info'} />}
             </div>
@@ -608,13 +642,13 @@ export function StatTile({
           </div>
           <div className="stat-tile-value" style={{
             ...statStyles.value,
-            color,
+            color: valueColor,
             fontSize: valueFontSize,
           }}>
             {value}
           </div>
-          {sub && <div style={statStyles.sub}>{sub}</div>}
-          {note && <div style={statStyles.note}>{note}</div>}
+          {sub && <div style={subStyle}>{sub}</div>}
+          {note && <div style={noteStyle}>{note}</div>}
         </div>
         {aside && <div style={statStyles.splitAsideCol}>{aside}</div>}
       </div>
@@ -688,7 +722,7 @@ export const fmt = {
 //     and we shift it left if it would overflow the viewport's right edge.
 //   • If there isn't enough room below the icon, we flip to render ABOVE
 //     the icon — the caret moves to the bottom edge to match.
-//   • Solviva orange (#E87722) bordered icon to signal interactivity and
+//   • Solviva orange (#006ac6) bordered icon to signal interactivity and
 //     stay on-brand.
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -840,7 +874,7 @@ const infoStyles = {
     minHeight: 18,
     boxSizing: 'border-box',
     borderRadius: '50%',
-    border: '1px solid #E87722',
+    border: '1px solid #006ac6',
     backgroundColor: 'transparent',
     cursor: 'pointer',
     padding: 0,
@@ -855,7 +889,7 @@ const infoStyles = {
     fontSize: 11,
     fontWeight: 600,
     fontStyle: 'italic',
-    color: '#E87722',
+    color: '#006ac6',
     lineHeight: 1,
     fontFamily: '"Times New Roman", serif',
   },
@@ -869,7 +903,7 @@ const infoStyles = {
     width: 340,
     maxWidth: 'calc(100vw - 24px)',
     backgroundColor: '#FFFFFF',
-    border: '0.5px solid #B4B2A9',
+    border: '0.5px solid #98a2b3',
     borderRadius: 8,
     boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
     // 100 sits above the SectionCard stacking context (no z-index there)
@@ -885,8 +919,8 @@ const infoStyles = {
     width: 10,
     height: 10,
     backgroundColor: '#FFFFFF',
-    borderTop: '0.5px solid #B4B2A9',
-    borderLeft: '0.5px solid #B4B2A9',
+    borderTop: '0.5px solid #98a2b3',
+    borderLeft: '0.5px solid #98a2b3',
     transform: 'rotate(45deg)',
   },
   // Caret rendered at the BOTTOM of the popover (popover is above the icon —
@@ -897,8 +931,8 @@ const infoStyles = {
     width: 10,
     height: 10,
     backgroundColor: '#FFFFFF',
-    borderRight: '0.5px solid #B4B2A9',
-    borderBottom: '0.5px solid #B4B2A9',
+    borderRight: '0.5px solid #98a2b3',
+    borderBottom: '0.5px solid #98a2b3',
     transform: 'rotate(45deg)',
   },
   closeBtn: {
@@ -918,7 +952,7 @@ const infoStyles = {
     padding: '14px 16px 14px 16px',
     fontSize: 12,
     lineHeight: 1.55,
-    color: '#1F2937',
+    color: '#212121',
     // Reset inherited uppercase text-transform from any parent that may carry
     // it (subsectionTitle and chartTitle both set textTransform:'uppercase').
     // The popover uses position:fixed to escape ancestor overflow contexts,
@@ -947,22 +981,22 @@ const infoStyles = {
 // factually wrong and is corrected below.)
 export const RSD_INFO = (
   <div>
-    <div style={{ marginBottom: 10, color: '#444441' }}>
-      A <span style={{ fontWeight: 500, color: '#25543A' }}>Rapid Shutdown Device</span> is a small
+    <div style={{ marginBottom: 10, color: '#212121' }}>
+      A <span style={{ fontWeight: 500, color: '#1F522B' }}>Rapid Shutdown Device</span> is a small
       module installed at each panel that lets first responders quickly de-energize the rooftop
       DC wiring during an emergency.
     </div>
     <div style={{ marginBottom: 8 }}>
-      <span style={{ fontWeight: 500, color: '#25543A' }}>Why it matters:</span>{' '}
-      <span style={{ color: '#444441' }}>
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>Why it matters:</span>{' '}
+      <span style={{ color: '#212121' }}>
         Without RSD, solar panels keep generating live DC voltage on the roof whenever the sun is
         out — even if the main breaker is off. That can put firefighters at electrocution risk
         if they need to cut into the roof during a fire.
       </span>
     </div>
     <div style={{ marginBottom: 10 }}>
-      <span style={{ fontWeight: 500, color: '#25543A' }}>How RSD helps:</span>{' '}
-      <span style={{ color: '#444441' }}>
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>How RSD helps:</span>{' '}
+      <span style={{ color: '#212121' }}>
         With one button-press at the AC disconnect, RSD drops each panel's output to a safe
         voltage within 30 seconds. It also adds module-level monitoring so you can spot
         underperforming panels.
@@ -970,10 +1004,10 @@ export const RSD_INFO = (
     </div>
     <div style={{
       fontStyle: 'italic',
-      color: '#5F5E5A',
+      color: '#475467',
       fontSize: 11,
       paddingTop: 8,
-      borderTop: '0.5px dashed #D3D1C7',
+      borderTop: '0.5px dashed #e4e7ec',
     }}>
       A rapid-shutdown function is required by the Philippine Electrical Code (PEC 2017, §6.90.2.6),
       and is the US standard too (NEC 690.12). On many homes with short cable runs that function is
@@ -997,22 +1031,22 @@ export const RSD_INFO = (
 // values are already visible in the row this tooltip sits in.
 export const DC_AC_RATIO_INFO = (
   <div>
-    <div style={{ marginBottom: 10, color: '#444441' }}>
-      Your panels are rated in <span style={{ fontWeight: 500, color: '#25543A' }}>DC</span> kilowatts
-      (kWp); your inverter is rated in <span style={{ fontWeight: 500, color: '#25543A' }}>AC</span> kilowatts.
+    <div style={{ marginBottom: 10, color: '#212121' }}>
+      Your panels are rated in <span style={{ fontWeight: 500, color: '#1F522B' }}>DC</span> kilowatts
+      (kWp); your inverter is rated in <span style={{ fontWeight: 500, color: '#1F522B' }}>AC</span> kilowatts.
       The DC/AC ratio is simply the first divided by the second.
     </div>
     <div style={{ marginBottom: 10 }}>
-      <span style={{ fontWeight: 500, color: '#25543A' }}>Why it's above 1.0:</span>{' '}
-      <span style={{ color: '#444441' }}>
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>Why it's above 1.0:</span>{' '}
+      <span style={{ color: '#212121' }}>
         panels almost never hit their rated output — that figure is measured in a lab. Under real
         Philippine conditions a typical array peaks at roughly 75–85% of nameplate, so pairing it
         with a slightly smaller inverter costs less and gives up almost nothing.
       </span>
     </div>
     <div style={{ marginBottom: 10 }}>
-      <span style={{ fontWeight: 500, color: '#25543A' }}>Why there's a maximum:</span>{' '}
-      <span style={{ color: '#444441' }}>
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>Why there's a maximum:</span>{' '}
+      <span style={{ color: '#212121' }}>
         past the cap the inverter would sit at its ceiling for much of the day and start clipping —
         discarding energy your panels already produced. Solviva caps the ratio so your system isn't
         throwing away production you paid for.
@@ -1020,10 +1054,10 @@ export const DC_AC_RATIO_INFO = (
     </div>
     <div style={{
       fontStyle: 'italic',
-      color: '#5F5E5A',
+      color: '#475467',
       fontSize: 11,
       paddingTop: 8,
-      borderTop: '0.5px dashed #D3D1C7',
+      borderTop: '0.5px dashed #e4e7ec',
     }}>
       {/* v3-141 — no literal cap values here: the caps are per-phase admin
           parameters (Panel Settings → Max DC/AC Ratio) and hardcoded numbers
@@ -1040,24 +1074,24 @@ export const DC_AC_RATIO_INFO = (
 export const SERVICE_TYPE_INFO = (
   <div>
     <div style={{ marginBottom: 8 }}>
-      <span style={{ fontWeight: 500, color: '#25543A' }}>Single-phase:</span>{' '}
-      <span style={{ color: '#444441' }}>
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>Single-phase:</span>{' '}
+      <span style={{ color: '#212121' }}>
         Standard for residential homes and small businesses.
       </span>
     </div>
     <div style={{ marginBottom: 10 }}>
-      <span style={{ fontWeight: 500, color: '#25543A' }}>3-phase:</span>{' '}
-      <span style={{ color: '#444441' }}>
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>3-phase:</span>{' '}
+      <span style={{ color: '#212121' }}>
         For larger commercial buildings, factories, or homes with industrial-scale loads.
         Your electricity bill or meter will indicate "3-phase" or "3Φ" if applicable.
       </span>
     </div>
     <div style={{
       fontStyle: 'italic',
-      color: '#5F5E5A',
+      color: '#475467',
       fontSize: 11,
       paddingTop: 8,
-      borderTop: '0.5px dashed #D3D1C7',
+      borderTop: '0.5px dashed #e4e7ec',
     }}>
       When in doubt, single-phase is the safe default — your Solviva agent can confirm
       during the site visit.
@@ -1068,7 +1102,7 @@ export const SERVICE_TYPE_INFO = (
 // ═══ Meralco bill mockups (used in 1B and 1C info popovers) ═══════════════
 // These are stylized representations of a Meralco bill — fully synthetic, no
 // customer PII. Built as inline JSX so they ship in the bundle and render
-// crisply at any size, with Solviva orange (#E87722) accents on the field
+// crisply at any size, with Solviva orange (#006ac6) accents on the field
 // being called out.
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -1125,7 +1159,7 @@ function MeralcoChargesMockup() {
 
       <div style={mockupStyles.chargeLine}>
         <span>Remaining Balance from previous bill</span>
-        <span style={{ color: '#444441' }}>0.00</span>
+        <span style={{ color: '#212121' }}>0.00</span>
       </div>
 
       <div style={mockupStyles.highlightBlockCharges}>
@@ -1147,7 +1181,7 @@ function MeralcoChargesMockup() {
       </div>
 
       <div style={mockupStyles.totalRow}>
-        <span style={{ color: '#5F5E5A' }}>Total Amount Due</span>
+        <span style={{ color: '#475467' }}>Total Amount Due</span>
         <span style={mockupStyles.totalValue}>₱31,122.72</span>
       </div>
     </div>
@@ -1157,7 +1191,7 @@ function MeralcoChargesMockup() {
 const mockupStyles = {
   bill: {
     backgroundColor: '#FAFAF7',
-    border: '0.5px solid #D3D1C7',
+    border: '0.5px solid #e4e7ec',
     borderRadius: 6,
     padding: '12px 14px',
     fontFamily: 'inherit',
@@ -1168,7 +1202,7 @@ const mockupStyles = {
     alignItems: 'flex-start',
     marginBottom: 8,
     paddingBottom: 6,
-    borderBottom: '0.5px solid #D3D1C7',
+    borderBottom: '0.5px solid #e4e7ec',
   },
   billHeaderRow: {
     display: 'flex',
@@ -1176,7 +1210,7 @@ const mockupStyles = {
     alignItems: 'center',
     marginBottom: 8,
     paddingBottom: 6,
-    borderBottom: '0.5px solid #D3D1C7',
+    borderBottom: '0.5px solid #e4e7ec',
   },
   billHeaderName: {
     fontSize: 8.5,
@@ -1186,13 +1220,13 @@ const mockupStyles = {
   meralcoBrand: {
     fontSize: 9,
     fontWeight: 500,
-    color: '#E87722',
+    color: '#006ac6',
     letterSpacing: 0.3,
   },
   billTitle: {
     fontSize: 11,
     fontWeight: 500,
-    color: '#1F2937',
+    color: '#212121',
   },
   billMeta: {
     display: 'grid',
@@ -1201,44 +1235,44 @@ const mockupStyles = {
     marginTop: 6,
     marginBottom: 8,
     fontSize: 8.5,
-    color: '#5F5E5A',
+    color: '#475467',
   },
   billMetaLabel: {
     color: '#888780',
     marginBottom: 1,
   },
   billMetaValue: {
-    color: '#444441',
+    color: '#212121',
   },
   highlightBlock: {
     padding: '8px 10px',
     borderRadius: 5,
     backgroundColor: '#FFF3E8',
-    border: '1.5px solid #E87722',
+    border: '1.5px solid #006ac6',
     marginBottom: 8,
   },
   highlightLabel: {
     fontSize: 9,
-    color: '#5F5E5A',
+    color: '#475467',
     marginBottom: 2,
   },
   highlightValue: {
     fontSize: 16,
     fontWeight: 500,
-    color: '#1F2937',
+    color: '#212121',
     lineHeight: 1.1,
   },
   highlightUnit: {
     fontSize: 10,
     fontWeight: 400,
-    color: '#5F5E5A',
+    color: '#475467',
   },
   placeholderRows: {
     opacity: 0.35,
   },
   placeholderRow: {
     height: 6,
-    backgroundColor: '#D3D1C7',
+    backgroundColor: '#e4e7ec',
     borderRadius: 3,
     marginBottom: 4,
   },
@@ -1246,14 +1280,14 @@ const mockupStyles = {
     display: 'flex',
     justifyContent: 'space-between',
     fontSize: 10,
-    color: '#5F5E5A',
+    color: '#475467',
     padding: '3px 0',
   },
   highlightBlockCharges: {
     padding: '7px 9px',
     borderRadius: 5,
     backgroundColor: '#FFF3E8',
-    border: '1.5px solid #E87722',
+    border: '1.5px solid #006ac6',
     margin: '4px 0',
   },
   highlightChargesRow: {
@@ -1269,7 +1303,7 @@ const mockupStyles = {
   highlightChargesValue: {
     fontSize: 12,
     fontWeight: 500,
-    color: '#1F2937',
+    color: '#212121',
   },
   subCharges: {
     paddingLeft: 8,
@@ -1283,7 +1317,7 @@ const mockupStyles = {
     justifyContent: 'space-between',
   },
   totalRow: {
-    borderTop: '0.5px solid #D3D1C7',
+    borderTop: '0.5px solid #e4e7ec',
     marginTop: 8,
     paddingTop: 6,
     display: 'flex',
@@ -1294,7 +1328,7 @@ const mockupStyles = {
   totalValue: {
     fontSize: 11,
     fontWeight: 500,
-    color: '#444441',
+    color: '#212121',
   },
 };
 
@@ -1313,7 +1347,7 @@ const calloutStripStyle = {
 };
 
 const calloutArrow = (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#E87722"
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#006ac6"
        strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
        style={{ flexShrink: 0 }} aria-hidden="true">
     <path d="M5 12h14M13 5l7 7-7 7" />
@@ -1322,10 +1356,10 @@ const calloutArrow = (
 
 export const RATE_INFO = (
   <div>
-    <div style={{ marginBottom: 10, color: '#444441' }}>
+    <div style={{ marginBottom: 10, color: '#212121' }}>
       Your DU statement should show your effective rate per kWh near the top.
       On Meralco bills, look for{' '}
-      <span style={{ fontWeight: 500, color: '#25543A' }}>"Your rate this month"</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>"Your rate this month"</span>{' '}
       — shown as a peso-per-kWh value (e.g., ₱15.68 per kWh).
     </div>
     <MeralcoRateMockup />
@@ -1337,11 +1371,11 @@ export const RATE_INFO = (
     </div>
     <div style={{
       fontStyle: 'italic',
-      color: '#5F5E5A',
+      color: '#475467',
       fontSize: 11,
       marginTop: 10,
       paddingTop: 8,
-      borderTop: '0.5px dashed #D3D1C7',
+      borderTop: '0.5px dashed #e4e7ec',
     }}>
       This rate changes slightly each month. Use the figure from your most recent bill
       for the most accurate estimate.
@@ -1351,10 +1385,10 @@ export const RATE_INFO = (
 
 export const CHARGES_INFO = (
   <div>
-    <div style={{ marginBottom: 10, color: '#444441' }}>
+    <div style={{ marginBottom: 10, color: '#212121' }}>
       Your DU statement should show a breakdown of charges for the current billing
       period, separate from any carry-over balance. On Meralco bills, look for{' '}
-      <span style={{ fontWeight: 500, color: '#25543A' }}>"Charges for this billing period"</span>{' '}
+      <span style={{ fontWeight: 500, color: '#1F522B' }}>"Charges for this billing period"</span>{' '}
       in the Bill Computation Summary.
     </div>
     <MeralcoChargesMockup />
@@ -1366,11 +1400,11 @@ export const CHARGES_INFO = (
     </div>
     <div style={{
       fontStyle: 'italic',
-      color: '#5F5E5A',
+      color: '#475467',
       fontSize: 11,
       marginTop: 10,
       paddingTop: 8,
-      borderTop: '0.5px dashed #D3D1C7',
+      borderTop: '0.5px dashed #e4e7ec',
     }}>
       This is more accurate than the total "amount due" or "please pay" figure, which
       can include carry-over from prior over- or underpayments.
@@ -1383,13 +1417,13 @@ export const CHARGES_INFO = (
 // day/night load split, which is otherwise assumed to be 50/50). Shipped in
 // v3-37 alongside the Radiance Curve tooltip.
 export const MAJOR_DEVICES_INFO = (
-  <div style={{ color: '#444441' }}>
+  <div style={{ color: '#212121' }}>
     By default, this calculator assumes your daily electricity consumption is split evenly
     between day and night. Consumption that's heavier in the daytime needs{' '}
-    <span style={{ fontWeight: 500, color: '#25543A' }}>fewer batteries</span>;
+    <span style={{ fontWeight: 500, color: '#1F522B' }}>fewer batteries</span>;
     consumption that's heavier at night needs{' '}
-    <span style={{ fontWeight: 500, color: '#25543A' }}>more</span>. Entering the usual{' '}
-    <span style={{ fontWeight: 500, color: '#25543A' }}>hours</span> you use your major
+    <span style={{ fontWeight: 500, color: '#1F522B' }}>more</span>. Entering the usual{' '}
+    <span style={{ fontWeight: 500, color: '#1F522B' }}>hours</span> you use your major
     devices and appliances helps determine this.
   </div>
 );
@@ -1475,7 +1509,7 @@ const rcCatStyle = (color) => ({
 });
 
 export const RADIANCE_CURVE_INFO = (
-  <div style={{ color: '#444441', lineHeight: 1.55 }}>
+  <div style={{ color: '#212121', lineHeight: 1.55 }}>
     <p style={{ margin: '0 0 12px' }}>
       The <span style={rcChipStyle(RC_FILL_BLUE, RC_VOICE_BLUE)} />
       <span style={rcKeywordStyle(RC_VOICE_BLUE)}>blue</span>{' '}
@@ -1648,7 +1682,8 @@ const fieldStyles = {
     fontFamily: 'inherit',
   },
   recPillActive: {
-    backgroundColor: COLORS.brandGreen,
+    backgroundColor: COLORS.primary,
+    color: COLORS.onPrimary,   // v3-231 — dark green on Cebu's lime fill
   },
 };
 
@@ -1752,6 +1787,13 @@ const inputStyles = {
 
 const statStyles = {
   tile: {
+    backgroundColor: COLORS.tileBg,
+    borderRadius: 8,
+    padding: '14px 16px',
+    border: `1px solid ${COLORS.tileBorder}`,
+  },
+  // The light tile a region never recolours (tiles that host controls).
+  tileLight: {
     backgroundColor: COLORS.brandCream,
     borderRadius: 8,
     padding: '14px 16px',
@@ -1796,6 +1838,13 @@ const statStyles = {
   label: {
     fontSize: 11,
     fontWeight: 600,
+    color: COLORS.tileLabel,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  labelLight: {
+    fontSize: 11,
+    fontWeight: 600,
     color: COLORS.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -1824,6 +1873,11 @@ const statStyles = {
   },
   sub: {
     fontSize: 11,
+    color: COLORS.tileSub,
+    marginTop: 4,
+  },
+  subLight: {
+    fontSize: 11,
     color: COLORS.textMuted,
     marginTop: 4,
   },
@@ -1831,6 +1885,13 @@ const statStyles = {
   // overridden value next to the recommendation, or to clarify what the
   // tile's number is computed from (e.g., "Based on 7 panels selected.").
   note: {
+    fontSize: 11,
+    fontStyle: 'italic',
+    color: COLORS.tileSub,
+    marginTop: 6,
+    lineHeight: 1.4,
+  },
+  noteLight: {
     fontSize: 11,
     fontStyle: 'italic',
     color: COLORS.textMuted,
@@ -1842,10 +1903,10 @@ const statStyles = {
   // left, value on the right. Vertical-stack of these reads like a clean
   // list of stats; uses about half the height of the default card grid.
   tileStacked: {
-    backgroundColor: COLORS.brandCream,
+    backgroundColor: COLORS.tileBg,
     borderRadius: 8,
     padding: '12px 16px',
-    border: `1px solid ${COLORS.divider}`,
+    border: `1px solid ${COLORS.tileBorder}`,
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1861,7 +1922,7 @@ const statStyles = {
   },
   subStacked: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: COLORS.tileSub,
     fontStyle: 'italic',
     lineHeight: 1.4,
   },

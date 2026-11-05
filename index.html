@@ -19,7 +19,7 @@
     body {
       margin: 0; padding: 0;
       font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
-      background-color: #F7F4ED;
+      background-color: #fcfcfc;
     }
 
     /* ─────────────────────────────────────────────────────────────────
@@ -32,10 +32,10 @@
        these states can never reach the proposal.
        ───────────────────────────────────────────────────────────────── */
     .tenor-row { transition: background-color 120ms ease; }
-    .tenor-row:hover { background-color: #F0EDE3; }
-    .tenor-row:hover .tenor-dot { border-color: #25543A; }
+    .tenor-row:hover { background-color: #f2f4f7; }
+    .tenor-row:hover .tenor-dot { border-color: #1F522B; }
     .tenor-row:focus-visible {
-      outline: 2px solid #25543A;
+      outline: 2px solid var(--sv-primary);
       outline-offset: -2px;
     }
     /* Coarse pointers have no hover; the tint would latch on after a tap and
@@ -230,26 +230,135 @@
     /* Print styles — hide nav and footer for clean PDFs */
     /* v3-129 — live bar: 4 cells desktop, 2×2 on narrow; divider only where
        a cell has a right-hand neighbour (structural, via nth-child). */
+    /* v3-231 (2026-11-01 design): the first cell is the "{Region} pricing"
+       pill, then the five figures; the bar is a light tint of the branch
+       colour (--sv-bar-*), so the dividers are a dark hairline. */
     .live-total-grid {
       display: grid;
-      grid-template-columns: repeat(5, 1fr); /* v3-161: IRR is the fifth cell */
+      grid-template-columns: auto repeat(5, 1fr); /* pill + five figures (v3-161: IRR is the fifth) */
+      align-items: center;
       row-gap: 7px;
     }
-    .live-total-cell { border-right: 1px solid rgba(255,255,255,0.18); }
-    .live-total-cell:nth-child(5n) { border-right: none; }
-    .live-total-spacer { height: 56px; }
+    .live-total-pill {
+      display: flex; align-items: center;
+      padding: 0 16px 0 2px;
+      border-right: 1px solid var(--sv-bar-divider);
+    }
+    .live-total-cell { border-right: 1px solid var(--sv-bar-divider); }
+    .live-total-cell:last-child { border-right: none; }
+    .live-total-spacer { height: 76px; }   /* v3-231: ≥ the bar's 72px so the footer above it is never covered */
     @media (max-width: 560px) {
       .live-total-grid { grid-template-columns: repeat(2, 1fr); }
+      .live-total-pill { grid-column: 1 / -1; border-right: none; padding: 0 0 2px; }
       .live-total-cell { border-right: none; }
-      .live-total-cell:nth-child(odd) { border-right: 1px solid rgba(255,255,255,0.18); }
-      /* v3-161: five cells wrap to three rows at 2-col */
-      .live-total-spacer { height: 156px; }
+      .live-total-cell:nth-child(even) { border-right: 1px solid var(--sv-bar-divider); }
+      /* v3-161: five cells wrap to three rows at 2-col, plus the pill row */
+      .live-total-spacer { height: 196px; }
     }
     @media print {
       header, nav, footer, button { -webkit-print-color-adjust: exact; }
       [data-no-print] { display: none !important; }
       body { background: white !important; }
       main { padding: 12px !important; }
+    }
+
+    /* v3-231 — region theme. The calculator's PRIMARY fill (buttons, the
+       phase toggle, table header rows, the live total bar, underlines, the
+       focus ring) is a CSS variable so the active region recolours it in one
+       place: Manila = the brand dark green with white text on it; Cebu = the
+       brand lime #D2FF1E with dark green text on it (lime is a background
+       colour in the brand kit — never white text on lime). App.jsx sets
+       data-region on <html> once the region is known. TEXT that is dark green
+       on a light background stays dark green in both regions: lime text on
+       white is unreadable. */
+    :root {
+      --sv-primary: #1F522B;
+      --sv-on-primary: #FFFFFF;
+      --sv-on-primary-muted: rgba(255, 255, 255, 0.75);
+      --sv-on-primary-soft: rgba(255, 255, 255, 0.8);
+    }
+    :root[data-region="cebu"] {
+      --sv-primary: #D2FF1E;
+      --sv-on-primary: #1F522B;
+      --sv-on-primary-muted: rgba(31, 82, 43, 0.72);
+      --sv-on-primary-soft: rgba(31, 82, 43, 0.8);
+    }
+    /* The live total bar (2026-11-01 three-colour design): a light tint of
+       the branch colour, a top edge in the accent, figures in the branch INK
+       (dark green for Manila and Cebu — lime cannot be read on a light
+       ground — blue for Davao). Mirrors `theme` in src/lib/region.js. */
+    :root {
+      --sv-bar-bg: #EEF4EC;
+      --sv-bar-edge: #1F522B;
+      --sv-bar-fg: #1F522B;
+      --sv-bar-muted: #4B6B52;
+      --sv-bar-divider: rgba(31, 82, 43, 0.18);
+    }
+    :root[data-region="cebu"] {
+      --sv-bar-bg: #F7FFD1;
+      --sv-bar-edge: #D2FF1E;
+    }
+    /* Davao — the brand blue, inert until the branch opens (it is listed in
+       the Pricing branch dropdown, disabled; App.jsx never sets this value). */
+    :root[data-region="davao"] {
+      --sv-primary: #006AC6;
+      --sv-on-primary: #FFFFFF;
+      --sv-bar-bg: #E8F1FA;
+      --sv-bar-edge: #006AC6;
+      --sv-bar-fg: #004E92;
+      --sv-bar-muted: #3D6A94;
+      --sv-bar-divider: rgba(0, 106, 198, 0.2);
+    }
+    /* Numbers you READ (stat tiles, the Step 3E total card, the Summary total
+       row, the mobile price hero): Manila keeps light tiles with dark-green
+       figures; Cebu flips them to DARK GREEN tiles with LIME figures — the
+       design system's chartreuse-on-dark-green pairing (7.8:1), the only way
+       lime text stays readable. Controls keep the --sv-primary rule above. */
+    :root {
+      --sv-tile-bg: #f2f4f7;
+      --sv-tile-border: #e4e7ec;
+      --sv-tile-fg: #1F522B;
+      --sv-tile-label: #667085;
+      --sv-tile-sub: #667085;
+      --sv-tile-strong: #212121;
+      --sv-hero-bg: #1F522B;
+      --sv-hero-fg: #FFFFFF;
+      --sv-hero-muted: rgba(255, 255, 255, 0.82);
+    }
+    :root[data-region="cebu"] {
+      --sv-tile-bg: #1F522B;
+      --sv-tile-border: #1F522B;
+      --sv-tile-fg: #D2FF1E;
+      --sv-tile-label: rgba(255, 255, 255, 0.78);
+      --sv-tile-sub: rgba(255, 255, 255, 0.78);
+      --sv-tile-strong: #FFFFFF;
+      --sv-hero-fg: #D2FF1E;
+    }
+
+    /* v3-231 — motion. Short, one-directional, easing out: content fades up
+       as a tab pane or banner appears, dialogs pop in, the app fades in after
+       sign-in or a region switch. Nothing loops, nothing moves on hover beyond
+       the existing colour transitions, and everything is off under
+       prefers-reduced-motion. */
+    @keyframes svFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes svFadeUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: none; }
+    }
+    @keyframes svPopIn {
+      from { opacity: 0; transform: translateY(4px) scale(0.97); }
+      to   { opacity: 1; transform: none; }
+    }
+    .app-root  { animation: svFadeIn 260ms ease-out both; }
+    .tab-pane  { animation: svFadeUp 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .sv-fade-up { animation: svFadeUp 240ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .sv-overlay { animation: svFadeIn 160ms ease-out both; }
+    .sv-dialog  { animation: svPopIn 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .tab-btn    { transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease; }
+    button, .mfl-btn { transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, opacity 150ms ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .app-root, .tab-pane, .sv-fade-up, .sv-overlay, .sv-dialog { animation: none !important; }
+      .tab-btn, button, .mfl-btn { transition: none !important; }
     }
   </style>
 </head>

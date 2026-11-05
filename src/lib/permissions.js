@@ -226,6 +226,14 @@ export const PARAM_KEY_TO_SECTION = {
   luzonFreeTravelKm: "location", // v3-199 — free-delivery radius
   luzonOver30FixedFeeCogs: "location",
   luzonOver30PerKmCogs: "location",
+  // v3-231 — region-aware delivery (engine 1.3.0): the region's name on the
+  // delivery line / picker / proposal, its dispatch hub, and whether that hub
+  // exists yet (false ⇒ ₱0 delivery at any km). odooCompanyId is the Odoo
+  // company/branch the region's leads live in (null until it exists).
+  deliveryRegionLabel: "location",
+  deliveryHubLabel: "location",
+  deliveryHubEnabled: "location",
+  odooCompanyId: "location",
   // Cabling
   cablingTiers: "cabling",
   cablingTiersThreePhase: "cabling", // NEW v3-62 — 3-phase tier table

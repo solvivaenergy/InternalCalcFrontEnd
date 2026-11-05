@@ -21,7 +21,7 @@ import {
 } from './ui.jsx';
 import ConsumptionDonut from './charts/ConsumptionDonut.jsx';
 
-export default function Step1Consumption({ state, updateState, model, onReset }) {
+export default function Step1Consumption({ state, updateState, model, onReset, badge }) {
   const { recommended } = model;
 
   return (
@@ -30,6 +30,7 @@ export default function Step1Consumption({ state, updateState, model, onReset })
       title="Tell us about your consumption"
       subtitle="A few quick details about your monthly bill help us recommend the right system size for your home."
       onReset={onReset}
+      badge={badge}
     >
       <div className="grid-2col" style={styles.grid}>
         {/* ─── Left column: inputs ──────────────────────────── */}
@@ -134,7 +135,7 @@ export default function Step1Consumption({ state, updateState, model, onReset })
               label="Baseload"
               value={fmt.num(Math.round(Math.max(0, recommended.baseloadKwh)))}
               sub="kWh / month"
-              color={recommended.baseloadKwh < 0 ? COLORS.error : COLORS.brandGreen}
+              color={recommended.baseloadKwh < 0 ? COLORS.error : COLORS.tileFg}
             />
             {/* The "Recommended panels" tile previously lived here, but moved
                 to Section 2A where the "Desired savings %" selector drives it.
@@ -194,8 +195,8 @@ const toggleStyles = {
     fontFamily: 'inherit',
   },
   active: {
-    backgroundColor: COLORS.brandGreen,
-    color: '#FFFFFF',
+    backgroundColor: COLORS.primary,
+    color: COLORS.onPrimary,
     fontWeight: 600,
   },
 };

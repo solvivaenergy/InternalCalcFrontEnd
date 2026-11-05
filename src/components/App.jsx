@@ -6,8 +6,15 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ADMIN_PARAMS, DISCLAIMERS, PROPOSAL_CONTENT,
          availableDeliveryLocations } from '../data/adminParams.js';
 import { DEFAULTS, BRAND, AGENT, AUTH,
-         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS,
-         LUZON_REGIONS, resolveLocation } from '../config.js';
+         INCLUDED_DC_CABLE_METERS, INCLUDED_AC_CABLE_METERS } from '../config.js';
+// v3-231 — regions. One calculator serves Manila (`luzon`) and Cebu (`cebu`);
+// each has its own parameter payload and its own location table. The account's
+// regions come from Supabase app_metadata (src/lib/region.js); the location
+// tables and the cascade helpers live in src/data/locations.js.
+import { regionsFor, resolveLocation, defaultLocationState, pickerShape } from '../data/locations.js';
+import { DEFAULT_REGION, isRegionId, regionMeta, regionLabel, regionTheme, regionsOf,
+         getActiveRegion, setActiveRegion } from '../lib/region.js';
+import { RegionSelect, RegionPricingPill } from './RegionControls.jsx';
 // The sizing/pricing pipeline is computeProposal() in @solviva/calc-engine (proposal.js)
 // (this file's model memo, lifted out 2026-09-27). Only the PDF path still
 // reaches into the engine directly, to rebuild the annex on the issue date.
@@ -73,7 +80,10 @@ const BUNDLED_DEFAULT_DP   = ADMIN_PARAMS.defaultDownPaymentPct;  // v3-159
 const BUNDLED_DEFAULT_IRR_YEARS = ADMIN_PARAMS.irrYearsDefault;        // v3-188
 const BUNDLED_DEFAULT_DU_INFL   = ADMIN_PARAMS.duRateInflationDefault; // v3-188
 
-export function makeInitialState(kind = 'all') {
+// v3-231 — `region` picks the location defaults (src/data/locations.js); every
+// other default is read LIVE off ADMIN_PARAMS, which holds the active region's
+// payload once paramsService.load({ region }) has run.
+export function makeInitialState(kind = 'all', region = DEFAULT_REGION) {
   const step1 = {
     phase: 1,
     utilityRate: ADMIN_PARAMS.defaultUtilityRate,
@@ -147,27 +157,21 @@ export function makeInitialState(kind = 'all') {
     roofMaterial: 'metal',
     // Location (v3 — Excel CALCULATOR M37 + Y39):
     //   'luzon'   → free if locationKm ≤ adminParams.luzonFreeTravelKm (v3-199), else fixed + per-km — DEFAULT
-    //   'cebu'    → fixed + per-panel
-    //   'siargao' → fixed + per-panel
-    location: 'luzon',
-    // v3-109 (cascade lineage, merged v3-114) — Luzon location is chosen via a
-    // Region → City cascade (src/config.js LUZON_REGIONS) instead of a
-    // free-typed km. The selected city's stored road-km from OUR PARAÑAQUE
-    // LOGISTICS HUB (v3-114 origin rebase; was Km-0/Rizal Park) drives
-    // locationKm, which still feeds the identical charge formula in
-    // calculations.js (parity with workbook AA38). Defaults to NCR / Manila
-    // (18 km — inside the 30 km free zone), so the default quote total is
-    // unchanged (a ₱0 location line, exactly as before).
-    locationRegion: 'NCR',
-    // v3-210 — third level of the location cascade. null for NCR, which has no
-    // provinces; required elsewhere because city names are bare and "Rosario"
-    // exists in both Cavite and Batangas.
-    locationProvince: null,
-    locationCity: 'Manila',
-    // Distance from the Parañaque hub (Luzon only). Derived from the selected
-    // city above; held in state so calculations.js and workbook AA38 parity
-    // are untouched.
-    locationKm: 18,
+    //   dynamic deliveryLocations row → fixed + per-panel (v3-116; switched off since v3-213)
+    //   'other'   → ₱0 here; the rep prices it as a 2F line
+    // v3-109 (cascade lineage, merged v3-114) — the home-mainland location is
+    // chosen via a Region → Province → City cascade instead of a free-typed
+    // km. The selected city's stored road-km from the region's dispatch hub
+    // (v3-114 origin rebase; was Km-0/Rizal Park) drives locationKm, which
+    // still feeds the identical charge formula in calculations.js (parity
+    // with workbook AA38).
+    // v3-231 — the five fields come from defaultLocationState(region)
+    // (src/data/locations.js). Manila keeps NCR / Manila / 18 km (inside the
+    // free zone, so the default quote total is unchanged — a ₱0 location
+    // line, exactly as before); Cebu starts at Cebu City with km 0 (no hub
+    // yet). The structural id stays 'luzon' for BOTH regions: to the engine
+    // (calc-engine 1.3.0) it means "the region's home mainland".
+    ...defaultLocationState(region),
     // v3-138 — rows gained `catalogId`: a pick from Anjon's Step 2F catalog,
     // or the 'other' sentinel for a free-form line (the old behavior). A row
     // restored from a pre-v3-138 session has no catalogId at all, which reads
@@ -343,7 +347,11 @@ const CONTACT_RECORD_VERSION = 2;   // v3-61: added installAddress
 // restored WITHOUT the wipe would show returns computed at one rate beside a
 // note describing another. Bumping now costs one reset; not bumping costs a
 // silent contradiction on a customer's screen later.
-const STATE_RECORD_VERSION   = 13;  // v3-213: off-Luzon delivery locations retired; km rebased to fastest route
+// v3-231 — 13 → 14: the record gains `region` (which office's parameters priced
+// the quote). ADDITIVE, so unlike every bump above a v13 record is MIGRATED,
+// not wiped: every v13 quote was by construction a Manila quote (there was no
+// other region), so migrateStateRecord() stamps it 'luzon' and keeps it.
+const STATE_RECORD_VERSION   = 14;  // v3-231: `region` stamp (v13 migrates); v3-213: off-Luzon rows retired, km rebased
 // v3-209 — the bump is REQUIRED, not cosmetic. 29 locations (Regions I/II/CAR/V
 // and the non-Bulacan/Pampanga part of III) were removed from LUZON_REGIONS, and
 // many retained cities got new km. A restored session holding e.g.
@@ -352,6 +360,38 @@ const STATE_RECORD_VERSION   = 13;  // v3-213: off-Luzon delivery locations reti
 // `|| LUZON_REGIONS[0]`) but KEEP its stale locationKm of 460 until the rep
 // happened to touch the control — quoting a delivery charge for a destination
 // the calculator no longer offers. Wiping those sessions is the fix.
+
+// v3-231 — the stored quote record, versioned. Returns the record in the
+// current shape (with `region`), or null when it must be dropped.
+function migrateStateRecord(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (parsed._v === STATE_RECORD_VERSION) return isRegionId(parsed.region) ? parsed : null;
+  if (parsed._v === 13) return { ...parsed, _v: STATE_RECORD_VERSION, region: DEFAULT_REGION };
+  return null;   // older shapes: wipe, as before
+}
+// The region of the quote in sessionStorage, if a restorable one exists. App()
+// reads it BEFORE mounting the calculator: a quote in progress pulls the app
+// to its own region (a quote belongs to one region), provided the account
+// still holds that region.
+function peekStoredQuoteRegion() {
+  try {
+    return migrateStateRecord(JSON.parse(sessionStorage.getItem(STATE_STORAGE_KEY) || 'null'))?.region ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+// Forget the quote in progress: Steps 1–4, the issue date AND the customer
+// contact (incl. the Odoo lead id) — the installation address and the lead are
+// bound to a place, so they do not follow a region switch. (Reset & lock keeps
+// the contact; that difference is deliberate.) The rep's mode and agent
+// identity are not touched: the rep is still the rep.
+function dropStoredQuote() {
+  try {
+    sessionStorage.removeItem(STATE_STORAGE_KEY);
+    sessionStorage.removeItem(GENERATED_DATE_KEY);
+    sessionStorage.removeItem(CONTACT_STORAGE_KEY);
+  } catch (_) { /* ignore */ }
+}
 
 // ─── PDF proposal requirements (v3-61) ───────────────────────────────────────
 // The PDF proposal is rep-mode-only and prints both parties' details plus an
@@ -432,6 +472,48 @@ export default function App() {
     return () => { mounted = false; };
   }, [session?.user?.id]);
 
+  // v3-231 — the ACTIVE REGION lives here, above CalculatorApp, because a
+  // switch REMOUNTS the whole calculator (key below): the shared engine
+  // objects hold one region's values at a time, so the new region's payload is
+  // loaded behind the boot spinner into a fresh component tree. Resolution:
+  //   1. the regions on the account (app_metadata.regions; missing ⇒ Manila);
+  //   2. this device's last-used region, if still allowed, else Manila;
+  //   3. a quote in progress overrides both — it pulls the app to ITS region
+  //      when the account holds it, and is dropped when it does not.
+  // Re-runs when the account's regions change (a token refresh after an admin
+  // edit): shrunk access falls back to an allowed region and drops a foreign
+  // quote. `region` is null until resolved; the splash covers that.
+  const [region, setRegion] = useState(null);
+  const regions = session ? regionsOf(session) : [DEFAULT_REGION];
+  const regionsKey = regions.join(',');
+  // The region also goes on <html data-region>: index.html keys the primary
+  // fill (--sv-primary / --sv-on-primary) off it, so every filled button, bar
+  // and table header recolours for Cebu without threading a prop through.
+  const applyRegion = (next) => {
+    setActiveRegion(next);
+    setRegion(next);
+    try { document.documentElement.dataset.region = next; } catch (_) { /* SSR / tests */ }
+  };
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setRegion(null);
+      try { delete document.documentElement.dataset.region; } catch (_) { /* ignore */ }
+      return;
+    }
+    const allowed = regionsKey.split(',');
+    let next = getActiveRegion(allowed);
+    const stored = peekStoredQuoteRegion();
+    if (stored) {
+      if (allowed.includes(stored)) next = stored;
+      else dropStoredQuote();
+    }
+    applyRegion(next);
+  }, [session?.user?.id, regionsKey]);
+  const handleSwitchRegion = (next) => {
+    if (!isRegionId(next) || !regions.includes(next)) return;
+    applyRegion(next);
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     // onAuthStateChange clears session → Login renders.
@@ -446,7 +528,7 @@ export default function App() {
       }} />
     );
   }
-  if (session === undefined || (session && roleLoading) || (session && !role)) {
+  if (session === undefined || (session && roleLoading) || (session && !role) || (session && !region)) {
     return <BootSplash />;
   }
   if (!session) {
@@ -461,7 +543,13 @@ export default function App() {
     email: session.user.email || '',
     phone: session.user.user_metadata?.mobile || '',
   } : null;
-  return <CalculatorApp key={role} role={role} repIdentity={repIdentity} onSignOut={handleSignOut} />;
+  // key includes the region: a switch remounts the calculator so every piece
+  // of per-quote state is re-seeded from the new region's payload.
+  return (
+    <CalculatorApp key={`${role}:${region}`} role={role} repIdentity={repIdentity}
+                   region={region} regions={regions} onSwitchRegion={handleSwitchRegion}
+                   onSignOut={handleSignOut} />
+  );
 }
 
 // Minimal centered splash used while the session/role resolve, matching the
@@ -473,15 +561,16 @@ function BootSplash() {
         minHeight: '100vh', display: 'flex', alignItems: 'center',
         justifyContent: 'center', flexDirection: 'column', gap: 12,
       }}>
-        <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
+        <img src="/logo-mark-v3.png" alt="Solviva" width="48" height="48"
              style={{ opacity: 0.7 }} />
-        <div style={{ fontSize: 13, color: '#6B7280' }}>Loading…</div>
+        <div style={{ fontSize: 13, color: '#667085' }}>Loading…</div>
       </div>
     </div>
   );
 }
 
-function CalculatorApp({ role, repIdentity, onSignOut }) {
+function CalculatorApp({ role, repIdentity, onSignOut,
+                         region = DEFAULT_REGION, regions = [DEFAULT_REGION], onSwitchRegion }) {
   // Role → access routing. ADMIN_ROLE_TO_ACCESS maps the DB role ('admin',
   // 'engineering', 'product', 'inventory', 'finco') onto the calculator's
   // internal access levels; 'rep' opens the full sales-rep calculator and
@@ -638,7 +727,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   const [paramsRev, setParamsRev] = useState(0);   // bumps on each save to force re-render
   useEffect(() => {
     let mounted = true;
-    paramsService.load().then(() => {
+    paramsService.load({ region }).then(() => {
       if (!mounted) return;
       // Loaded-from-server and status BEFORE the loading flag flips, so the
       // first post-spinner render already sees them (the maintenance gate
@@ -646,6 +735,17 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
       setParamsLoadedFromServer(paramsService.isLoadedFromServer());
       setParamsStatus(paramsService.getLoadStatus());
       setParamsLoading(false);
+      // v3-231 — a FRESH quote (nothing restored) is re-seeded whole from the
+      // region's live defaults. The state initialiser ran before this load, on
+      // whatever the shared objects held at the time — the bundled defaults
+      // on first boot, or the PREVIOUS region's values right after a region
+      // switch — and the field-by-field snap below only moves fields still at
+      // the BUNDLED value, so it could not catch the second case. The UI was
+      // behind the spinner, so nothing typed is lost.
+      if (!restoredRef.current) {
+        setState(makeInitialState('all', region));
+        return;
+      }
       // v3-70: boot-race snap for the Product-settable Step 1 defaults.
       // First render ran before this fetch resolved, so a brand-new session
       // booted on the BUNDLED defaults. If a field still equals the bundled
@@ -698,7 +798,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     if (paramsRetrying) return;
     setParamsRetrying(true);
     try {
-      await paramsService.load();
+      await paramsService.load({ region });
       setParamsLoadedFromServer(paramsService.isLoadedFromServer());
       setParamsStatus(paramsService.getLoadStatus());
     } finally {
@@ -711,17 +811,24 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // We merge any saved record on top of fresh defaults so newly-added fields
   // (e.g. v3.7 added roofMaterial / location) fall back gracefully on records
   // saved by an older build of the app.
+  // v3-231 — whether this mount restored a quote (the load effect above
+  // re-seeds a fresh one from the region's live defaults; a restored one gets
+  // only the field-by-field snap). A record from another region is dropped:
+  // App() already steered the active region to a restorable record's region,
+  // so reaching here with a mismatch means the account lost that region.
+  const restoredRef = useRef(false);
   const [state, setState] = useState(() => {
-    const defaults = makeInitialState('all');
+    const defaults = makeInitialState('all', region);
     try {
       const raw = sessionStorage.getItem(STATE_STORAGE_KEY);
       if (!raw) return defaults;
-      const parsed = JSON.parse(raw);
-      if (parsed._v !== STATE_RECORD_VERSION) {
+      const migrated = migrateStateRecord(JSON.parse(raw));
+      if (!migrated || migrated.region !== region) {
         sessionStorage.removeItem(STATE_STORAGE_KEY);
         return defaults;
       }
-      const { _v, ...rest } = parsed;
+      const { _v, region: _storedRegion, ...rest } = migrated;
+      restoredRef.current = true;
       return { ...defaults, ...rest };
     } catch (_) {
       return defaults;
@@ -739,13 +846,15 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // — basically anything that mutates `state`. The cost is negligible (one
   // JSON.stringify + one localStorage write per keystroke) and the win is
   // that a customer who reloads mid-form returns to exactly where they were.
+  // v3-231 — stamped with the region whose parameters priced it; `region` is a
+  // prop, never a state field, so it cannot leak into computeProposal's inputs.
   useEffect(() => {
     try {
       sessionStorage.setItem(STATE_STORAGE_KEY, JSON.stringify({
-        ...state, _v: STATE_RECORD_VERSION,
+        ...state, region, _v: STATE_RECORD_VERSION,
       }));
     } catch (_) { /* ignore */ }
-  }, [state]);
+  }, [state, region]);
 
   // generatedDate is held in sessionStorage too so that "Valid until" stays
   // anchored to the original quote-creation moment across reloads. Without
@@ -854,7 +963,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     if (!pending) return undefined;
     let cancelled = false;
     (async () => {
-      const res = await fetchCrmContact(String(pending));
+      const res = await fetchCrmContact(String(pending), region);
       if (cancelled) return;
       if (!res.ok) {
         setOdooSync({
@@ -949,7 +1058,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     };
   }, []);
   const handleLockConfirm = () => {
-    setState(makeInitialState('all'));   // wipe Steps 1-4 to defaults
+    setState(makeInitialState('all', region));   // wipe Steps 1-4 to defaults
     updateMode('customer');               // flip mode (clears solviva_mode in storage)
     setAdminAccess('none');               // v3-203 — locking drops admin access too
     // Story 004 AC4 — the issue date is per-QUOTE, so it must not survive the
@@ -959,6 +1068,35 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     try { sessionStorage.setItem(GENERATED_DATE_KEY, fresh.toISOString()); } catch (_) { /* ignore */ }
     setGeneratedDate(fresh);
     setLockConfirmOpen(false);
+  };
+
+  // ─── v3-231 — region switch ────────────────────────────────────────────────
+  // A quote belongs to one region: switching starts a NEW quote in the other
+  // region (the parent remounts this component and loads that region's
+  // payload). Work in progress is confirmed away first, through the same
+  // dialog idiom as "Reset & lock". `solviva_mode` and `solviva_agent` survive
+  // the switch — the rep is still the rep.
+  const [pendingRegion, setPendingRegion] = useState(null);
+  const quoteInProgress = () => {
+    try {
+      const fresh = makeInitialState('all', region);
+      const touched = JSON.stringify(state) !== JSON.stringify(fresh);
+      const hasContact = !!(contact.name || contact.email || contact.mobile
+                            || contact.installAddress || contact.leadId);
+      return touched || hasContact;
+    } catch (_) {
+      return true;   // when in doubt, ask
+    }
+  };
+  const commitRegionSwitch = (next) => {
+    dropStoredQuote();
+    setPendingRegion(null);
+    if (onSwitchRegion) onSwitchRegion(next);
+  };
+  const requestRegionSwitch = (next) => {
+    if (!next || next === region) return;
+    if (quoteInProgress()) setPendingRegion(next);
+    else commitRegionSwitch(next);
   };
 
   // ─── PDF generation (rep-mode only) ────────────────────────────────────────
@@ -1104,6 +1242,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         brand: BRAND, adminParams: ADMIN_PARAMS, disclaimers: DISCLAIMERS,
         proposalContent: PROPOSAL_CONTENT,
         snapshots: { visualizing: visualizingPng, summary: summaryPng },
+        region,   // v3-231 — the installation-site address uses this region's table
       });
 
       // ─── 064C/J/K — push the proposal to Odoo as a quotation ─────────────
@@ -1117,6 +1256,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             state, model: issuedModel, contact, agent,
             issuedAt, validUntil: issuedValidUntil,
             quoteRef: pdfResult?.quoteRef || '',
+            region,   // v3-231 — named in the quotation's chatter note; lead↔region warning
           });
           const push = await pushProposalToOdoo(payload);
           if (push.ok) {
@@ -1267,9 +1407,11 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     }
   }, [activeTab, model.terms.negativeBalance, adminAccess]);
 
-  const resetStep1 = () => setState(s => ({ ...s, ...makeInitialState('step1') }));
-  const resetStep2 = () => setState(s => ({ ...s, ...makeInitialState('step2') }));
-  const resetStep3 = () => setState(s => ({ ...s, ...makeInitialState('step3') }));
+  // v3-231 — `region` so a Step 2 reset lands on THIS region's default site,
+  // not Manila's.
+  const resetStep1 = () => setState(s => ({ ...s, ...makeInitialState('step1', region) }));
+  const resetStep2 = () => setState(s => ({ ...s, ...makeInitialState('step2', region) }));
+  const resetStep3 = () => setState(s => ({ ...s, ...makeInitialState('step3', region) }));
   const updateState = (patch) => setState(s => ({ ...s, ...patch }));
 
   const today = new Date();
@@ -1292,6 +1434,10 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
   // dropping adminAccess in memory.
   const handleAdminLogout = () => { onSignOut(); };
 
+  // v3-231 — the active region's page accent (header band, tab indicator,
+  // live total bar). Manila's is the calculator's green, so nothing moves.
+  const theme = regionTheme(region);
+
   // Show a brief loading screen while parameters fetch on first load.
   // Without this, customers might see stale defaults for a flash before
   // server overrides take effect — confusing if a price has been changed.
@@ -1302,9 +1448,9 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           minHeight: '100vh', display: 'flex', alignItems: 'center',
           justifyContent: 'center', flexDirection: 'column', gap: 12,
         }}>
-          <img src="/logo-sun-v2.png" alt="Solviva" width="48" height="48"
+          <img src="/logo-mark-v3.png" alt="Solviva" width="48" height="48"
                style={{ opacity: 0.7 }} />
-          <div style={{ fontSize: 13, color: '#6B7280' }}>Loading…</div>
+          <div style={{ fontSize: 13, color: '#667085' }}>Loading…</div>
         </div>
       </div>
     );
@@ -1364,12 +1510,13 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     return (
       <>
         <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
-                            retrying={paramsRetrying} compact />
+                            retrying={paramsRetrying} compact region={region} />
         <MobileFlow
           state={state}
           updateState={updateState}
           model={model}
           adminParams={ADMIN_PARAMS}
+          region={region}
           contact={contact}
           setContact={setContact}
         />
@@ -1377,8 +1524,16 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
     );
   }
 
+  // v3-231 — one keyed pane around the tab content so a tab change fades the
+  // new content in (index.html `.tab-pane`). The four parameter tabs share the
+  // key 'params': AdminShell holds unsaved drafts across them, so it must NOT
+  // remount on a tab switch — it animates its own inner content instead.
+  const paneKey = ADMIN_TAB_IDS.includes(activeTab)
+    ? (SUPER_ADMIN_TAB_IDS.includes(activeTab) ? activeTab : 'params')
+    : activeTab;
+
   return (
-    <div style={styles.app}>
+    <div style={styles.app} className="app-root">
       <Header brand={BRAND} contact={contact} setContact={setContact}
               agent={agent} updateAgent={updateAgent}
               generatedDate={generatedDate} validUntil={validUntil}
@@ -1388,12 +1543,13 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
               mode={mode} onLockMode={() => setLockConfirmOpen(true)}
               adminAccess={adminAccess}
               onSignOut={onSignOut}
+              region={region} regions={regions} onSwitchRegion={requestRegionSwitch}
               leadState={state} leadModel={model} updateState={updateState} />
       <ParamsSourceBanner status={paramsStatus} onRetry={retryParams}
-                          retrying={paramsRetrying} />
+                          retrying={paramsRetrying} region={region} />
       <LandscapeReminder />
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
-            adminAccess={adminAccess}
+            adminAccess={adminAccess} theme={theme} regionLabel={regionLabel(region)}
             negativeBalance={model.terms.negativeBalance}
             onGeneratePdf={handleGeneratePdf} pdfGenerating={pdfGenerating} />
       {/* v3-223 — the Odoo hand-off banner sits UNDER the tab bar (user
@@ -1401,10 +1557,12 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           content, instead of between the header and the tabs. */}
       <OdooSyncBanner sync={odooSync} onDismiss={() => setOdooSync(null)} />
       <main className="app-main" style={styles.main}>
+        <div key={paneKey} className="tab-pane">
         {activeTab === 'calculator' && (
           <Calculator state={state} updateState={updateState} model={model}
                       adminParams={ADMIN_PARAMS} disclaimers={DISCLAIMERS}
-                      mode={mode}
+                      mode={mode} region={region}
+                      priceListUpdatedAt={paramsStatus?.updatedAt ?? null}
                       resetStep1={resetStep1} resetStep2={resetStep2} resetStep3={resetStep3}
                       onContactRep={() => {
                         // v3-98 — the contact form renders inside the header at
@@ -1440,7 +1598,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
         {adminAccess !== 'none' && ADMIN_TAB_IDS.includes(activeTab) && (
           <>
             {activeTab === 'audit-history' ? (
-              <AuditHistory accessLevel={adminAccess} />
+              <AuditHistory accessLevel={adminAccess} region={region} regions={regions} />
             ) : activeTab === 'users' ? (
               <UserManagement accessLevel={adminAccess} />
             ) : (
@@ -1448,10 +1606,17 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
                 <MaintenanceModeBlock
                   accessLevel={adminAccess}
                   savingDisabled={!paramsLoadedFromServer}
+                  region={region}
                 />
+                {/* v3-231 — key={region}: the editor seeds its drafts from the
+                    shared objects once, so a region switch must remount it
+                    (the parent already remounts the whole calculator; the key
+                    is belt-and-braces). */}
                 <AdminShell
+                  key={region}
                   tab={activeTab}
                   accessLevel={adminAccess}
+                  region={region}
                   onLogout={handleAdminLogout}
                   savingDisabled={!paramsLoadedFromServer}
                   calcPanelCount={model.panelCount}
@@ -1460,9 +1625,10 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             )}
           </>
         )}
+        </div>
       </main>
       <Tabs activeTab={activeTab} setActiveTab={setActiveTab} mode={mode}
-            adminAccess={adminAccess}
+            adminAccess={adminAccess} theme={theme} regionLabel={regionLabel(region)}
             negativeBalance={model.terms.negativeBalance}
             position="bottom" />
       {/* v3-123 — spacer keeps the tab strip + page end visible above the
@@ -1475,6 +1641,13 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           admin branch, which never had the bar; a quote total floating over
           parameter editors would also collide with AdminShell's own save
           affordances). */}
+      {/* v3-231 — the footer renders BEFORE the bar's spacer: it used to come
+          after it and sat entirely under the fixed bar (72px tall vs a 56px
+          spacer), which never mattered while it was white and now hides the
+          lime logo. */}
+      <Footer brand={BRAND}
+              mode={mode} adminAccess={adminAccess}
+              onSignOut={onSignOut} />
       {!model.terms.negativeBalance && !ADMIN_TAB_IDS.includes(activeTab) && (
         <>
           <div className="live-total-spacer" aria-hidden="true" />
@@ -1483,6 +1656,7 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
             cashFlows={model.cashFlows}
             irrYears={state.irrYears}
             utilityRate={state.utilityRate}
+            region={region}
             onJumpToPricing={() => {
               const jump = () => {
                 const el = document.getElementById('step3-pricing');
@@ -1498,9 +1672,6 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           />
         </>
       )}
-      <Footer brand={BRAND}
-              mode={mode} adminAccess={adminAccess}
-              onSignOut={onSignOut} />
       {lockConfirmOpen && (
         <ConfirmDialog
           title="Return to customer view?"
@@ -1511,23 +1682,49 @@ function CalculatorApp({ role, repIdentity, onSignOut }) {
           onCancel={() => setLockConfirmOpen(false)}
         />
       )}
+      {/* v3-231 — confirm before a region switch discards a quote in progress. */}
+      {pendingRegion && (
+        <ConfirmDialog
+          title={`Switch to ${regionMeta(pendingRegion).label}?`}
+          message={`A quote belongs to one region. Switching starts a new quote in ${regionMeta(pendingRegion).label} — the current Steps 1–4, the customer contact and the issue date are discarded. Saved parameters are not affected.`}
+          confirmLabel={`Start a new quote in ${regionMeta(pendingRegion).label}`}
+          cancelLabel={`Stay in ${regionMeta(region).label}`}
+          onConfirm={() => commitRegionSwitch(pendingRegion)}
+          onCancel={() => setPendingRegion(null)}
+        />
+      )}
     </div>
   );
 }
 
+// v3-231 — the region controls live in RegionControls.jsx. The header carries
+// the "Pricing branch" dropdown (<RegionSelect/>, every account) and a 4px
+// band in the branch colour along its top; the branch is named again beside
+// the numbers it priced (the live total bar's pill, the Step 1 price-list
+// badge, the Generate PDF button). The header surface itself stays white with
+// the dark-green logo in every region (the three-colour design, 2026-11-01;
+// the earlier dark-green Cebu header is gone).
+
 function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
                   generatedDate, validUntil, quoteExpired,
                   editing, setEditing, requireForPdf,
-                  mode, onLockMode, onSignOut, leadState, leadModel, updateState }) {
+                  mode, onLockMode, onSignOut, leadState, leadModel, updateState,
+                  region = DEFAULT_REGION, regions = [DEFAULT_REGION], onSwitchRegion }) {
   const fmt = (d) => d.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   // Supabase account controls (this deployment only).
   const [showChangePw, setShowChangePw] = useState(false);
+  const theme = regionTheme(region);
+  const headerStyle = { ...styles.header, borderTop: `4px solid ${theme.accent}` };
+  const logoBlock = (
+    <img src="/logo-horizontal-dark-green.svg" alt="Solviva Energy"
+         style={styles.logo} className="header-logo" />
+  );
 
   if (editing) {
     return (
-      <header style={styles.header}>
+      <header style={headerStyle}>
         <div className="header-inner" style={{ ...styles.headerInner, alignItems: 'flex-start' }}>
-          <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
+          {logoBlock}
           <div style={{ flex: 1 }}>
             <ContactEditForm
               contact={contact} setContact={setContact}
@@ -1535,6 +1732,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
               mode={mode} requireAll={requireForPdf}
               leadState={leadState} leadModel={leadModel}
               updateState={updateState}
+              region={region}
               onDone={() => setEditing(false)}
             />
           </div>
@@ -1544,9 +1742,9 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
   }
 
   return (
-    <header style={styles.header}>
+    <header style={headerStyle}>
       <div className="header-inner" style={styles.headerInner}>
-        <img src="/logo-full-v2.png" alt="Solviva Energy" style={styles.logo} className="header-logo" />
+        {logoBlock}
         <div className="header-meta" style={styles.headerMeta}>
           <div style={styles.metaRow}>
             <strong>Quote for:</strong> {contact.name || '—'}
@@ -1584,6 +1782,7 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
           </div>
         </div>
         <div className="header-actions" style={styles.headerActions} data-no-print="true">
+          <RegionSelect regions={regions} active={region} onSwitch={onSwitchRegion} />
           {mode === 'rep' && onLockMode && (
             <button onClick={onLockMode}
                     style={styles.repPillBtn}
@@ -1656,7 +1855,8 @@ function Header({ brand, contact, setContact, agent, updateAgent, adminAccess,
 // the customer-facing render already handles agent.name === '' by
 // falling back to "Solviva Customer Support" automatically.
 function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requireAll = false,
-                           leadState, leadModel, updateState, onDone }) {
+                           leadState, leadModel, updateState, onDone,
+                           region = DEFAULT_REGION }) {
   const [draftCustomer, setDraftCustomer] = useState(contact);
   const [draftAgent, setDraftAgent] = useState(agent);
   // When the form is opened by the PDF gate (requireAll), surface validation
@@ -1681,18 +1881,23 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   // Consequence to be aware of: unlike Name/Email/Mobile, a location change is
   // live the moment it is made, so Cancel does NOT revert it. That is the price
   // of one visible source of truth, and it matches how 2E already behaves.
+  // v3-231 — the active REGION's table (Manila/Luzon or Cebu); defaults from
+  // defaultLocationState(region) so a half-empty state resolves inside the
+  // right region.
+  const regionDefaults = defaultLocationState(region);
   const locState = {
     location: leadState?.location ?? 'luzon',
-    locationRegion: leadState?.locationRegion ?? 'NCR',
-    locationProvince: leadState?.locationProvince ?? null,
+    locationRegion: leadState?.locationRegion ?? regionDefaults.locationRegion,
+    locationProvince: leadState?.locationProvince ?? regionDefaults.locationProvince,
     locationCity: leadState?.locationCity ?? '',
   };
   const loc = resolveLocation(
-    locState.locationRegion, locState.locationProvince, locState.locationCity,
+    region, locState.locationRegion, locState.locationProvince, locState.locationCity,
   );
-  // Only the Luzon cascade is a km lookup; the dynamic off-island rows and
-  // "Other" price by their own rules (2F for Other), so the three selects are
-  // meaningless unless Luzon is picked.
+  const shape = pickerShape(region, ADMIN_PARAMS);
+  // Only the home-mainland cascade is a km lookup; the dynamic off-island rows
+  // and "Other" price by their own rules (2F for Other), so the selects are
+  // meaningless unless the home mainland is picked.
   const showCascade = locState.location === 'luzon';
   // Guarded: ContactEditForm is only mounted by Header, which always supplies
   // updateState — the check keeps the controls inert rather than throwing if
@@ -1711,7 +1916,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     if (!PROJECT_NUMBER_RE.test(projectNo)) return;
     setLookup('loading');
     setLookupMsg('');
-    const res = await fetchCrmContact(projectNo);
+    const res = await fetchCrmContact(projectNo, region);
     if (!res.ok) {
       setLookup('error');
       setLookupMsg(res.error);
@@ -1796,6 +2001,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           state: leadState,
           model: leadModel,
           contact: draftCustomer,
+          region,   // v3-231
           submittedAt: now.toISOString(),
           reference: makeLeadRef(now, draftCustomer),
           adminParams: ADMIN_PARAMS,   // v3-125 — dynamic-location labels
@@ -1812,7 +2018,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
   };
 
   const labelStyle = {
-    fontSize: 11, fontWeight: 600, color: '#6B7280',
+    fontSize: 11, fontWeight: 600, color: '#667085',
     textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4,
   };
   const inputStyle = {
@@ -1828,7 +2034,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     ? <span style={{ fontSize: 10.5, color: '#DC2626', marginTop: 3, display: 'block' }}>{text}</span>
     : null;
   const groupTitle = {
-    fontSize: 12, fontWeight: 700, color: '#25543A', textTransform: 'uppercase',
+    fontSize: 12, fontWeight: 700, color: '#1F522B', textTransform: 'uppercase',
     letterSpacing: 0.7, margin: '0 0 8px',
   };
 
@@ -1854,8 +2060,8 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           <div style={{ marginTop: 14 }}>
             <button onClick={onDone}
                     style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
-                             background: '#25543A', border: 'none', borderRadius: 6,
-                             color: 'white', cursor: 'pointer', fontFamily: 'inherit' }}>
+                             background: 'var(--sv-primary)', border: 'none', borderRadius: 6,
+                             color: 'var(--sv-on-primary)', cursor: 'pointer', fontFamily: 'inherit' }}>
               Done
             </button>
           </div>
@@ -1868,9 +2074,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
     <div>
     {isLeadFlow && (
       <div style={{
-        background: '#F7F4ED', borderLeft: '3px solid #25543A',
+        background: '#f2f4f7', borderLeft: '3px solid var(--sv-primary)',
         borderRadius: '4px 8px 8px 4px', padding: '12px 16px', marginBottom: 16,
-        fontSize: 13, color: '#25543A', lineHeight: 1.6,
+        fontSize: 13, color: '#1F522B', lineHeight: 1.6,
       }}>
         Talk to a Solviva representative — complete your contact details and proposed
         installation address below. The calculator settings you've chosen (panels, battery,
@@ -1917,9 +2123,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                         disabled={lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)}
                         style={{
                           fontSize: 12.5, fontWeight: 600, padding: '7px 14px',
-                          borderRadius: 6, border: '1px solid #25543A',
-                          background: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? '#9CA3AF' : '#25543A',
-                          color: '#fff', cursor: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? 'default' : 'pointer',
+                          borderRadius: 6, border: '1px solid var(--sv-primary)',
+                          background: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? '#9CA3AF' : 'var(--sv-primary)',
+                          color: 'var(--sv-on-primary)', cursor: (lookup === 'loading' || !PROJECT_NUMBER_RE.test(projectNo)) ? 'default' : 'pointer',
                           fontFamily: 'inherit', whiteSpace: 'nowrap',
                         }}>
                   {lookup === 'loading' ? 'Searching…' : 'Search'}
@@ -1942,7 +2148,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                   Odoo quotation. Unlink covers the wrong-lead case; a fresh
                   search re-links. */}
               {draftCustomer.leadId ? (
-                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#4B5563' }}>
+                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#475467' }}>
                   Linked to Odoo lead {draftCustomer.leadId} — each generated proposal is saved to
                   this opportunity as a new quotation.{' '}
                   <button type="button"
@@ -1954,7 +2160,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
                   </button>
                 </span>
               ) : (
-                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#6B7280' }}>
+                <span style={{ fontSize: 10.5, marginTop: 3, display: 'block', color: '#667085' }}>
                   Not linked to an Odoo lead — the proposal will not be saved to Odoo.
                 </span>
               )}
@@ -1996,7 +2202,9 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
             <span style={labelStyle}>Installation location</span>
             <select style={inputStyle} value={locState.location}
                     onChange={e => applyLoc({ location: e.target.value })}>
-              <option value="luzon">Luzon main island</option>
+              {/* v3-231 — 'luzon' is every region's "home mainland" slot; the
+                  label is the region's own (engine 1.3.0). */}
+              <option value="luzon">{ADMIN_PARAMS.deliveryRegionLabel || 'Luzon'} main island</option>
               {availableDeliveryLocations(ADMIN_PARAMS).map(l => (
                 <option key={l.id} value={l.id}>{l.label}</option>
               ))}
@@ -2005,26 +2213,29 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           </div>
           {showCascade && (
             <>
-              <div>
-                <span style={labelStyle}>Region</span>
-                <select style={inputStyle} value={loc.region.code}
-                        onChange={e => {
-                          // Re-resolve so region, province and city land on a
-                          // valid triple together.
-                          const n = resolveLocation(e.target.value, null, null);
-                          applyLoc({ locationRegion: n.region.code, locationProvince: n.province,
-                                     locationCity: n.city.name, locationKm: n.city.km });
-                        }}>
-                  {LUZON_REGIONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
-                </select>
-              </div>
+              {/* Hidden when the region's table has one entry (Cebu). */}
+              {shape.showRegionSelect && (
+                <div>
+                  <span style={labelStyle}>Region</span>
+                  <select style={inputStyle} value={loc.region.code}
+                          onChange={e => {
+                            // Re-resolve so region, province and city land on a
+                            // valid triple together.
+                            const n = resolveLocation(region, e.target.value, null, null);
+                            applyLoc({ locationRegion: n.region.code, locationProvince: n.province,
+                                       locationCity: n.city.name, locationKm: n.city.km });
+                          }}>
+                    {regionsFor(region).map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+                  </select>
+                </div>
+              )}
               {/* NCR has no provinces — hidden rather than a one-item control. */}
               {loc.provinces.length > 0 && (
                 <div>
                   <span style={labelStyle}>Province</span>
                   <select style={inputStyle} value={loc.province || ''}
                           onChange={e => {
-                            const n = resolveLocation(loc.region.code, e.target.value, null);
+                            const n = resolveLocation(region, loc.region.code, e.target.value, null);
                             applyLoc({ locationProvince: n.province,
                                        locationCity: n.city.name, locationKm: n.city.km });
                           }}>
@@ -2082,7 +2293,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
         {/* v3-224 — say where the values came from: the lead's assigned
             salesperson in Odoo, or the session defaults. */}
         {!requireAll && (
-          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 6, fontStyle: 'italic' }}>
+          <div style={{ fontSize: 11, color: '#667085', marginTop: 6, fontStyle: 'italic' }}>
             {draftAgent.source === 'odoo-lead'
               ? "Filled from Odoo — the lead's assigned salesperson. Changes here last for this browser session; loading another lead replaces them."
               : "If left blank, customers will see Solviva Customer Support's contact info instead. Cleared when this browser session ends."}
@@ -2094,10 +2305,10 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       {isLeadFlow && (
         <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
           <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start',
-                          fontSize: 12.5, color: '#374151', lineHeight: 1.5, cursor: 'pointer' }}>
+                          fontSize: 12.5, color: '#475467', lineHeight: 1.5, cursor: 'pointer' }}>
             <input type="checkbox" checked={consentGiven}
                    onChange={e => setConsentGiven(e.target.checked)}
-                   style={{ marginTop: 2, width: 16, height: 16, accentColor: '#25543A',
+                   style={{ marginTop: 2, width: 16, height: 16, accentColor: 'var(--sv-primary)',
                             cursor: 'pointer', flexShrink: 0 }} />
             <span>{LEAD_CONSENT_TEXT}</span>
           </label>
@@ -2120,7 +2331,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
       <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
         <button onClick={onDone}
                 style={{ padding: '8px 16px', fontSize: 13, background: 'transparent',
-                         border: '1px solid #D1D5DB', borderRadius: 6, color: '#374151',
+                         border: '1px solid #D1D5DB', borderRadius: 6, color: '#475467',
                          cursor: 'pointer', fontFamily: 'inherit' }}>
           Cancel
         </button>
@@ -2133,8 +2344,8 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
           return (
             <button onClick={save} disabled={disabled}
                     style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600,
-                             background: disabled ? '#9CA3AF' : '#25543A', border: 'none',
-                             borderRadius: 6, color: 'white', cursor: disabled ? 'not-allowed' : 'pointer',
+                             background: disabled ? '#9CA3AF' : 'var(--sv-primary)', border: 'none',
+                             borderRadius: 6, color: 'var(--sv-on-primary)', cursor: disabled ? 'not-allowed' : 'pointer',
                              fontFamily: 'inherit' }}>
               {label}
             </button>
@@ -2165,7 +2376,14 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, mode, requir
 // cashFlows.totalDuSavings, the same Schedule!Z46-parity cumulative figure
 // Step 4 displays, over the same customer-adjustable horizon. Both reprice
 // on every input change.
-function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing }) {
+// v3-231 — `theme` recolours the bar for the active region: `barBg` fill and
+// an optional `barEdge` top edge (Cebu: dark green with the lime edge — lime
+// cannot be the fill because the figures are white).
+// v3-231 (2026-11-01 design) — the bar is a light tint of the branch colour
+// with a top edge and figures in the branch ink (CSS --sv-bar-* tokens), and
+// its first cell is the "{Region} pricing" pill: the branch is named next to
+// the numbers it priced.
+function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing, region = DEFAULT_REGION }) {
   // v3-161 — FIVE live figures: IRR added between Payback and Cost/kWh,
   // mirroring Step 4's Payback → IRR → LCOE ordering (user-directed).
   // v3-129 — FOUR live figures (user-approved mockup incl. the bold utility
@@ -2204,6 +2422,9 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
       title="Jump to Step 3 · Pricing"
       style={styles.liveTotalBar}
     >
+      <span className="live-total-pill">
+        <RegionPricingPill region={region} />
+      </span>
       <span className="live-total-cell" style={styles.liveTotalCell}>
         <span style={styles.liveTotalLabel}>Your Total<br />Price</span>
         <span style={styles.liveTotalValue}>{fmt.peso(total)}</span>
@@ -2237,7 +2458,7 @@ function LiveTotalBar({ terms, cashFlows, irrYears, utilityRate, onJumpToPricing
 }
 
 function Tabs({ activeTab, setActiveTab, mode, position = 'top',
-                adminAccess = 'none',
+                adminAccess = 'none', theme, regionLabel: branchLabel = '',
                 negativeBalance, onGeneratePdf, pdfGenerating }) {
   // Summary AND Schedule tabs are rep-only — in customer mode the formal
   // line-item quote (Summary) AND the year-by-year payment schedule are both
@@ -2280,7 +2501,17 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
   ];
   const navStyle = position === 'bottom' ? styles.tabsBottom : styles.tabs;
   const tabBaseStyle = position === 'bottom' ? styles.tabBottom : styles.tab;
-  const tabActiveStyle = position === 'bottom' ? styles.tabActiveBottom : styles.tabActive;
+  // v3-231 — the quote tabs' active text and underline take the region's INK
+  // (the branch colour as text on white: dark green for Manila AND Cebu —
+  // a lime line on white is invisible — blue for Davao when it opens).
+  const tabActiveStyle = {
+    ...(position === 'bottom' ? styles.tabActiveBottom : styles.tabActive),
+    ...(theme
+      ? (position === 'bottom'
+          ? { color: theme.ink, borderTop: `3px solid ${theme.ink}` }
+          : { color: theme.ink, borderBottom: `3px solid ${theme.ink}` })
+      : {}),
+  };
   const tabAdminActiveStyle = position === 'bottom'
     ? styles.tabAdminActiveBottom : styles.tabAdminActive;
   // Generate PDF button is rep-only and rendered only on the TOP tab bar
@@ -2327,7 +2558,7 @@ function Tabs({ activeTab, setActiveTab, mode, position = 'top',
             <span aria-hidden="true" style={{ marginRight: 6, fontSize: 13 }}>
               {pdfGenerating ? '\u23F3' : '\u2B07'}
             </span>
-            {pdfGenerating ? 'Generating…' : 'Generate PDF'}
+            {pdfGenerating ? 'Generating…' : `Generate ${branchLabel ? `${branchLabel} ` : ''}PDF`}
           </button>
         )}
       </div>
@@ -2385,7 +2616,7 @@ const landscapeReminderStyles = {
     borderBottom: '1px solid #FAC775',
   },
   inner: {
-    maxWidth: 1200,
+    maxWidth: 1440,
     margin: '0 auto',
     padding: '8px 16px',
     display: 'flex',
@@ -2407,8 +2638,8 @@ const landscapeReminderStyles = {
 function ConfirmDialog({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel',
                           onConfirm, onCancel }) {
   return (
-    <div style={confirmStyles.overlay} role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-      <div style={confirmStyles.card}>
+    <div style={confirmStyles.overlay} className="sv-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div style={confirmStyles.card} className="sv-dialog">
         <div style={confirmStyles.accentStripe} aria-hidden="true" />
         <div style={confirmStyles.body}>
           <h2 id="confirm-title" style={confirmStyles.title}>{title}</h2>
@@ -2455,12 +2686,12 @@ const confirmStyles = {
   title: {
     fontSize: 18,
     fontWeight: 700,
-    color: '#25543A',           // brandGreen
+    color: '#1F522B',           // brandGreen
     margin: '0 0 8px',
   },
   message: {
     fontSize: 14,
-    color: '#374151',
+    color: '#475467',
     margin: '0 0 20px',
     lineHeight: 1.55,
   },
@@ -2474,7 +2705,7 @@ const confirmStyles = {
     fontSize: 14,
     fontWeight: 500,
     backgroundColor: 'transparent',
-    color: '#6B7280',
+    color: '#667085',
     border: '1px solid #D1D5DB',
     borderRadius: 8,
     cursor: 'pointer',
@@ -2484,8 +2715,8 @@ const confirmStyles = {
     padding: '10px 20px',
     fontSize: 14,
     fontWeight: 600,
-    backgroundColor: '#25543A',  // brandGreen
-    color: '#FFFFFF',
+    backgroundColor: 'var(--sv-primary)',  // brandGreen
+    color: 'var(--sv-on-primary)',
     border: 'none',
     borderRadius: 8,
     cursor: 'pointer',
@@ -2493,12 +2724,18 @@ const confirmStyles = {
   },
 };
 
+// v3-231 — the footer is a brand dark-green band carrying the LIME logo: the
+// kit's rule is lime logo on dark green, green logo on light (the header),
+// so the two logo variants each sit where they belong.
 function Footer({ brand, mode, adminAccess = 'none', onSignOut }) {
   return (
     <footer style={styles.footer}>
       <div className="footer-inner" style={styles.footerInner}>
-        <div style={{ opacity: 0.7, fontSize: 12 }}>
-          © 2026 {brand.legalEntity}. An AboitizPower Company.
+        <div style={styles.footerBrand}>
+          <img src="/logo-horizontal-chartreuse.svg" alt="Solviva Energy" style={styles.footerLogo} />
+          <div style={styles.footerText}>
+            © 2026 {brand.legalEntity}. An AboitizPower Company.
+          </div>
         </div>
         {/* DEPLOYMENT DIVERGENCE: upstream's footer staff key is replaced by a
             plain sign-out, shown only in the customer view (in rep/admin views
@@ -2506,7 +2743,7 @@ function Footer({ brand, mode, adminAccess = 'none', onSignOut }) {
         {mode === 'customer' && adminAccess === 'none' && onSignOut && (
           <button
             onClick={onSignOut}
-            style={styles.signOutBtn}
+            style={{ ...styles.signOutBtn, ...styles.footerSignOut }}
             className="desktop-only-admin"
             title="Sign out"
           >
@@ -2541,28 +2778,36 @@ function FooterFixed({ onSignOut }) {
 const styles = {
   app: {
     fontFamily: '"Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',
-    backgroundColor: '#F7F4ED', minHeight: '100vh', color: '#1F2937',
+    backgroundColor: '#fcfcfc', minHeight: '100vh', color: '#212121',
   },
-  header: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #E5E1D6', padding: '20px 0' },
+  header: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #e4e7ec', padding: '20px 0' },
   headerInner: {
-    maxWidth: 1200, margin: '0 auto', padding: '0 24px',
+    maxWidth: 1440, margin: '0 auto', padding: '0 24px',
     display: 'flex', alignItems: 'center', gap: 32,
   },
   logo: { height: 56, width: 'auto' },
   headerMeta: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 },
   metaRow: { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
   metaSep: { opacity: 0.4 },
-  metaMuted: { color: '#6B7280' },
+  metaMuted: { color: '#667085' },
   metaExpired: { color: '#B91C1C', fontWeight: 600, letterSpacing: 0.5 },
+  // v3-231 — wraps: with the "Pricing branch" dropdown in the row, the
+  // controls no longer fit beside the quote/agent column at 1200px, and
+  // squeezing that column made its lines break. The block caps its width and
+  // wraps right-aligned — the dropdown takes the first row, the account
+  // buttons the second — so the meta column keeps its room.
   headerActions: {
     display: 'flex',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
     gap: 8,
     alignItems: 'center',
     flexShrink: 0,
+    maxWidth: 580,
   },
   editBtn: {
     background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
-    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',
+    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#667085',
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     flexShrink: 0,
   },
@@ -2619,7 +2864,7 @@ const styles = {
   // replacement for the upstream staff-key glyph. Same discreet treatment.
   signOutBtn: {
     background: 'transparent', border: '1px solid #D1D5DB', borderRadius: 6,
-    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#6B7280',
+    padding: '6px 12px', fontSize: 12, fontWeight: 500, color: '#667085',
     cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
     flexShrink: 0,
   },
@@ -2636,25 +2881,28 @@ const styles = {
     padding: '5px 10px',
     fontSize: 11,
     fontWeight: 500,
-    color: '#6B7280',
+    color: '#667085',
     cursor: 'pointer',
     fontFamily: 'inherit',
     letterSpacing: 0.3,
   },
-  tabs: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #E5E1D6' },
+  tabs: { backgroundColor: '#FFFFFF', borderBottom: '1px solid #e4e7ec' },
   // Bottom-of-page tab variant. Active indicator moves to the top edge so the
   // green line visually anchors the active tab to the content above it
   // (where the user just was) rather than to whatever lies further down.
   // Hairline above to detach from the main content; nothing below since the
   // footer separator handles that.
-  // v3-123 — live Total Amount Due bar.
+  // v3-123 — live Total Amount Due bar. v3-231 — on the --sv-bar-* tokens: a
+  // light tint of the branch colour, a top edge in the accent, figures in the
+  // branch ink (index.html sets them per region).
   liveTotalBar: {
     position: 'fixed',
     left: 0, right: 0, bottom: 0,
     zIndex: 40,
     padding: '8px 14px',
-    backgroundColor: '#25543A',
-    color: '#FFFFFF',
+    backgroundColor: 'var(--sv-bar-bg)',
+    color: 'var(--sv-bar-fg)',
+    borderTop: '3px solid var(--sv-bar-edge)',
     cursor: 'pointer',
     boxShadow: '0 -2px 8px rgba(0,0,0,0.12)',
   },
@@ -2669,15 +2917,15 @@ const styles = {
     fontSize: 9.5,
     letterSpacing: '0.06em',
     textTransform: 'uppercase',
-    // rgba (not opacity) so the bold rate below can restore FULL white —
-    // a child can override inherited color, but never a parent's opacity.
-    color: 'rgba(255,255,255,0.75)',
+    // a muted token (not opacity) so the bold rate below can restore the FULL
+    // ink — a child can override inherited color, but never a parent's opacity.
+    color: 'var(--sv-bar-muted)',
     lineHeight: 1.35,
   },
   liveTotalRateBold: {      // v3-129 — user-directed emphasis on the utility rate
     fontSize: 13,
     fontWeight: 700,
-    color: '#FFFFFF',
+    color: 'var(--sv-bar-fg)',
   },
   liveTotalValue: {
     fontSize: 18,
@@ -2688,31 +2936,31 @@ const styles = {
   liveTotalUnit: {
     fontSize: 12,
     fontWeight: 400,
-    color: 'rgba(255,255,255,0.8)',
+    color: 'var(--sv-bar-muted)',
   },
   tabsBottom: {
     backgroundColor: '#FFFFFF',
-    borderTop: '1px solid #E5E1D6',
+    borderTop: '1px solid #e4e7ec',
     marginTop: 32,
   },
   // v3-203 — flexWrap added: seven tabs + the Generate PDF pill can exceed
   // 1200px; wrapping to a second row beats horizontal clipping. Sub-1200px
   // customer view is unaffected (three tabs never wrapped anyway).
-  tabsInner: { maxWidth: 1200, margin: '0 auto', padding: '0 24px',
+  tabsInner: { maxWidth: 1440, margin: '0 auto', padding: '0 24px',
                display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'stretch' },
   tab: {
     background: 'transparent', border: 'none', padding: '14px 22px',
-    fontSize: 14, fontWeight: 500, color: '#6B7280', cursor: 'pointer',
+    fontSize: 14, fontWeight: 500, color: '#667085', cursor: 'pointer',
     borderBottom: '3px solid transparent', transition: 'all 150ms',
   },
-  tabActive: { color: '#25543A', borderBottom: '3px solid #25543A', fontWeight: 600 },
+  tabActive: { color: '#1F522B', borderBottom: '3px solid var(--sv-primary)', fontWeight: 600 },
   // Bottom-tab variants — same typography, indicator on top edge instead.
   tabBottom: {
     background: 'transparent', border: 'none', padding: '14px 22px',
-    fontSize: 14, fontWeight: 500, color: '#6B7280', cursor: 'pointer',
+    fontSize: 14, fontWeight: 500, color: '#667085', cursor: 'pointer',
     borderTop: '3px solid transparent', transition: 'all 150ms',
   },
-  tabActiveBottom: { color: '#25543A', borderTop: '3px solid #25543A', fontWeight: 600 },
+  tabActiveBottom: { color: '#1F522B', borderTop: '3px solid var(--sv-primary)', fontWeight: 600 },
   // v3-203 — admin tab variants (D2): brand-gold label so the settings group
   // reads apart from the green-accented quote tabs. Active state deepens the
   // gold and moves the same 3px indicator into gold. Slightly tighter
@@ -2724,7 +2972,7 @@ const styles = {
   // the flex row; 1px divider color matches the strip borders.
   tabGroupDivider: {
     width: 1, alignSelf: 'stretch', margin: '8px 8px',
-    backgroundColor: '#E5E1D6', flexShrink: 0,
+    backgroundColor: '#e4e7ec', flexShrink: 0,
   },
   // Generate PDF pill button — rep-only, sits at the right edge of the top
   // tab bar (marginLeft: auto pushes it past the left-aligned tab buttons).
@@ -2734,9 +2982,9 @@ const styles = {
   generatePdfBtn: {
     marginLeft: 'auto',
     alignSelf: 'center',
-    background: '#25543A',
+    background: 'var(--sv-primary)',
     border: 'none',
-    color: '#FFFFFF',
+    color: 'var(--sv-on-primary)',
     fontSize: 12,
     fontWeight: 600,
     padding: '7px 14px',
@@ -2750,14 +2998,20 @@ const styles = {
     flexShrink: 0,
   },
   generatePdfBtnBusy: {
-    background: '#6B7280',
+    background: '#667085',
     cursor: 'wait',
   },
-  main: { maxWidth: 1200, margin: '0 auto', padding: '32px 24px' },
-  footer: { borderTop: '1px solid #E5E1D6', backgroundColor: '#FFFFFF', marginTop: 40 },
+  main: { maxWidth: 1440, margin: '0 auto', padding: '32px 24px' },
+  footer: { backgroundColor: '#1F522B', color: '#FFFFFF', marginTop: 40 },
   footerInner: {
-    maxWidth: 1200, margin: '0 auto', padding: '20px 24px',
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    maxWidth: 1440, margin: '0 auto', padding: '22px 24px',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+  },
+  footerBrand: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
+  footerLogo: { height: 26, width: 'auto', display: 'block' },
+  footerText: { fontSize: 12, color: 'rgba(255,255,255,0.78)' },
+  footerSignOut: {
+    color: 'rgba(255,255,255,0.85)', borderColor: 'rgba(255,255,255,0.35)', background: 'transparent',
   },
   footerFixed: { position: 'fixed', bottom: 16, right: 16, zIndex: 10, display: 'flex', gap: 8 },
   agentLink: {

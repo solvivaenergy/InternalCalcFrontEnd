@@ -16,6 +16,7 @@
 // =============================================================================
 
 import React, { useState } from 'react';
+import { DEFAULT_REGION, regionLabel } from '../lib/region.js';
 
 function formatWhen(iso) {
   if (!iso) return null;
@@ -29,20 +30,26 @@ function formatWhen(iso) {
   }
 }
 
-export default function ParamsSourceBanner({ status, onRetry, retrying, compact }) {
+// `region` (v3-231): the bundled defaults are MANILA's. On the Cebu calculator
+// they are not a stale copy of the right numbers but the wrong region's
+// numbers altogether, so the defaults wording says so and forbids quoting.
+export default function ParamsSourceBanner({ status, onRetry, retrying, compact, region }) {
   const [showDetails, setShowDetails] = useState(false);
   const source = status?.source;
   if (source !== 'cache' && source !== 'defaults') return null;
 
   const when = formatWhen(status.cachedAt);
+  const otherRegionDefaults = source === 'defaults' && region && region !== DEFAULT_REGION;
   const body = source === 'cache'
     ? `This device could not load the current pricing configuration, so the calculator is showing the last copy saved here${when ? ` on ${when}` : ''}. Prices, margins, and payment terms may have changed since then.`
-    : 'This device could not load the current pricing configuration, so the calculator is using the defaults built into this version. Prices, margins, and payment terms may not match what is currently configured.';
+    : otherRegionDefaults
+      ? `This device could not load the ${regionLabel(region)} pricing configuration, so the calculator is using the defaults built into this version — and those are ${regionLabel(DEFAULT_REGION)}'s. Do not quote ${regionLabel(region)} customers from this screen.`
+      : 'This device could not load the current pricing configuration, so the calculator is using the defaults built into this version. Prices, margins, and payment terms may not match what is currently configured.';
 
   const errors = Array.isArray(status.errors) ? status.errors : [];
 
   return (
-    <div style={{ ...styles.wrap, ...(compact ? styles.wrapCompact : {}) }} role="alert">
+    <div style={{ ...styles.wrap, ...(compact ? styles.wrapCompact : {}) }} role="alert" className="sv-fade-up">
       <div style={styles.box}>
         <div style={styles.row}>
           <div style={styles.text}>
@@ -75,7 +82,7 @@ export default function ParamsSourceBanner({ status, onRetry, retrying, compact 
 
 const styles = {
   wrap: {
-    maxWidth: 1200,
+    maxWidth: 1440,
     margin: '12px auto 0',
     padding: '0 24px',
     fontFamily: '"Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif',
@@ -106,8 +113,8 @@ const styles = {
     padding: '6px 14px',
     fontSize: 13,
     fontWeight: 600,
-    color: '#FFFFFF',
-    backgroundColor: '#25543A',
+    color: 'var(--sv-on-primary)',
+    backgroundColor: 'var(--sv-primary)',
     border: 'none',
     borderRadius: 6,
     cursor: 'pointer',

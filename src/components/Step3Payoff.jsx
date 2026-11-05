@@ -65,7 +65,7 @@ export default function Step3Payoff({ state, model, adminParams }) {
     const hs = h(monthlySave[y]);
     bars.push(
       <rect key={`s${y}`} x={gx.toFixed(1)} y={(YB - hs).toFixed(1)}
-            width={bw.toFixed(1)} height={hs.toFixed(1)} rx="2" fill="#3B7B5A" />
+            width={bw.toFixed(1)} height={hs.toFixed(1)} rx="2" fill="#50890a" />
     );
     if (!directPurchase && y < payYears) {
       const hp = h(pmt);
@@ -146,7 +146,7 @@ export default function Step3Payoff({ state, model, adminParams }) {
           two, or three entries render. */}
       <div style={styles.legendRow}>
         <div style={styles.legend}>
-          <span><i style={{ ...styles.key, background: '#3B7B5A' }} />Saved each month</span>
+          <span><i style={{ ...styles.key, background: '#50890a' }} />Saved each month</span>
           {!directPurchase && anyShortfall && (
             <span><i style={{ ...styles.key, background: '#D98A4A' }} />
               Paid each month ({'>'} saved)
@@ -182,7 +182,7 @@ const styles = {
   },
   legend: {
     display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11,
-    color: '#4B5563',
+    color: '#475467',
   },
   key: {
     display: 'inline-block', width: 10, height: 10, borderRadius: 2,

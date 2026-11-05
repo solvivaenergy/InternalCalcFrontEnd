@@ -41,6 +41,15 @@ const WARNING_TEXT = {
     "the only number on the lead is a Solviva agent's — enter the customer's",
   salesperson_unavailable:
     "Odoo did not return the assigned salesperson — check the Solviva Agent details",
+  // v3-231 — lead↔region guard (warning only; the backend compares the lead's
+  // address, or its Odoo company once a region has one, with the calculator
+  // you are quoting in).
+  lead_region_mismatch:
+    "the lead's address is in the OTHER region — check you are quoting in the right calculator",
+  lead_region_unknown:
+    "the lead has no province or city in Odoo, so its region could not be checked",
+  lead_company_mismatch:
+    "the lead belongs to the other region's Odoo company — check you are quoting in the right calculator",
 };
 
 export function describeWarnings(warnings) {
@@ -95,9 +104,11 @@ export function describeAgentNotes(salesperson, applied) {
 
 /**
  * Look up a lead. Resolves to { ok: true, contact } or { ok: false, error }.
- * Never throws — the caller renders `error` inline.
+ * Never throws — the caller renders `error` inline. `region` (v3-231) is the
+ * calculator the rep is quoting in, so the backend can warn when the lead's
+ * address belongs to the other one.
  */
-export async function fetchCrmContact(projectNumber) {
+export async function fetchCrmContact(projectNumber, region = "luzon") {
   const value = String(projectNumber ?? "").trim();
   if (!PROJECT_NUMBER_RE.test(value)) {
     return { ok: false, error: "Enter a numeric Project Number." };
@@ -119,7 +130,7 @@ export async function fetchCrmContact(projectNumber) {
   let res;
   try {
     res = await fetch(
-      `${API_BASE}/api/crm-contact?projectNumber=${encodeURIComponent(value)}`,
+      `${API_BASE}/api/crm-contact?projectNumber=${encodeURIComponent(value)}&region=${encodeURIComponent(region)}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
   } catch (_) {

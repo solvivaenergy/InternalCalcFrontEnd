@@ -186,9 +186,9 @@ export default function FinCoTab({ params, updateParam, accessLevel }) {
                canEdit={canEditSection('returnsAssumptions')}
                hint="Prices the per-panel and per-visit preventive-maintenance COGS (entered on the Engineering tab) into the annual maintenance cost stream inside LCOE and IRR. Does not affect any quote price. The imputed prices update live in the preview below as this margin changes." />
         <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 8,
-                      backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB',
-                      fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
-          <div style={{ fontWeight: 600, color: '#111827', marginBottom: 6 }}>
+                      backgroundColor: '#F9FAFB', border: '1px solid #e4e7ec',
+                      fontSize: 12, color: '#475467', lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 600, color: '#212121', marginBottom: 6 }}>
             Imputed maintenance prices (derived)
           </div>
           <table style={{ borderCollapse: 'collapse', fontVariantNumeric: 'tabular-nums' }}>
@@ -229,9 +229,9 @@ export default function FinCoTab({ params, updateParam, accessLevel }) {
           </div>
         </div>
         <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 8,
-                      backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB',
-                      fontSize: 12, color: '#4B5563', lineHeight: 1.6 }}>
-          <div style={{ fontWeight: 600, color: '#111827', marginBottom: 4 }}>
+                      backgroundColor: '#F9FAFB', border: '1px solid #e4e7ec',
+                      fontSize: 12, color: '#475467', lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 600, color: '#212121', marginBottom: 4 }}>
             This default reprices the returns on every quote
           </div>
           At <strong>0.00%</strong> the calculator reproduces the flat-tariff figures it has always
@@ -355,8 +355,8 @@ function DuInflationPreview({ params }) {
 const fcStyles = {
   // v3-190 — imputed-maintenance preview table (Returns Assumptions)
   pmTh: {
-    fontSize: 11, color: '#6B7280', fontWeight: 700, textAlign: 'left',
-    padding: '2px 0 4px 0', paddingRight: 18, borderBottom: '1px solid #E5E7EB',
+    fontSize: 11, color: '#667085', fontWeight: 700, textAlign: 'left',
+    padding: '2px 0 4px 0', paddingRight: 18, borderBottom: '1px solid #e4e7ec',
   },
   pmTd: {
     fontSize: 12.5, padding: '5px 0', paddingRight: 18,

@@ -556,7 +556,7 @@ const styles = {
   explainer: {
     flex: '0 0 260px',
     fontSize: 13,
-    color: '#444441',
+    color: '#212121',
     paddingTop: 60,            // align top of body text with the chart's
                                // first plot row, accounting for the
                                // celestial timeline above the chart
