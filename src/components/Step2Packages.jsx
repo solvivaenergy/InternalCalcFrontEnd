@@ -170,6 +170,9 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
   // uses, with the same order-shape inputs (v3-176 has-inverter flag
   // included). The old capacity-scalar call would show a price 2F never
   // bills whenever L is set to Fixed or the order is not a full system.
+  // v3-232 (SOLSB-209/210) — Panels-only counts only while there ARE panels;
+  // with 0 panels the order is Battery-only and the flag is inert.
+  const panelsOnlyOn = !!state.expansionMode && panelCount !== 0;
   const miscDisplayMargin = buildMarginResolver(adminParams, sizing.systemKwp, panelCount,
     effectiveInverters.some(i => i), phase)('L');
   // Only IN-STOCK items are offerable. A row already holding a now-hidden id
@@ -276,15 +279,24 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             is seeing so it survives the loss of the solar-excess battery
             recommendation (which drops to 0 without solar). Unchecking
             restores the full auto solar + battery recommendation. */}
+        {/* v3-232 (SOLSB-209/210) — Battery-only and Panels-only (2C) are
+            mutually exclusive: at most one is ticked, and ticking one
+            disables the other until it is unticked. A stored quote
+            carrying both (pre-v3-232) reads as Battery-only, which stays
+            untickable. */}
         {!isCustomer && panelsAvailable && anyBatteryInStock && (
           <div style={styles.consvBlock}>
-            <label style={styles.consvRow}>
+            <label style={{ ...styles.consvRow,
+                            ...(panelsOnlyOn ? { opacity: 0.55, cursor: 'not-allowed' } : {}) }}
+                   title={panelsOnlyOn ? 'Untick "Panels only" in 2C to make this a battery-only order.' : undefined}>
               <input
                 type="checkbox"
                 checked={panelCount === 0}
+                disabled={panelsOnlyOn}
                 onChange={e => {
+                  if (panelsOnlyOn) return;
                   if (e.target.checked) {
-                    const patch = { panelCount: 0 };
+                    const patch = { panelCount: 0, expansionMode: false };
                     // Pin the current battery so a storage-only order doesn't
                     // silently drop to 0 kWh (rec can't size storage w/o solar).
                     if (state.batteryKwh == null && batteryKwh > 0) {
@@ -304,6 +316,11 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                   battery package on its own (standalone labor, plus ATS &amp;
                   critical-loads materials unless unbundled below). The inverter
                   is treated as client-supplied unless you add one in 2C.
+                  {panelsOnlyOn && (
+                    <strong style={{ display: 'block', marginTop: 4 }}>
+                      Unavailable while &ldquo;Panels only&rdquo; is ticked in 2C.
+                    </strong>
+                  )}
                 </span>
               </span>
             </label>
@@ -617,6 +634,9 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             if (c === 0 && state.batteryKwh == null && batteryKwh > 0) {
                               patch.batteryKwh = batteryKwh;
                             }
+                            // v3-232 — 0 panels IS a battery-only order, which
+                            // excludes Panels-only (SOLSB-209).
+                            if (c === 0) patch.expansionMode = false;
                             updateState(patch);
                           }}
                           min={0}
@@ -977,11 +997,17 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
               with site inspection as the guard for the same-wattage
               assumption. Unchecking restores normal inverter selection; the
               typed inputs keep their values but lose all effect. ── */}
-          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start',
-                          cursor: 'pointer', marginBottom: 12 }}>
+          {/* v3-232 (SOLSB-209/210) — mutually exclusive with the Battery-only
+              order in 2A: a quote with no solar panels cannot be Panels-only,
+              so the box is disabled (and reads unticked) while panelCount is 0. */}
+          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 12,
+                          cursor: panelCount === 0 ? 'not-allowed' : 'pointer',
+                          opacity: panelCount === 0 ? 0.55 : 1 }}
+                 title={panelCount === 0 ? 'Not available on a battery-only order (no solar panels).' : undefined}>
             <input type="checkbox"
-              checked={!!state.expansionMode}
-              onChange={e => updateState({ expansionMode: e.target.checked })}
+              checked={panelsOnlyOn}
+              disabled={panelCount === 0}
+              onChange={e => { if (panelCount !== 0) updateState({ expansionMode: e.target.checked }); }}
               style={{ marginTop: 3, width: 16, height: 16, accentColor: COLORS.primary }} />
             <span>
               <div style={{ fontWeight: 600 }}>
@@ -991,6 +1017,11 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                 For expanding an existing solar installation. Your new panels connect to your
                 current inverter, so this quote includes no inverter. We&rsquo;ll check that your
                 inverter can handle the combined array.
+                {panelCount === 0 && (
+                  <strong style={{ display: 'block', marginTop: 4 }}>
+                    Unavailable on a battery-only order (no solar panels).
+                  </strong>
+                )}
               </div>
             </span>
           </label>

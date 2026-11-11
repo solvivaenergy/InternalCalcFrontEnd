@@ -558,8 +558,8 @@ function CreateUserDialog({ onClose, onCreated }) {
         </div>
         {role === 'rep' && (
           <p style={styles.hint}>
-            For reps, the display name and mobile prefill the Solviva Agent details on their quotes
-            until a proposal is linked to an Odoo lead — then the lead's assigned salesperson from Odoo takes over.
+            The display name, email and mobile are the Solviva Agent details on this user's quotes;
+            the user cannot change them in the calculator.
           </p>
         )}
 
@@ -742,8 +742,8 @@ function EditUserDialog({ user, isSelf, onClose, onSaved }) {
         </div>
         {role === 'rep' && (
           <p style={styles.hint}>
-            For reps, the display name and mobile prefill the Solviva Agent details on their quotes
-            until a proposal is linked to an Odoo lead — then the lead's assigned salesperson from Odoo takes over.
+            The display name, email and mobile are the Solviva Agent details on this user's quotes;
+            the user cannot change them in the calculator.
           </p>
         )}
 
