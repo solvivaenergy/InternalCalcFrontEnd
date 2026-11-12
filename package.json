@@ -1,6 +1,6 @@
 {
   "name": "solviva-calculator",
-  "version": "3.232.0",
+  "version": "3.233.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"node ../InternalCalcBackEnd/dev-server.js\" \"vite\"",

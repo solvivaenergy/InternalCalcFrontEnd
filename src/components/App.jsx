@@ -28,6 +28,7 @@ import * as paramsService from '../lib/paramsService.js';
 import { isValidPhPhone, formatPhPhone } from '../lib/validation.js';
 import { buildLeadPayload, submitLead, makeLeadRef, LEAD_CONSENT_TEXT } from '../lib/lead.js';
 import { fetchCrmContact, describeWarnings, PROJECT_NUMBER_RE,
+         agentFromSalesperson, agentFromAccount, describeAgentNotes, AGENT_PHONE_NA,
        } from '../lib/crmContact.js';
 // Sprint Dinuguan — Odoo hand-offs. deepLink.js also runs at import time to
 // lift ?leadId= off the URL before the login / SSO round-trip can drop it
@@ -405,7 +406,10 @@ function customerDetailsComplete(c) {
       && isValidPhPhone(c.mobile) && !!c.installAddress?.trim();
 }
 function agentDetailsComplete(a) {
-  return !!a && !!a.name?.trim() && isEmailValid(a.email) && isValidPhPhone(a.phone);
+  // v3-233 — an Odoo salesperson's number is printed as it is in Odoo ("NA"
+  // when they have none), so it is not held to the PH-mobile format.
+  return !!a && !!a.name?.trim() && isEmailValid(a.email)
+      && (a.odoo ? !!a.phone : isValidPhPhone(a.phone));
 }
 function pdfDetailsComplete(contact, agent) {
   return customerDetailsComplete(contact) && agentDetailsComplete(agent);
@@ -664,11 +668,12 @@ function CalculatorApp({ role, repIdentity, onSignOut,
     // identity, pulled from their Supabase account rather than typed in. The
     // stored record also carries the rep's uid so one rep's edits never leak
     // into another rep's session on a shared device.
-    // v3-232 — the agent is ALWAYS the signed-in account (user decision
-    // 2026-11-11, replacing v3-224's "follow the Odoo lead's assigned
-    // salesperson"). Whatever the account supplies wins over any stored
-    // record and is read-only in the form; a stored value is used only for a
-    // field the account lacks (see agentAccount below).
+    // v3-233 — the agent is the loaded Odoo lead's ASSIGNED salesperson when
+    // there is one, else the signed-in account (user decision 2026-11-12;
+    // v3-232 used the account always). `agent.odoo` = { leadId, name, email,
+    // phone } is what Odoo supplied, or null for the account. Whatever the
+    // source supplies wins over any stored value and is read-only in the
+    // form; a stored value is used only for a field the source lacks.
     const AGENT_RECORD_VERSION = 3;
     const repDefault = repIdentity
       ? {
@@ -693,10 +698,16 @@ function CalculatorApp({ role, repIdentity, onSignOut,
           // Use saved values as-stored; do NOT use `||` fallback to AGENT
           // defaults, because that would resurrect old defaults whenever
           // the agent intentionally clears a field.
+          const o = parsed.odoo;
+          const odoo = o && Number.isInteger(o.leadId) && o.leadId > 0 && o.name
+            ? { leadId: o.leadId, name: String(o.name), email: String(o.email || ''), phone: String(o.phone || '') }
+            : null;
+          const src = odoo || agentAccount;
           return {
-            name:  agentAccount.name  || (parsed.name  ?? repDefault.name),
-            email: agentAccount.email || (parsed.email ?? repDefault.email),
-            phone: agentAccount.phone || (parsed.phone ?? repDefault.phone),
+            name:  src.name  || (parsed.name  ?? repDefault.name),
+            email: src.email || (parsed.email ?? repDefault.email),
+            phone: src.phone || (parsed.phone ?? repDefault.phone),
+            odoo,
           };
         }
         // Stale record (old format or a different rep) — wipe it and fall
@@ -716,6 +727,21 @@ function CalculatorApp({ role, repIdentity, onSignOut,
       }));
     } catch (_) { /* ignore */ }
   };
+  // The deep-link effect below is async and must read the CURRENT agent (same
+  // reason as contactRef).
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
+  // v3-233 — an Odoo salesperson is the agent only while THEIR lead is the
+  // loaded one. Any path that drops or swaps the lead without naming a new
+  // salesperson (Unlink, Reset, a restored session) lands here and the agent
+  // goes back to the signed-in account.
+  const agentLeadId = agent.odoo?.leadId ?? null;
+  useEffect(() => {
+    if (agentLeadId && agentLeadId !== contact.leadId) {
+      updateAgent(agentFromAccount(agentAccount, null));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentLeadId, contact.leadId]);
 
   const [editingContacts, setEditingContacts] = useState(false);
 
@@ -980,22 +1006,27 @@ function CalculatorApp({ role, repIdentity, onSignOut,
         });
         return;
       }
-      const { name, email, mobile, alternateName, warnings } = res.contact;
+      const { name, email, mobile, alternateName, warnings, salesperson } = res.contact;
       patchContact({
         ...(name ? { name } : {}),
         ...(email ? { email } : {}),
         ...(mobile ? { mobile: formatPhPhone(mobile) } : {}),
         leadId: pending,
       });
-      // v3-232 — the Solviva Agent details are the signed-in account's, so a
-      // loaded lead no longer touches them (v3-224 copied the lead's assigned
-      // salesperson here).
+      // v3-233 — the Solviva Agent is the opportunity's assigned salesperson,
+      // from Odoo; with none assigned it is the signed-in account. A deep link
+      // commits straight to the contact, so the agent is committed here too.
+      const nextAgent = agentFromSalesperson(salesperson, pending);
+      updateAgent(nextAgent || agentFromAccount(agentAccount, agentRef.current));
       const notes = describeWarnings(warnings);
       if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+      notes.push(...describeAgentNotes(salesperson, nextAgent));
       setOdooSync({
         status: 'success',
         title: `${name ? name : 'Customer'} loaded from Odoo lead ${pending}.`,
-        message: 'Name, email and mobile came from the opportunity. '
+        message: (nextAgent
+          ? `Name, email and mobile came from the opportunity; the Solviva Agent is ${nextAgent.name}, its assigned salesperson in Odoo. `
+          : 'Name, email and mobile came from the opportunity. ')
           + 'Add the installation address under "Edit contact details" before generating the proposal; the proposal will be saved to this opportunity as a quotation.',
         warnings: notes,
       });
@@ -1925,7 +1956,7 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, agentAccount
       setLookupMsg(res.error);
       return;
     }
-    const { name, email, mobile, alternateName, warnings } = res.contact;
+    const { name, email, mobile, alternateName, warnings, salesperson } = res.contact;
     // Write into the DRAFT, never via setContact. draftCustomer is seeded once
     // at mount (there is no prop-sync effect and the component has no key), so
     // committing to the parent here would leave the visible inputs stale and
@@ -1945,13 +1976,19 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, agentAccount
       // opportunity as a quotation. Committed with the rest on Save.
       leadId: Number(projectNo),
     }));
-    // v3-232 — the Solviva Agent details stay the signed-in account's; the
-    // lead's assigned salesperson no longer replaces them.
+    // v3-233 — the Solviva Agent becomes the lead's assigned salesperson from
+    // Odoo, or the signed-in account when the lead has none. Into the DRAFT
+    // like the customer fields: Save commits both, Cancel discards both.
+    // Customer mode has no agent block, so nothing to fill there.
+    const nextAgent = isCustomer ? null : agentFromSalesperson(salesperson, projectNo);
+    if (!isCustomer) setDraftAgent(a => nextAgent || agentFromAccount(agentAccount, a));
     setLookup('done');
     const notes = describeWarnings(warnings);
     if (alternateName) notes.push(`Odoo also lists “${alternateName}”`);
+    if (!isCustomer) notes.push(...describeAgentNotes(salesperson, nextAgent));
     setLookupMsg(
       `${name ? `✓ ${name}` : '✓ Lead'} — loaded from lead ${projectNo}` +
+      (nextAgent ? ` · agent: ${nextAgent.name}` : '') +
       (notes.length ? ` · ${notes.join('; ')}` : ''),
     );
   };
@@ -1968,7 +2005,8 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, agentAccount
     custAddress: (requireAll || isLeadFlow) && !draftCustomer.installAddress?.trim(),
     agentName:  !draftAgent.name?.trim(),
     agentEmail: !validEmail(draftAgent.email),
-    agentPhone: !isValidPhPhone(draftAgent.phone),
+    // v3-233 — an Odoo salesperson's number is shown as it is in Odoo.
+    agentPhone: draftAgent.odoo ? !draftAgent.phone : !isValidPhPhone(draftAgent.phone),
   };
 
   const customerValid = !err.custName && !err.custEmail && !err.custMobile && !err.custAddress;
@@ -2034,8 +2072,15 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, agentAccount
     ...inputStyle, border: '1px solid #D0D5DD', backgroundColor: '#F2F4F7',
     color: '#475467', cursor: 'not-allowed',
   };
-  const agentInp = (field, isErr) => agentAccount[field] ? lockedStyle : inp(isErr);
-  const agentAllLocked = !!(agentAccount.name && agentAccount.email && agentAccount.phone);
+  // v3-233 — the source is the lead's assigned salesperson from Odoo when one
+  // is loaded, else the signed-in account. An Odoo salesperson's block is
+  // always fully locked (a missing number reads "NA"); only a field the
+  // signed-in ACCOUNT lacks stays open so the PDF gate can pass.
+  const agentLock = draftAgent.odoo || agentAccount;
+  const agentInp = (field, isErr) => agentLock[field] ? lockedStyle : inp(isErr);
+  const agentAllLocked = !!(agentLock.name && agentLock.email && agentLock.phone);
+  const agentMissing = [!agentLock.name && 'name', !agentLock.email && 'email', !agentLock.phone && 'valid mobile number']
+    .filter(Boolean).join(' or ');
   const errMsg = (isErr, text) => (showErrors && isErr)
     ? <span style={{ fontSize: 10.5, color: '#DC2626', marginTop: 3, display: 'block' }}>{text}</span>
     : null;
@@ -2158,7 +2203,11 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, agentAccount
                   Linked to Odoo lead {draftCustomer.leadId} — each generated proposal is saved to
                   this opportunity as a new quotation.{' '}
                   <button type="button"
-                          onClick={() => { setDraftCustomer(d => ({ ...d, leadId: null })); setProjectNo(''); setLookup('idle'); setLookupMsg(''); }}
+                          onClick={() => {
+                            setDraftCustomer(d => ({ ...d, leadId: null })); setProjectNo(''); setLookup('idle'); setLookupMsg('');
+                            // v3-233 — no lead, so the agent is the signed-in account again.
+                            setDraftAgent(a => agentFromAccount(agentAccount, a));
+                          }}
                           style={{ background: 'none', border: 'none', padding: 0, color: '#B45309',
                                    fontSize: 10.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
                                    textDecoration: 'underline' }}>
@@ -2277,40 +2326,44 @@ function ContactEditForm({ contact, setContact, agent, updateAgent, agentAccount
           <div>
             <span style={labelStyle}>Name</span>
             <input style={agentInp('name', requireAll && err.agentName)} value={draftAgent.name}
-                   readOnly={!!agentAccount.name} aria-readonly={!!agentAccount.name}
-                   tabIndex={agentAccount.name ? -1 : undefined}
-                   onChange={e => { if (!agentAccount.name) setDraftAgent({ ...draftAgent, name: e.target.value }); }}
+                   readOnly={!!agentLock.name} aria-readonly={!!agentLock.name}
+                   tabIndex={agentLock.name ? -1 : undefined}
+                   onChange={e => { if (!agentLock.name) setDraftAgent({ ...draftAgent, name: e.target.value }); }}
                    placeholder="Customer Service" />
-            {!agentAccount.name && requireAll && errMsg(err.agentName, 'Agent name is required.')}
+            {!agentLock.name && requireAll && errMsg(err.agentName, 'Agent name is required.')}
           </div>
           <div>
             <span style={labelStyle}>Email</span>
             <input style={agentInp('email', requireAll && err.agentEmail)} type="email" value={draftAgent.email}
-                   readOnly={!!agentAccount.email} aria-readonly={!!agentAccount.email}
-                   tabIndex={agentAccount.email ? -1 : undefined}
-                   onChange={e => { if (!agentAccount.email) setDraftAgent({ ...draftAgent, email: e.target.value }); }}
+                   readOnly={!!agentLock.email} aria-readonly={!!agentLock.email}
+                   tabIndex={agentLock.email ? -1 : undefined}
+                   onChange={e => { if (!agentLock.email) setDraftAgent({ ...draftAgent, email: e.target.value }); }}
                    placeholder="agent@solvivaenergy.com" />
-            {!agentAccount.email && requireAll && errMsg(err.agentEmail, 'Enter a valid email address.')}
+            {!agentLock.email && requireAll && errMsg(err.agentEmail, 'Enter a valid email address.')}
           </div>
           <div>
             <span style={labelStyle}>Mobile</span>
             <input style={agentInp('phone', requireAll && err.agentPhone)} type="tel" value={draftAgent.phone}
-                   readOnly={!!agentAccount.phone} aria-readonly={!!agentAccount.phone}
-                   tabIndex={agentAccount.phone ? -1 : undefined}
-                   onChange={e => { if (!agentAccount.phone) setDraftAgent({ ...draftAgent, phone: formatPhPhone(e.target.value) }); }}
+                   readOnly={!!agentLock.phone} aria-readonly={!!agentLock.phone}
+                   tabIndex={agentLock.phone ? -1 : undefined}
+                   onChange={e => { if (!agentLock.phone) setDraftAgent({ ...draftAgent, phone: formatPhPhone(e.target.value) }); }}
                    placeholder="0917-123-4567" />
-            {!agentAccount.phone && requireAll && errMsg(err.agentPhone, 'Enter a valid PH mobile number.')}
+            {!agentLock.phone && requireAll && errMsg(err.agentPhone, 'Enter a valid PH mobile number.')}
           </div>
         </div>
-        {/* v3-232 — the values are the signed-in account's and cannot be
-            edited here; only a field the account lacks is open. */}
+        {/* v3-233 — say whose details these are: the lead's assigned
+            salesperson from Odoo, or the signed-in account. They cannot be
+            edited here; only a field the source lacks is open. */}
         <div style={{ fontSize: 11, color: '#667085', marginTop: 6, fontStyle: 'italic' }}>
-          {agentAllLocked
-            ? 'From your signed-in account. To change these, ask an admin to update your account in User Management.'
-            : 'Locked fields come from your signed-in account. Your account has no '
-              + [!agentAccount.name && 'display name', !agentAccount.email && 'email', !agentAccount.phone && 'valid mobile number']
-                  .filter(Boolean).join(' or ')
-              + ' yet — enter it here for this browser session, or ask an admin to add it in User Management.'}
+          {draftAgent.odoo
+            ? (agentAllLocked
+                ? `From Odoo — the salesperson assigned to lead ${draftAgent.odoo.leadId}`
+                  + (draftAgent.phone === AGENT_PHONE_NA ? ', who has no contact number in Odoo (shown as NA)' : '')
+                  + '. To change these, update the salesperson in Odoo.'
+                : `Locked fields come from Odoo — the salesperson assigned to lead ${draftAgent.odoo.leadId}. Their Odoo user has no ${agentMissing} — enter it here for this browser session, or have it added in Odoo.`)
+            : (agentAllLocked
+                ? 'From your signed-in account. To change these, ask an admin to update your account in User Management.'
+                : `Locked fields come from your signed-in account. Your account has no ${agentMissing} yet — enter it here for this browser session, or ask an admin to add it in User Management.`)}
         </div>
       </div>
       )}

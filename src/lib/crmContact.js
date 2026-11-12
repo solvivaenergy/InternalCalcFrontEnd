@@ -10,6 +10,7 @@
 // =============================================================================
 
 import { getAccessToken } from "./supabaseClient.js";
+import { formatPhPhone } from "./validation.js";
 
 // Same base resolution as paramsService.js:50-57, including the trailing-slash
 // trim. Deliberately NOT falling back to a relative path: on GitHub Pages a
@@ -38,6 +39,8 @@ const WARNING_TEXT = {
   phone_unnormalisable: "the phone number could not be read — enter it manually",
   phone_agent_blocklisted:
     "the only number on the lead is a Solviva agent's — enter the customer's",
+  salesperson_unavailable:
+    "Odoo did not return the assigned salesperson, so the Solviva Agent details are your own",
   // v3-231 — lead↔region guard (warning only; the backend compares the lead's
   // address, or its Odoo company once a region has one, with the calculator
   // you are quoting in).
@@ -54,10 +57,70 @@ export function describeWarnings(warnings) {
   return warnings.map((w) => WARNING_TEXT[w]).filter(Boolean);
 }
 
-// v3-232 — the Solviva Agent details are always the signed-in account's (user
-// decision 2026-11-11). The lookup still returns a `salesperson` block (the
-// lead's assigned Odoo user, which v3-224 copied into the agent details); the
-// frontend now ignores it, and the salesperson_unavailable warning with it.
+// v3-233 — who the Solviva Agent is (user decision 2026-11-12):
+//   • a lead is loaded (Generate Proposal in Odoo, or a Project Number search)
+//     AND it has an assigned salesperson  → that salesperson, from Odoo;
+//   • the lead has no salesperson, or no lead is loaded → the signed-in
+//     calculator account (v3-232's rule, now the fallback).
+// Either way the rep cannot edit what the source supplied.
+//
+// The lookup's `salesperson` block is { source: 'lead' | 'calculator-user' |
+// 'none', name, email, mobile, warnings[] }. Only 'lead' is the ASSIGNED
+// salesperson; 'calculator-user' is the backend standing the caller's own Odoo
+// user in for an unassigned lead, which here means "use the signed-in account".
+//
+// Returns the agent record to apply, or null when the signed-in account should
+// be used. `odoo` records what Odoo supplied (those fields are locked in the
+// form) and which lead it belongs to (so unlinking the lead reverts the agent).
+//
+// The number is printed AS IT IS IN ODOO (user decision 2026-11-12): no
+// reformatting and no validation, and "NA" when the salesperson has none. So
+// the mobile is always supplied by the source and always locked; nobody types
+// an Odoo salesperson's number in the calculator. `phoneRaw` is the stored
+// value; a backend that predates it only sends the normalised `mobile`.
+export const AGENT_PHONE_NA = "NA";
+
+export function agentFromSalesperson(salesperson, leadId) {
+  if (!salesperson || salesperson.source !== "lead" || !salesperson.name) return null;
+  const email = salesperson.email || "";
+  const phone = salesperson.phoneRaw
+    || (salesperson.mobile ? formatPhPhone(salesperson.mobile) : "")
+    || AGENT_PHONE_NA;
+  return {
+    name: salesperson.name,
+    email,
+    phone,
+    odoo: { leadId: Number(leadId), name: salesperson.name, email, phone },
+  };
+}
+
+// The agent record for the signed-in account. `prev` keeps what the rep typed
+// into a field the account lacks, unless `prev` was an Odoo salesperson (their
+// values must not leak into the account's record).
+export function agentFromAccount(account, prev) {
+  const typed = prev && !prev.odoo ? prev : {};
+  return {
+    name:  account?.name  || typed.name  || "",
+    email: account?.email || typed.email || "",
+    phone: account?.phone || typed.phone || "",
+    odoo: null,
+  };
+}
+
+// Rep-facing notes about the agent block after a lookup, in the same
+// "· note; note" trail as describeWarnings(). `applied` is what
+// agentFromSalesperson() returned. A null `salesperson` (Odoo could not
+// answer) is covered by the salesperson_unavailable warning.
+export function describeAgentNotes(salesperson, applied) {
+  if (!salesperson) return [];
+  if (!applied) {
+    return ["the lead has no assigned salesperson in Odoo, so the Solviva Agent details are your own"];
+  }
+  const notes = [];
+  if (applied.phone === AGENT_PHONE_NA) notes.push(`${applied.name} has no contact number in Odoo, so the proposal will show “NA” — add it to their Odoo user`);
+  if (!applied.email) notes.push(`${applied.name} has no email in Odoo — enter it under Solviva Agent details`);
+  return notes;
+}
 
 /**
  * Look up a lead. Resolves to { ok: true, contact } or { ok: false, error }.
