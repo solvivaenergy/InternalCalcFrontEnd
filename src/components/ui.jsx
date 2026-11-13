@@ -190,13 +190,15 @@ export function RecommendationPill({ children, onClick, active }) {
 // increment.
 export function NumberInput({
   value, onChange, min, max, step = 1, suffix, prefix, width = 120,
-  large, amber, compact, error, decimals,
+  large, amber, compact, error, decimals, disabled,
 }) {
   const dynamic = {
     ...(large ? inputStyles.inputLarge : null),
     ...(amber ? inputStyles.inputAmber : null),
     ...(compact ? inputStyles.inputCompact : null),
     ...(error ? inputStyles.inputError : null),
+    // v3-234 — same greyed treatment as <Select disabled>.
+    ...(disabled ? { opacity: 0.45, cursor: 'not-allowed', backgroundColor: '#F3F4F6' } : null),
   };
 
   // Peso fields auto-format on blur. We tie this to prefix==='₱' rather
@@ -342,6 +344,7 @@ export function NumberInput({
         aria-valuemax={typeof max === 'number' ? max : undefined}
         aria-valuenow={typeof value === 'number' ? value : undefined}
         value={display}
+        disabled={disabled}
         onFocus={handleFocus}
         onChange={e => handleChange(e.target.value)}
         onBlur={handleBlur}

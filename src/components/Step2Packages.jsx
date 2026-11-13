@@ -143,6 +143,16 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.panelCount, model.recommended?.minPanelsFloor, model.recPanelCount, model.panelsAvailable]);
+  // v3-234 (SOLSB-210 AC2) — a Panels-only order carries NO battery: while the
+  // flag is on (and there are panels, see panelsOnlyOn below) the battery is
+  // held at "No battery". An effect rather than only the checkbox handler so
+  // every path lands here: the 2C tick, and a stored quote that was
+  // Panels-only with a battery before this rule.
+  const panelsOnlyActive = !!state.expansionMode && model.panelCount !== 0;
+  useEffect(() => {
+    if (panelsOnlyActive && state.batteryKwh !== 0) updateState({ batteryKwh: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelsOnlyActive, state.batteryKwh]);
   const { recommended, recPanelCount, panelCount, recInverters, effectiveInverters, expansionActive,
           sizing, recBatteryKwh, batteryKwh, activeBatteryPackage,
           autoBatteryPackage, activeRecBatteryKwh,
@@ -451,7 +461,9 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
           // batteryKwh and the recommendation to 0, so a stale session value
           // must not paint amber / offer a snap-back to a control that's been
           // replaced by the out-of-stock note.
-          const batteryOverridden = anyBatteryInStock
+          // v3-234 — nor must the "No battery" a Panels-only order forces: it
+          // is the rule, not a rep override, so no amber and no snap-back.
+          const batteryOverridden = anyBatteryInStock && !panelsOnlyOn
             && state.batteryKwh   != null && state.batteryKwh   !== activeRecBatteryKwh;
           // Package override: an explicit pick that differs from the auto
           // winner. Explicitly picking the pack that IS the winner pins it
@@ -599,7 +611,10 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                     <SelectedTile
                       label="Panels"
                       amber={panelOverridden}
-                      snapBack={panelOverridden
+                      // v3-234 (SOLSB-209 AC2) — on a Battery-only order the
+                      // panels are 0 and locked: no snap-back either; the
+                      // only way out is unticking Battery-only in 2A.
+                      snapBack={panelOverridden && panelCount !== 0
                         ? { label: `Use recommended (${recPanelCount})`,
                             onClick: () => updateState({ panelCount: null }) }
                         : null}
@@ -636,7 +651,12 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                             }
                             // v3-232 — 0 panels IS a battery-only order, which
                             // excludes Panels-only (SOLSB-209).
-                            if (c === 0) patch.expansionMode = false;
+                            if (c === 0) {
+                              patch.expansionMode = false;
+                              // v3-234 — leaving Panels-only this way also
+                              // lifts the "No battery" it was holding.
+                              if (state.expansionMode && batteryKwh === 0) patch.batteryKwh = null;
+                            }
                             updateState(patch);
                           }}
                           min={0}
@@ -644,9 +664,15 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                           width={100}
                           large
                           amber={panelOverridden}
+                          disabled={panelCount === 0}
                         />
                       </div>
                       <div style={selectedTileStyles.sub}>× {recommended.panelWatts}W panels</div>
+                      {panelCount === 0 && (
+                        <div style={selectedTileStyles.sub}>
+                          Locked at 0 on a battery-only order. Untick &ldquo;Battery-only order&rdquo; above to add panels.
+                        </div>
+                      )}
                         </>
                       )}
                     </SelectedTile>
@@ -657,7 +683,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                     <SelectedTile
                       label="Battery"
                       amber={batteryOverridden || packageOverridden}
-                      snapBack={packageOverridden
+                      snapBack={panelsOnlyOn ? null : packageOverridden
                         // Package overridden (possibly with a kWh override
                         // too): one link resets BOTH back to the optimizer.
                         ? { label: `Use recommended package (${autoBatteryPackage?.label})`,
@@ -712,6 +738,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                                             batteryRackIncluded: true, batteryAtsIncluded: true, batteryCritLoadsIncluded: true });
                             }}
                             width={190}
+                            disabled={panelsOnlyOn}
                             amber={packageOverridden}
                             options={[
                               { value: '', label: `Auto — ${autoBatteryPackage?.label}` },
@@ -735,6 +762,7 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                           onChange={v => updateState({ batteryKwh: Number(v) === activeRecBatteryKwh ? null : Number(v) })}
                           width={140}
                           large
+                          disabled={panelsOnlyOn}
                           amber={batteryOverridden}
                           options={(() => {
                             // v3-54: kWh ladder steps by the ACTIVE PACKAGE'S
@@ -755,6 +783,11 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
                         />
                       </div>
                       <div style={selectedTileStyles.sub}>kWh storage</div>
+                      {panelsOnlyOn && (
+                        <div style={selectedTileStyles.sub}>
+                          Locked at No battery on a Panels-only order. Untick &ldquo;Panels only&rdquo; in 2C to add one.
+                        </div>
+                      )}
                       {/* v3-52: pack-composition detail moved INSIDE the
                           Selected Battery tile. Previously rendered as a
                           standalone caption below the Recommended/Selected
@@ -1007,7 +1040,12 @@ export default function Step2Packages({ state, updateState, model, adminParams, 
             <input type="checkbox"
               checked={panelsOnlyOn}
               disabled={panelCount === 0}
-              onChange={e => { if (panelCount !== 0) updateState({ expansionMode: e.target.checked }); }}
+              onChange={e => {
+                if (panelCount === 0) return;
+                // v3-234 (SOLSB-210 AC2) — ticking sets "No battery" (held by
+                // the effect above); unticking restores the recommendation.
+                updateState({ expansionMode: e.target.checked, batteryKwh: e.target.checked ? 0 : null });
+              }}
               style={{ marginTop: 3, width: 16, height: 16, accentColor: COLORS.primary }} />
             <span>
               <div style={{ fontWeight: 600 }}>
