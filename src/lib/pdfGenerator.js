@@ -2740,6 +2740,53 @@ function drawPackageDetailPage(mgr) {
   });
   mgr.y = noteY + compBoxH + 3;
 }
+// Where the customer pays (user request 2026-11-12): a "Bank details" heading
+// and one three-cell row closing page 4, under the payment tables. Each cell
+// is a label line over its value. Same Inter 40px text as those tables, with a
+// thin grey box rule and a white fill so the sun watermark does not show
+// through.
+const BANK_DETAILS = [
+  ["Bank:", "Unionbank of the Philippines"],
+  ["Account name:", "SOLVIVA ENERGY INCORPORATED"],
+  ["Account number:", "0017-2002-3600"],
+];
+
+function drawBankDetails(mgr) {
+  mgr.y += 4;
+  mgr.doc.setFont("helvetica", "semibold");
+  mgr.doc.setFontSize(fxpt(40));
+  mgr.doc.setTextColor(0, 0, 0);
+  mgr.doc.text("Bank details", MARGIN, mgr.y + 3);
+  mgr.y += 5.5;
+
+  autoTable(mgr.doc, {
+    margin: { left: MARGIN, right: MARGIN },
+    tableWidth: CONTENT_W,
+    startY: mgr.y,
+    theme: "plain",
+    body: [BANK_DETAILS.map(([label, value]) => `${label}\n${value}`)],
+    styles: {
+      font: "Inter",
+      fontSize: fxpt(40),
+      fontStyle: "normal",
+      textColor: [0, 0, 0],
+      fillColor: [255, 255, 255],
+      valign: "middle",
+      cellPadding: { top: 1.6, bottom: 1.6, left: fxmm(35), right: fxmm(35) },
+      lineColor: [150, 150, 150],
+      lineWidth: 0.2,
+    },
+    columnStyles: {
+      // Not thirds: the account name is the long one and must stay on one
+      // line ("SOLVIVA ENERGY INCORPORATED" wrapped at CONTENT_W / 3).
+      0: { cellWidth: CONTENT_W * 0.31 },
+      1: { cellWidth: CONTENT_W * 0.38 },
+      2: { cellWidth: CONTENT_W * 0.31 },
+    },
+  });
+  mgr.y = mgr.doc.lastAutoTable.finalY + 3;
+}
+
 function drawPaymentOptionsPage(mgr) {
   const { model, state } = mgr.ctx;
   const cf = model.cashFlows || {};
@@ -2949,6 +2996,8 @@ function drawPaymentOptionsPage(mgr) {
     mgr.y + 3,
   );
   mgr.y += 6;
+
+  drawBankDetails(mgr);
 
   // Story 018 — the amber "Note: Estimated savings assume..." box that used
   // to close this page is gone (Marketing, 2026-10-11): the Caldereta frame
